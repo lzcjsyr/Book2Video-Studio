@@ -1,0 +1,8 @@
+{
+  "name": "book2video-hyperframes-runtime",
+  "private": true,
+  "description": "The pinned HyperFrames CLI bundled with Book2Video Studio.",
+  "dependencies": {
+    "hyperframes": "0.7.10"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+src-tauri/target/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+.DS_Store
+build/
+.env
+.env.*

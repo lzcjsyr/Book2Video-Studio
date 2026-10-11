@@ -1,0 +1,18 @@
+name: Source checks
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      # The bundled runtime and engine are assembled by `npm run stage`, which needs the
+      # AIGC_Video_CLI engine and large downloads, so CI checks the sources only.
+      - run: mkdir -p build/backend build/engine build/runtime
+      - run: npm ci
+      - run: npm run build
+      - run: node --experimental-strip-types --test scripts/test-language.mjs
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
