@@ -1,4 +1,5 @@
 import { Clapperboard, Image, Search } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { useI18n } from "../i18n";
 import type { Segment } from "../types";
 
@@ -29,6 +30,11 @@ export default function SegmentEditor({
   onEdit: (index: number, key: "content" | "visualizer", value: string) => void;
 }) {
   const { t } = useI18n();
+  // Keep the selected row on screen when it is chosen elsewhere, such as in the sequence.
+  const active = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    active.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selected]);
   const saved = new Map(segments.map((s) => [s.index, s]));
   const rows = draft.filter(
     (s) =>
@@ -51,6 +57,7 @@ export default function SegmentEditor({
         return (
           <div
             key={s.index}
+            ref={s.index === selected ? active : undefined}
             className={`segment-row ${s.index === selected ? "active" : ""}`}
             onClick={() => onSelect(s.index)}
           >

@@ -20,6 +20,22 @@ export interface Segment {
   visual: string | null;
   duration: number | null;
   composition: string | null;
+  /** The still image, in images/ or set aside in images/stills/ while the segment uses motion. */
+  still?: string | null;
+  /** A picture that stands for the segment in the sequence (still, or a motion keyframe). */
+  poster?: string | null;
+  motion?: Motion;
+}
+/** Where a segment's motion stands: Claude Code's composition, its keyframes, the rendered video. */
+export interface Motion {
+  composition: string | null;
+  /** When the composition was last saved (seconds since the epoch). */
+  composed: number | null;
+  folder: string;
+  keyframes: string[];
+  keyframes_current: boolean;
+  video: string | null;
+  video_current: boolean;
 }
 export interface TextData {
   content?: string;
@@ -42,6 +58,8 @@ export interface Detail {
   id: string;
   revision: string;
   warning?: string;
+  /** Set by finish-agent: the session that just ended. */
+  finished?: { step: Stage; indices: number[] } | null;
   path: string;
   raw: TextData;
   script: TextData;
@@ -82,6 +100,10 @@ export interface Job {
   result?: { message?: string; success?: boolean };
   /** Seconds since the epoch, from the project service. */
   started: number;
+  /** The segments it works on (null: the whole step), its Visuals mode, and whether it includes the opening. */
+  scope?: number[] | null;
+  mode?: string | null;
+  opening?: boolean;
 }
 export interface Bootstrap {
   default_location: string;

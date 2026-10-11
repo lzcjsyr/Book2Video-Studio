@@ -85,9 +85,10 @@ def run(request):
                 rendered.replace(project / "images" / f"segment_{idx}.mp4")
             finally:
                 rendered.unlink(missing_ok=True)
-            png = project / "images" / f"segment_{idx}.png"
-            if png.exists():
-                png.unlink()  # A preserved history revision contains the superseded image.
+            # Assembly would prefer a still over the video; it waits in images/stills/ in case
+            # the segment goes back to a still image.
+            from server import Studio
+            Studio.park_still(project, idx)
         return {"success": True, "message": f"Rendered {len(selected)} saved composition(s)."}
     functions = {"1.5": steps.run_step_1_5, "3": steps.run_step_3, "4": steps.run_step_4, "5": steps.run_step_5, "6": steps.run_step_6}
     fn = functions[step]

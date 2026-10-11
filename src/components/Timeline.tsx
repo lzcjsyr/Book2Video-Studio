@@ -1,6 +1,6 @@
 import { useI18n } from "../i18n";
 import { useEffect, useRef } from "react";
-import { Images, Music2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Images, Music2, ChevronLeft, ChevronRight, Quote, Clapperboard } from "lucide-react";
 import type { Detail, Segment } from "../types";
 import { media } from "../api";
 export const formatTime = (seconds: number) =>
@@ -41,19 +41,33 @@ export default function Timeline({
     return start;
   });
   function thumb(s: Segment) {
-    return s.visual && !/\.(mp4|mov|webm)$/i.test(s.visual) ? (
-      <img loading="lazy" src={media(detail.id, s.visual, version)} alt="" />
-    ) : (
-      <span className="timeline-visual-placeholder">
-        {s.visualizer === "hf" ? t("Motion") : t("No visual")}
-      </span>
+    // Motion segments show a keyframe (or their earlier still) and a badge: amber until rendered.
+    const picture = s.poster ?? (s.visual && !/\.(mp4|mov|webm)$/i.test(s.visual) ? s.visual : null);
+    const motion = s.visualizer === "hf";
+    const rendered = Boolean(s.motion?.video && s.motion.video_current);
+    return (
+      <>
+        {picture ? (
+          <img loading="lazy" src={media(detail.id, picture, version)} alt="" />
+        ) : (
+          <span className="timeline-visual-placeholder">
+            {motion ? t("Motion") : t("No visual")}
+          </span>
+        )}
+        {motion && (
+          <span className={`clip-motion${rendered ? "" : " pending"}`}
+            title={rendered ? t("Motion · rendered") : t("Motion · not rendered yet")}>
+            <Clapperboard size={10} />
+          </span>
+        )}
+      </>
     );
   }
   return (
     <section className={`timeline focus-${focus}`}>
       <div className="timeline-heading">
         <div>
-          <Images size={14} />
+          <Images size={15} />
           <span>{t("Sequence")}</span>
           <span className="muted">
             {t("{count} segments", { count: detail.segments.length })}
@@ -84,15 +98,16 @@ export default function Timeline({
       <div className="timeline-body">
         <div className="track-labels">
           <span className="track-label-visual">
-            <Images size={13} /> {t("VISUAL")}
+            <Images size={12} /> {t("VISUAL")}
           </span>
           <span className="track-label-voice">
-            <Music2 size={13} /> {t("VOICE")}
+            <Music2 size={12} /> {t("VOICE")}
           </span>
         </div>
         <div className="timeline-scroll">
           {openingEnabled && (
             <button
+              ref={selected === 0 ? active : undefined}
               className={`timeline-item ${selected === 0 ? "selected" : ""}`}
               onClick={() => onSelect(0)}
               aria-label={t("Select opening")}
@@ -107,7 +122,7 @@ export default function Timeline({
                   />
                 ) : (
                   <span className="timeline-visual-placeholder">
-                    {t("Opening")}
+                    <Quote size={16} />
                   </span>
                 )}
                 <span className="clip-number">{t("Opening")}</span>

@@ -15,7 +15,6 @@ import {
   ListVideo,
   Loader2,
   Maximize2,
-  MoreHorizontal,
   Music2,
   PanelRightOpen,
   Plus,
@@ -50,7 +49,8 @@ import type {
   Stage,
   TextData,
 } from "./types";
-import AgentPane from "./components/AgentPane";
+import AgentPane, { type AgentHandle } from "./components/AgentPane";
+import SegmentVisual from "./components/SegmentVisual";
 import Timeline, { formatTime } from "./components/Timeline";
 import SettingsPanel from "./components/SettingsPanel";
 import MetadataCandidates, {
@@ -178,6 +178,10 @@ export default function App() {
   projectRef.current = detail?.id || "";
   stepRef.current = step;
   const notice = useCallback((message: string) => setToast(message), []);
+  const agentHandle = useRef<AgentHandle>(null);
+  // A motion keyframe chosen for the preview; it applies to the segment it was picked on.
+  const [keyframe, setKeyframe] = useState<string | null>(null);
+  useEffect(() => setKeyframe(null), [selected, step, detail?.id]);
   // Saved API keys (names only) and the Settings tab to open, for key reminders.
   const [keyStatus, setKeyStatus] = useState<KeyStatus | null>(null);
   const [claudeMode, setClaudeMode] = useState<ClaudeCodeMode>("api_key");
@@ -454,13 +458,21 @@ export default function App() {
     ) || 0;
   const reviewAudio = selected === 0 ? detail?.opening : segment;
   const current = stages.find((s) => s.id === step)!;
-  const status = detail?.state.stale[step]
-    ? t("Needs rebuild")
+  const statusKind = detail?.state.stale[step]
+    ? "needs-rebuild"
     : detail?.state.reviewed[step]
-      ? t("Reviewed")
+      ? "reviewed"
       : detail?.ready[step]
-        ? t("Ready to review")
-        : t("Not generated");
+        ? "ready"
+        : "empty";
+  const status = t(
+    {
+      "needs-rebuild": "Needs rebuild",
+      reviewed: "Reviewed",
+      ready: "Ready to review",
+      empty: "Not generated",
+    }[statusKind],
+  );
 
   async function activateFor(indices?: number[]) {
     if (!detail || unsaved) {
@@ -504,6 +516,19 @@ export default function App() {
           notice(
             d.warning || "Agent session ended. Production outputs refreshed.",
           );
+          // What a Visuals session composed is rendered right away, so its video shows in the preview.
+          const composed = d.finished?.step === "4"
+            ? d.segments.filter((s) => d.finished!.indices.includes(s.index) && s.motion?.composition && !s.motion.video_current).map((s) => s.index)
+            : [];
+          if (composed.length)
+            api<Job>(projectRoute(d.id) + "/job", { step: "4", mode: "render", indices: composed })
+              .then((job) => {
+                setJobs((jobs) => [...jobs, job]);
+                notice(composed.length === 1
+                  ? `Rendering segment ${composed[0]} from Claude Code's composition…`
+                  : `Rendering ${composed.length} segments from Claude Code's compositions…`);
+              })
+              .catch((e) => notice(String(e)));
           if (
             !d.warning &&
             queue.current.length &&
@@ -603,15 +628,45 @@ export default function App() {
   async function refreshLibrary() {
     setBootstrap(await api<Bootstrap>("/bootstrap"));
   }
-  async function startVisualJob(body: { mode: string; batch?: string }, message: string) {
+  async function startVisualJob(body: { mode: string; batch?: string; indices?: number[]; opening?: boolean }, message: string) {
     if (!detail) return;
-    if (!keysReady(body.mode === "summary" ? ["direction"] : visualNeeds())) return;
+    // Rendering a saved composition runs locally and needs no provider key.
+    if (body.mode !== "render" && !keysReady(body.mode === "summary" ? ["direction"] : visualNeeds())) return;
     await action(async () => {
       if (unsaved) throw new Error(t("Save changes before regenerating."));
       const job = await api<Job>(projectRoute(detail.id) + "/job", { step: "4", ...body });
       setJobs((jobs) => [...jobs, job]);
       notice(message);
     });
+  }
+  /** Switch the selected segment between a still image and motion; the other kind's files are kept. */
+  async function switchVisual(visualizer: "image" | "hf") {
+    if (!detail || selected === 0) return;
+    if (dirty) {
+      notice("Save your narration edit before changing the visual type.");
+      return;
+    }
+    await action(async () => {
+      const updated = await api<Detail>(projectRoute(detail.id) + "/visual-type", {
+        index: selected,
+        visualizer,
+        expected_hash: detail.hashes.script,
+      });
+      setDetail(updated);
+      initializeDraft(updated, step);
+      setKeyframe(null);
+      const after = updated.segments.find((s) => s.index === selected);
+      notice(
+        visualizer === "image"
+          ? after?.visual ? "Segment uses its still image again." : "Segment now uses a still image. Generate the image to see it."
+          : after?.motion?.video_current ? "Segment uses its rendered motion again."
+            : "Segment now uses motion. Design it with Claude Code in the Segment visual panel.",
+      );
+    });
+  }
+  async function showFiles(folder: string) {
+    if (!detail) return;
+    await invoke("reveal_project_path", { project: detail.id, path: folder }).catch((e) => notice(String(e)));
   }
   async function saveDirection(summary: string, expected: string) {
     if (!detail) return false;
@@ -725,10 +780,18 @@ export default function App() {
   function resizeAgent(e: React.PointerEvent) {
     e.preventDefault();
     const initial = e.clientX,
-      width = agentWidth;
+      // Start from the width on screen, which the stylesheet may have capped.
+      width = (e.currentTarget.nextElementSibling as HTMLElement | null)?.offsetWidth || agentWidth;
+    // The terminal would otherwise take pointer events (and text selection) mid-drag.
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
     const move = (m: PointerEvent) =>
-      setAgentWidth(Math.max(285, Math.min(650, width + initial - m.clientX)));
+      setAgentWidth(
+        Math.max(285, Math.min(650, window.innerWidth * 0.46, width + initial - m.clientX)),
+      );
     const up = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
@@ -742,6 +805,21 @@ export default function App() {
         s.index === index ? { ...s, [key]: value } : s,
       ),
     });
+  // A motion segment previews its newest output: the video, else Claude Code's keyframes,
+  // else (labelled) the still it used before. It never passes off an old still as the motion.
+  const motion = step === "4" && selected !== 0 && segment?.visualizer === "hf" ? segment.motion : undefined;
+  const motionPreview = (() => {
+    if (!motion) return null;
+    const frames = motion.keyframes;
+    if (keyframe && frames.includes(keyframe))
+      return { path: keyframe, note: t("Keyframe {index} of {count}", { index: frames.indexOf(keyframe) + 1, count: frames.length }) };
+    if (motion.video)
+      return { path: motion.video, note: motion.video_current ? "" : t("Rendered from an earlier composition") };
+    if (frames.length)
+      return { path: frames[Math.floor(frames.length / 2)], note: t("Keyframe preview · render the video to see the motion") };
+    if (segment?.still) return { path: segment.still, note: t("Previous still image · this segment now uses motion") };
+    return { path: null, note: "" };
+  })();
   const selectedMedia =
     step === "3"
       ? reviewAudio?.audio
@@ -751,7 +829,9 @@ export default function App() {
           ? detail?.covers[coverIndex]
           : selected === 0
             ? detail?.opening.visual
-            : segment?.visual;
+            : motionPreview
+              ? motionPreview.path
+              : segment?.visual;
   async function exportCopy() {
     if (!detail || !selectedMedia) return;
     await action(async () => {
@@ -771,6 +851,19 @@ export default function App() {
   }
   const previewMedia =
     selectedMedia && detail ? media(detail.id, selectedMedia, version) : null;
+  // The selected segment's place in Visuals work: why it is outdated, and what is running on it.
+  const visualStale = detail?.state.stale["4"];
+  const selectedStale =
+    visualStale && (!visualStale.segments.length || visualStale.segments.includes(selected)) ? visualStale.reason : null;
+  const agentSegments = detail?.state.agent_active?.step === "4" ? detail.state.agent_active.indices || [] : [];
+  const jobCovers = (mode: string) =>
+    Boolean(
+      activeJob && activeJob.step === "4" && activeJob.mode === mode &&
+        (selected === 0 ? activeJob.opening || mode === "opening" : !activeJob.scope || activeJob.scope.includes(selected)),
+    );
+  // Voice review sits over a dimmed copy of the part's still image, when it has one.
+  const voiceVisual = selected === 0 ? detail?.opening.visual : segment?.visual;
+  const voiceBackdrop = voiceVisual && !/\.(mp4|mov|webm)$/i.test(voiceVisual) ? voiceVisual : null;
 
   return (
     <div
@@ -789,45 +882,52 @@ export default function App() {
           <span>{detail?.raw.source_name || projects.find((p) => p.id === detail?.id)?.source_name || t("Production workspace")}</span>
         </div>
         <div className="header-spacer" />
-        <span className="header-save-state">
-          {dirty
-            ? t("Unsaved changes")
-            : activeJob
-              ? t("Production running")
-              : t("Local workspace")}
-        </span>
+        {(unsaved || writingPending) ? (
+          <span className="header-save-state unsaved">
+            <span className="status-dot" />
+            {t("Unsaved changes")}
+          </span>
+        ) : activeJob ? (
+          <span className="header-save-state running">
+            <Loader2 size={12} className="spin" />
+            {t("Production running")}
+          </span>
+        ) : null}
         {detail && projectGaps.length > 0 && (
           <button className="key-reminder" onClick={() => openSettings("keys")}
             title={projectGaps.map((n) => `${t(n.use)}: ${n.key ? t(providerName(n.key)) : t("unsupported provider")}`).join("\n")}>
             <KeyRound size={13} /> {distinctGaps(projectGaps) === 1 ? t("1 API key missing") : t("{count} API keys missing", { count: distinctGaps(projectGaps) })}
           </button>
         )}
-        <button
-          className="icon-button"
-          title={t("Settings")}
-          aria-label={t("Settings")}
-          onClick={() => openSettings()}
-        >
-          <Settings2 size={17} />
-        </button>
-        <button
-          className="icon-button"
-          title={t("Revision history")}
-          aria-label={t("Revision history")}
-          disabled={!detail}
-          onClick={() => setModal("history")}
-        >
-          <History size={17} />
-        </button>
-        {agentStep && !agentVisible && (
+        <div className="header-actions">
           <button
             className="icon-button"
-            aria-label={t("Show Claude Code pane")}
-            onClick={() => setAgentVisible(true)}
+            title={t("Revision history")}
+            aria-label={t("Revision history")}
+            disabled={!detail}
+            onClick={() => setModal("history")}
           >
-            <PanelRightOpen size={17} />
+            <History size={17} />
           </button>
-        )}
+          <button
+            className="icon-button"
+            title={t("Settings")}
+            aria-label={t("Settings")}
+            onClick={() => openSettings()}
+          >
+            <Settings2 size={17} />
+          </button>
+          {agentStep && !agentVisible && (
+            <button
+              className="icon-button"
+              title={t("Show Claude Code pane")}
+              aria-label={t("Show Claude Code pane")}
+              onClick={() => setAgentVisible(true)}
+            >
+              <PanelRightOpen size={17} />
+            </button>
+          )}
+        </div>
       </header>
       <div className="workspace">
         <nav className="sidebar">
@@ -908,7 +1008,9 @@ export default function App() {
               return (
                 <button
                   key={s.id}
-                  className={`stage-item ${step === s.id ? "active" : ""}`}
+                  className={`stage-item${step === s.id ? " active" : ""}${stale ? " stale" : ready ? " done" : ""}`}
+                  aria-current={step === s.id ? "step" : undefined}
+                  title={stale ? t(stale.reason) : undefined}
                   onClick={() => changeStage(s.id)}
                 >
                   <span className="stage-number">{s.number}</span>
@@ -941,9 +1043,6 @@ export default function App() {
             <button disabled={!bootstrap} onClick={() => setModal("system")}>
               <ShieldCheck size={14} /> {t("System check")}
             </button>
-            <span className="small-muted">
-              {t("Local production workspace")}
-            </span>
           </div>
         </nav>
         <main className="production-main">
@@ -985,7 +1084,8 @@ export default function App() {
                   <current.icon size={18} />
                   <h1>{t(current.name)}</h1>
                   <span
-                    className={`stage-status ${detail.state.stale[step] ? "needs-rebuild" : ""}`}
+                    className={`stage-status ${statusKind}`}
+                    title={detail.state.stale[step] ? t(detail.state.stale[step].reason) : undefined}
                   >
                     <span className="status-dot" />
                     {status}
@@ -998,6 +1098,7 @@ export default function App() {
                   <button
                     className="icon-button"
                     aria-label={t("Refresh project outputs")}
+                    title={t("Refresh project outputs")}
                     onClick={() =>
                       action(async () => {
                         await load(detail.id);
@@ -1011,6 +1112,7 @@ export default function App() {
                   >
                     <RefreshCw size={15} />
                   </button>
+                  <span className="action-divider" />
                   {dirty && (
                     <button
                       className="button small primary"
@@ -1169,7 +1271,7 @@ export default function App() {
                         onGenerate={() => startVisualJob({ mode: "summary" }, "Generating the visual direction.")}
                         onEditInstructions={() => openLibrary("summary")} onDirtyChange={setDirectionDirty} />
                       <div className="visual-batch-actions">
-                        <div><span>{t("Batch images")}</span><small>{t("Uses static-image segments and the enabled opening.")}</small></div>
+                        <div title={t("Uses static-image segments and the enabled opening.")}><span>{t("Batch images")}</span><small>{t("Uses static-image segments and the enabled opening.")}</small></div>
                         <button className="button small" disabled={busy || unsaved || activeAgent || Boolean(activeJob)}
                           onClick={() => startVisualJob({ mode: "static", batch: "missing" }, "Generating missing static images.")}>
                           <Plus size={13} />{t("Fill missing images")}</button>
@@ -1202,13 +1304,15 @@ export default function App() {
                                 })
                               : selected === 0
                                 ? t("Opening quote")
-                                : segment?.visualizer === "hf"
-                                  ? t("Motion composition")
-                                  : t("Static image")}
+                                : step === "3"
+                                  ? t("Recording")
+                                  : segment?.visualizer === "hf"
+                                    ? t("Motion composition")
+                                    : t("Static image")}
                         </span>
                       </div>
                       <div>
-                        {step === "5" && (
+                        {step === "5" && detail.exports.length > 0 && (
                           <select
                             aria-label={t("Export variant")}
                             value={exportIndex}
@@ -1225,7 +1329,7 @@ export default function App() {
                             ))}
                           </select>
                         )}
-                        {step === "6" && (
+                        {step === "6" && detail.covers.length > 0 && (
                           <select
                             aria-label={t("Cover candidate")}
                             value={coverIndex}
@@ -1244,8 +1348,7 @@ export default function App() {
                           >
                             {detail.covers.map((f, i) => (
                               <option key={f} value={i}>
-                                {t("Cover")}
-                                {i + 1}
+                                {t("Cover {index}", { index: i + 1 })}
                               </option>
                             ))}
                           </select>
@@ -1253,31 +1356,39 @@ export default function App() {
                         <button
                           className="icon-button"
                           aria-label={t("Save output copy")}
+                          title={t("Save output copy")}
                           disabled={!selectedMedia || !isTauri()}
                           onClick={exportCopy}
                         >
-                          <Download size={14} />
+                          <Download size={15} />
                         </button>
-                        <button
-                          className="icon-button"
-                          aria-label={t("Fullscreen preview")}
-                          onClick={() =>
-                            video.current?.requestFullscreen() ||
-                            document
-                              .querySelector(".preview-image")
-                              ?.requestFullscreen()
-                          }
-                        >
-                          <Maximize2 size={14} />
-                        </button>
+                        {step !== "3" && (
+                          <button
+                            className="icon-button"
+                            aria-label={t("Fullscreen preview")}
+                            title={t("Fullscreen preview")}
+                            disabled={!previewMedia}
+                            onClick={() =>
+                              (video.current || document.querySelector(".preview-image"))
+                                ?.requestFullscreen()
+                                .catch(() => {})
+                            }
+                          >
+                            <Maximize2 size={15} />
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div
                       className={`preview-canvas ${step === "3" ? "audio-preview" : ""}`}
                     >
                       {step === "3" ? (
+                        <>
+                        {voiceBackdrop && (
+                          <img className="voice-backdrop" src={media(detail.id, voiceBackdrop, version)} alt="" />
+                        )}
                         <div className="voice-preview">
-                          <Music2 size={35} />
+                          <Music2 size={28} />
                           <h2>
                             {reviewAudio?.audio
                               ? t("Listen to the delivery.")
@@ -1302,6 +1413,7 @@ export default function App() {
                             />
                           )}
                         </div>
+                        </>
                       ) : previewMedia ? (
                         /\.(mp4|mov|webm)$/i.test(selectedMedia!) ? (
                           <video
@@ -1331,13 +1443,15 @@ export default function App() {
                         )
                       ) : (
                         <div className="preview-empty">
-                          <Film size={34} />
+                          <Film size={30} />
                           <h2>
                             {step === "5"
                               ? t("Your assembled story appears here.")
                               : step === "6"
                                 ? t("Your cover appears here.")
-                                : t("A frame for this part of the story.")}
+                                : motion
+                                  ? t("This segment's motion is not designed yet.")
+                                  : t("A frame for this part of the story.")}
                           </h2>
                           <p>
                             {step === "5"
@@ -1348,64 +1462,43 @@ export default function App() {
                                 ? t(
                                     "Generate cover candidates from your chosen title.",
                                   )
-                                : t(
-                                    "Generate an image or activate Claude Code for motion.",
-                                  )}
+                                : motion
+                                  ? t("Design it with Claude Code in the Segment visual panel below.")
+                                  : t(
+                                      "Generate an image or activate Claude Code for motion.",
+                                    )}
                           </p>
                         </div>
                       )}
+                      {motionPreview?.note && previewMedia && (
+                        <span className="preview-note">{motionPreview.note}</span>
+                      )}
                     </div>
                     <div className="preview-caption">
-                      <span>
-                        {selectedMedia ||
-                          reviewAudio?.audio ||
-                          t("Awaiting production")}
+                      <span title={selectedMedia || undefined}>
+                        {selectedMedia || t("Awaiting production")}
                       </span>
                       <span className="mono">
                         {step === "5"
                           ? formatTime(totalDuration)
-                          : reviewAudio?.duration
-                            ? t("{seconds}s", {
-                                seconds: reviewAudio.duration!.toFixed(1),
-                              })
-                            : t("Estimated")}
+                          : step === "6"
+                            ? ""
+                            : reviewAudio?.duration
+                              ? t("{seconds}s", {
+                                  seconds: reviewAudio.duration!.toFixed(1),
+                                })
+                              : t("Estimated")}
                       </span>
                     </div>
                     {["3", "4"].includes(step) && (
+                      <div className={step === "4" ? "segment-inspector" : undefined}>
                       <div className="narration-inspector">
                         <div className="narration-heading">
                           <span>
                             <FileText size={14} /> {t("Narration")}
                           </span>
-                          {selected === 0 ? (
+                          {selected === 0 && (
                             <span className="small-muted">{t("Edit the opening quote in Writing.")}</span>
-                          ) : (
-                          <div>
-                            <select
-                              aria-label={t("Segment visual type")}
-                              value={scriptSegment?.visualizer || "image"}
-                              disabled={
-                                selected === 0 ||
-                                Boolean(activeJob) ||
-                                activeAgent
-                              }
-                              onChange={(e) =>
-                                editSegment("visualizer", e.target.value)
-                              }
-                            >
-                              <option value="image">{t("Static image")}</option>
-                              <option value="hf">
-                                {t("Motion / HyperFrames")}
-                              </option>
-                            </select>
-                            <button
-                              className="icon-button"
-                              aria-label={t("More visual settings")}
-                              onClick={() => openSettings()}
-                            >
-                              <MoreHorizontal size={16} />
-                            </button>
-                          </div>
                           )}
                         </div>
                         <textarea
@@ -1454,6 +1547,36 @@ export default function App() {
                           </button>
                         </div>
                       </div>
+                      {step === "4" && (
+                        <SegmentVisual
+                          project={detail.id}
+                          segment={selected === 0 ? undefined : segment}
+                          opening={selected === 0 ? detail.opening : null}
+                          version={version}
+                          stale={selectedStale}
+                          locked={busy || activeAgent || Boolean(activeJob)}
+                          narrationDirty={dirty}
+                          agentSegments={agentSegments}
+                          agentHere={agentSegments.includes(selected)}
+                          rendering={jobCovers("render")}
+                          generating={jobCovers("static") || jobCovers("opening")}
+                          previewing={keyframe}
+                          onKind={switchVisual}
+                          onGenerateStill={() =>
+                            selected === 0
+                              ? startVisualJob({ mode: "opening", opening: true, indices: [] }, "Generating the opening image.")
+                              : startVisualJob({ mode: "static", indices: [selected] }, `Generating the image for segment ${selected}.`)
+                          }
+                          onDesign={() => activateFor([selected])}
+                          onFinish={() => agentHandle.current?.stop()}
+                          onRender={() => startVisualJob({ mode: "render", indices: [selected] }, `Rendering segment ${selected}…`)}
+                          onPreview={setKeyframe}
+                          onGoTo={changeSegment}
+                          onSettings={() => openSettings()}
+                          onShowFiles={showFiles}
+                        />
+                      )}
+                      </div>
                     )}
                     {step === "5" && (
                       <div className="assembly-inspector">
@@ -1493,15 +1616,13 @@ export default function App() {
                             }
                           >
                             <img
+                              loading="lazy"
                               src={media(detail.id, f, version)}
                               alt={t("Cover candidate {index}", {
                                 index: i + 1,
                               })}
                             />
-                            <span>
-                              {t("Cover")}
-                              {i + 1}
-                            </span>
+                            <span>{t("Cover {index}", { index: i + 1 })}</span>
                           </button>
                         ))}
                       </div>
@@ -1509,7 +1630,8 @@ export default function App() {
                   </div>
                 )}
               </div>
-              {detail.segments.length > 0 && (
+              {/* Writing and Covers do not work per segment, so the sequence stays out of their way. */}
+              {detail.segments.length > 0 && !["1", "6"].includes(step) && (
                 <Timeline
                   openingEnabled={
                     openingEnabled && ["3", "4", "5"].includes(step)
@@ -1529,6 +1651,7 @@ export default function App() {
                     {t(activeJob.log.at(-1) || "Starting production…")}
                   </span>
                   <button
+                    disabled={activeJob.status === "cancelling"}
                     onClick={() =>
                       api("/jobs/" + activeJob.id + "/cancel", {}).catch((e) =>
                         notice(String(e)),
@@ -1554,6 +1677,8 @@ export default function App() {
               }
             >
               <AgentPane
+                handle={agentHandle}
+                target={step === "4" && selected !== 0 ? t("Segment {index}", { index: selected }) : undefined}
                 step={step}
                 launch={launch}
                 onActivate={activate}
@@ -1570,8 +1695,12 @@ export default function App() {
       </div>
       <footer className="app-statusbar">
         <span>
-          <span className="status-dot live" />
-          {bootstrap ? t("Production service ready") : t("Starting production service")}
+          <span className={`status-dot ${error ? "error" : bootstrap ? "live" : ""}`} />
+          {error
+            ? t("The production service could not start")
+            : bootstrap
+              ? t("Production service ready")
+              : t("Starting production service")}
         </span>
         <span>
           {detail?.segments.length

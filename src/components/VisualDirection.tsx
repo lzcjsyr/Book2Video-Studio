@@ -16,7 +16,7 @@ export default function VisualDirection({ summary, hash, outdated, disabled, onS
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const { t } = useI18n();
-  const [collapsed, toggle] = useCollapsed("visual-direction");
+  const [collapsed, toggle] = useCollapsed("visual-direction", true);
   // An edit remembers the saved version it started from, so a conflicting save is rejected.
   const [draft, setDraft] = useState<{ text: string; hash: string } | null>(null);
   const text = draft?.text ?? summary;

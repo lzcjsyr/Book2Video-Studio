@@ -3,7 +3,7 @@
   "productName": "Book2Video Studio", "version": "0.1.0", "identifier": "com.book2video.studio",
   "build": { "beforeDevCommand": "npm run web", "devUrl": "http://127.0.0.1:1420", "beforeBuildCommand": "npm run build && npm run stage", "frontendDist": "../dist" },
   "app": {
-    "windows": [{"label":"main","title":"Book2Video Studio","width":1480,"height":960,"minWidth":1000,"minHeight":720,"backgroundColor":"#131619"}],
+    "windows": [{"label":"main","title":"Book2Video Studio","width":1480,"height":960,"minWidth":1000,"minHeight":720,"backgroundColor":"#111315"}],
     "security": { "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost http://127.0.0.1:* data:; media-src 'self' http://127.0.0.1:* blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; frame-src 'none'" }
   },
   "bundle": { "active": true, "targets": "all", "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"], "resources": { "../build/backend/": "backend/", "../build/engine/": "engine/", "../build/runtime/": "runtime/" }, "macOS": {"minimumSystemVersion":"11.0"} }

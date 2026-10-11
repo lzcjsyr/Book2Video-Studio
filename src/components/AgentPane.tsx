@@ -1,5 +1,5 @@
 import { useI18n } from "../i18n";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -14,7 +14,12 @@ import {
 import "@xterm/xterm/css/xterm.css";
 import type { ClaudeCodeMode, Launch, Stage } from "../types";
 
+/** Lets the workspace end the session (for example "Finish & render") the same way the Stop button does. */
+export type AgentHandle = { stop: () => Promise<void> };
+
 export default function AgentPane({
+  handle,
+  target,
   step,
   launch,
   onActivate,
@@ -25,6 +30,9 @@ export default function AgentPane({
   claudeMode,
   disabled,
 }: {
+  handle?: React.Ref<AgentHandle>;
+  /** What an activation here works on, such as "Segment 3". */
+  target?: string;
   step: Stage;
   launch: Launch | null;
   onActivate: () => void;
@@ -49,11 +57,13 @@ export default function AgentPane({
       cursorBlink: true,
       scrollback: 6000,
       theme: {
-        background: "#121518",
-        foreground: "#d2d7dc",
-        cursor: "#ee9f74",
-        selectionBackground: "#3f454e",
-        black: "#131619",
+        // Matches the pane's surface (--bg-0) and accent in styles.css.
+        background: "#111315",
+        foreground: "#d8dcdf",
+        cursor: "#eba27e",
+        cursorAccent: "#111315",
+        selectionBackground: "#3a4047",
+        black: "#111315",
         red: "#e07b75",
         green: "#87b79e",
         yellow: "#e8b884",
@@ -137,12 +147,15 @@ export default function AgentPane({
       });
   }, [launch]);
   async function stop() {
-    if (session.current)
-      await invoke("terminal_stop", { id: session.current.id });
+    // Forget the session first: the exit event that follows the kill must not finish it twice.
+    const current = session.current;
     session.current = null;
+    if (current)
+      await invoke("terminal_stop", { id: current.id }).catch((e) => onError(String(e)));
     setRunning(false);
     onFinished();
   }
+  useImperativeHandle(handle, () => ({ stop }));
   return (
     <aside className="agent-pane">
       <div className="pane-heading">
@@ -162,7 +175,7 @@ export default function AgentPane({
           <span className={running ? "status-dot live" : "status-dot"} />
           <span>{running ? t("Interactive session") : t("Step agent")}</span>
           <span className="muted">
-            {(launch?.scope && t(launch.scope)) || (step === "1" ? t("Writing") : t("Visuals"))}
+            {(launch?.scope && t(launch.scope)) || (step === "1" ? t("Writing") : target || t("Visuals"))}
           </span>
         </div>
         <p className="small-muted agent-mode">
@@ -196,7 +209,7 @@ export default function AgentPane({
               disabled={disabled || !isTauri()}
               onClick={onActivate}
             >
-              <Play size={13} /> {t("Activate Claude Code")}
+              <Play size={14} /> {t("Activate Claude Code")}
               <ArrowUpRight size={14} />
             </button>
             <span className="small-muted">

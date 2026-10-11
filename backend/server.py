@@ -31,6 +31,10 @@ HIDDEN_FILE = "hidden-projects.json"
 GOOGLE_CHECK_FILE = "google-adc-check.json"
 LIBRARY_ENV = "AIGC_VIDEO_LIBRARY_DIR"
 MEDIA = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".mp4", ".mov", ".webm", ".srt", ".pdf", ".txt"}
+STILL_EXTENSIONS = [".png", ".jpg", ".jpeg"]
+RENDER_REASON = "Render the revised motion compositions to review the new visuals"
+# Outdated-visual reasons that only concern a segment's previous visual type.
+TYPE_REASONS = {"Visual type changed", RENDER_REASON}
 TEXT_FILES = {"raw": "raw.json", "script": "script.json", "summary": "mini_summary.json"}
 METADATA_FIELDS = ("video_titles", "cover_titles", "cover_subtitles", "golden_quotes")
 # Settings the desktop keeps for itself; the engine's configuration rejects unknown keys.
@@ -167,7 +171,12 @@ class Studio:
                 except (ProcessLookupError, PermissionError):
                     pass
                 state.pop("agent_active", None)
-                state.setdefault("stale", {})[active["step"]] = {"reason": "Previous agent session was interrupted. Review its outputs.", "segments": active.get("indices", [])}
+                stale = state.setdefault("stale", {})
+                previous, indices = stale.get(active["step"]), active.get("indices") or []
+                # Segments that were already outdated stay outdated (an empty list means all of them).
+                if not (previous and not previous["segments"]):
+                    stale[active["step"]] = {"reason": "Previous agent session was interrupted. Review its outputs.",
+                                             "segments": sorted(set(previous["segments"]) | set(indices)) if previous and indices else indices}
                 atomic_json(path, state)
 
     @property
@@ -464,6 +473,45 @@ class Studio:
                 return candidate
         return None
 
+    # The engine assembles images/segment_N.png whenever it exists, whatever the segment's type.
+    # A motion segment's still therefore waits in images/stills/ and comes back if the segment
+    # returns to a still image, so switching types never discards finished work.
+    def still(self, p, idx):
+        """The segment's still image: in use in images/, or set aside in images/stills/."""
+        return self.asset(p, "images", f"segment_{idx}", STILL_EXTENSIONS) or self.asset(p, "images/stills", f"segment_{idx}", STILL_EXTENSIONS)
+
+    @staticmethod
+    def park_still(p, idx):
+        for ext in STILL_EXTENSIONS:
+            image = p / "images" / f"segment_{idx}{ext}"
+            if image.is_file():
+                (p / "images/stills").mkdir(exist_ok=True)
+                for old in STILL_EXTENSIONS:
+                    (p / "images/stills" / f"segment_{idx}{old}").unlink(missing_ok=True)
+                image.replace(p / "images/stills" / image.name)
+
+    def restore_still(self, p, idx):
+        if self.asset(p, "images", f"segment_{idx}", STILL_EXTENSIONS):
+            return
+        parked = self.asset(p, "images/stills", f"segment_{idx}", STILL_EXTENSIONS)
+        if parked:
+            parked.replace(p / "images" / parked.name)
+
+    def motion(self, p, idx):
+        """Where a motion segment stands: Claude Code's composition, its keyframes, and the rendered video."""
+        work = p / "images/hyperframes" / f"segment_{idx}"
+        html = work / "index.html"
+        composed = html.stat().st_mtime if html.is_file() else None
+        frames = sorted((work / "snapshots").glob("frame-*.png")) or sorted(f for f in (work / "snapshots").glob("*.png"))
+        video = self.asset(p, "images", f"segment_{idx}", [".mp4", ".mov", ".webm"])
+        # Keyframes and renders made before the latest composition edit are outdated (1 s for coarse clocks).
+        return {"composition": str(html.relative_to(p)) if composed else None, "composed": composed,
+                "folder": str(work.relative_to(p)),
+                "keyframes": [str(f.relative_to(p)) for f in frames],
+                "keyframes_current": bool(frames) and composed is not None and min(f.stat().st_mtime for f in frames) >= composed - 1,
+                "video": str(video.relative_to(p)) if video else None,
+                "video_current": bool(video) and (composed is None or video.stat().st_mtime >= composed - 1)}
+
     def detail(self, project_id):
         p = self.project(project_id)
         with self.lock:
@@ -485,13 +533,23 @@ class Studio:
             state["hashes"] = hashes
             self.persist(p, state)
             segments = []
+            relative = lambda f: str(f.relative_to(p)) if f else None
             for s in script.get("segments", []):
                 idx = int(s["index"])
                 audio = self.asset(p, "voice", f"voice_{idx}", [".wav", ".mp3"])
-                extensions = [".mp4", ".mov", ".webm", ".png", ".jpg"] if s.get("visualizer") == "hf" else [".png", ".jpg", ".jpeg", ".mp4", ".mov"]
-                visual = self.asset(p, "images", f"segment_{idx}", extensions)
-                html = p / "images/hyperframes" / f"segment_{idx}/index.html"
-                segments.append({**s, "audio": str(audio.relative_to(p)) if audio else None, "visual": str(visual.relative_to(p)) if visual else None, "duration": duration(audio), "composition": str(html.relative_to(p)) if html.exists() else None})
+                motion = self.motion(p, idx)
+                still = self.still(p, idx)
+                if s.get("visualizer") == "hf":
+                    # A motion segment shows its rendered video only; an older still is reported separately.
+                    visual = motion["video"]
+                    keyframes = motion["keyframes"]
+                    poster = keyframes[len(keyframes) // 2] if keyframes else relative(still)
+                else:
+                    image = self.asset(p, "images", f"segment_{idx}", [".png", ".jpg", ".jpeg", ".mp4", ".mov"])
+                    visual = relative(image)
+                    poster = visual if image and image.suffix.lower() in {".png", ".jpg", ".jpeg"} else relative(still)
+                segments.append({**s, "audio": relative(audio), "visual": visual, "duration": duration(audio), "composition": motion["composition"],
+                                 "still": relative(still), "poster": poster, "motion": motion})
             artifact_paths = [f for folder in ["images", "voice"] for f in (p / folder).rglob("*") if f.is_file() and f.suffix.lower() in MEDIA | {".html"}]
             artifact_paths += [f for f in p.iterdir() if f.is_file() and f.suffix.lower() in MEDIA]
             assets = {str(f.relative_to(p)): f"{f.stat().st_mtime_ns}:{f.stat().st_size}" for f in artifact_paths}
@@ -576,14 +634,72 @@ class Studio:
                 self.direction_changed(state)
             else:
                 stage = {"raw": "1", "script": "1.5"}[kind]
+                switched = {}
+                if kind == "script":
+                    kinds = {s.get("index"): s.get("visualizer", "image") for s in before}
+                    switched = {s["index"]: self.use_visual_files(p, s["index"], s.get("visualizer", "image"))
+                                for s in value["segments"] if s["index"] in kinds and kinds[s["index"]] != s.get("visualizer", "image")}
                 self.invalidate(state, "4" if visual_only else stage, body.get("segments"))
                 if visual_only:
-                    changed = [b["index"] for a, b in zip(previous["segments"], value["segments"]) if a.get("visualizer", "image") != b.get("visualizer", "image")]
-                    old = state["stale"].get("4")
-                    state["stale"]["4"] = {"reason": "Visual type changed", "segments": [] if old and not old["segments"] else sorted(set(changed) | set(old["segments"] if old else []))}
+                    # A segment that already has the other kind of visual (a set-aside still, a current render) is ready.
+                    self.mark_visual_switch(state, switched)
                 else:
                     state["stale"].pop(stage, None)
             state.setdefault("hashes", {})[kind] = fingerprint(path)
+            self.persist(p, state)
+        return self.detail(project_id)
+
+    def use_visual_files(self, p, idx, visualizer) -> bool:
+        """Put the segment's files for its new visual type in place; True when that visual is ready."""
+        if visualizer == "hf":
+            motion = self.motion(p, idx)
+            if motion["video"]:
+                self.park_still(p, idx)
+            return motion["video_current"]
+        self.restore_still(p, idx)
+        return bool(self.asset(p, "images", f"segment_{idx}", STILL_EXTENSIONS))
+
+    @staticmethod
+    def mark_visual_switch(state, switched):
+        """Visuals still to make are outdated; ready ones drop reasons that only concerned their old type."""
+        stale = state["stale"].get("4")
+        pending = sorted(i for i, ready in switched.items() if not ready)
+        if pending:
+            if not stale:
+                state["stale"]["4"] = {"reason": "Visual type changed", "segments": pending}
+            elif stale["segments"]:
+                stale["segments"] = sorted(set(stale["segments"]) | set(pending))
+        elif stale and stale["segments"] and stale["reason"] in TYPE_REASONS:
+            stale["segments"] = [i for i in stale["segments"] if i not in switched]
+            if not stale["segments"]:
+                state["stale"].pop("4")
+
+    def set_visual(self, project_id, body):
+        """Switch one segment between a still image and motion, keeping the other kind's files."""
+        p = self.project(project_id)
+        index, visualizer = body.get("index"), body.get("visualizer")
+        if type(index) is not int or visualizer not in {"image", "hf"}:
+            raise ValueError("Choose a segment and a still image or motion.")
+        with self.lock:
+            if self.busy(project_id):
+                raise Conflict("Stop the running job or agent before changing a segment's visual.")
+            path = p / "text/script.json"
+            if "expected_hash" in body and body["expected_hash"] != fingerprint(path):
+                raise Conflict("This file changed outside the editor. Refresh before saving; your draft is kept.")
+            script = read_json(path, {})
+            segment = next((s for s in script.get("segments", []) if s.get("index") == index), None)
+            if segment is None:
+                raise ValueError(f"Segment {index} does not exist.")
+            if segment.get("visualizer", "image") == visualizer:
+                return self.detail(project_id)
+            self.snapshot(p, [path], "Before changing a segment's visual type")
+            segment["visualizer"] = visualizer
+            atomic_json(path, script)
+            ready = self.use_visual_files(p, index, visualizer)
+            state = self.state(p)
+            state.setdefault("hashes", {})["script"] = fingerprint(path)
+            self.invalidate(state, "4", [index])
+            self.mark_visual_switch(state, {index: ready})
             self.persist(p, state)
         return self.detail(project_id)
 
@@ -737,10 +853,13 @@ class Studio:
             if body["step"] == "4":
                 script = read_json(p / "text/script.json", {})
                 chosen = body.get("indices") or [s["index"] for s in script["segments"]]
+                switched = [s["index"] for s in script["segments"] if s["index"] in chosen and s.get("visualizer", "image") != "hf"]
                 for segment in script["segments"]:
                     if segment["index"] in chosen:
                         segment["visualizer"] = "hf"
                 atomic_json(p / "text/script.json", script)
+                for index in switched:
+                    self.use_visual_files(p, index, "hf")
             state = self.state(p)
             if body["step"] == "4":
                 state.setdefault("hashes", {})["script"] = fingerprint(p / "text/script.json")
@@ -754,6 +873,7 @@ class Studio:
             state = self.state(p)
             active = state.get("agent_active")
             warning = None
+            before = state["stale"].get("4")
             if active:
                 if active["step"] == "1":
                     target = p / "text/raw.json"
@@ -778,13 +898,23 @@ class Studio:
                 else:
                     state["stale"].pop(active["step"], None)
                 if active["step"] == "4":
-                    state["stale"]["4"] = {"reason": "Render the revised motion compositions to review the new visuals", "segments": active["indices"]}
+                    # The session's segments wait for a render (unless their video already matches the
+                    # composition); other segments keep whatever was outdated before the session.
+                    pending = [i for i in active["indices"] or [] if not self.motion(p, i)["video_current"]]
+                    if before and not before["segments"]:
+                        state["stale"]["4"] = before
+                    elif before and set(before["segments"]) - set(active["indices"] or []):
+                        state["stale"]["4"] = {**before, "segments": sorted(set(before["segments"]) | set(pending))}
+                    elif pending:
+                        state["stale"]["4"] = {"reason": RENDER_REASON, "segments": pending}
                     missing = [i for i in active["indices"] or [] if not (p / "images/hyperframes" / f"segment_{i}" / "index.html").is_file()]
                     if missing:
                         warning = f"Claude Code ended without a composition for segment {', '.join(map(str, missing))}. Activate Claude Code for it again."
             self.persist(p, state)
         result = self.detail(project_id)
         result["warning"] = warning
+        # The app renders what a Visuals session composed as soon as the session ends.
+        result["finished"] = {"step": active["step"], "indices": active["indices"] or []} if active else None
         return result
 
     def run_job(self, project_id, body):
@@ -1034,6 +1164,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json(studio.run_job(project_id, body))
                     if action == "agent":
                         return self.json(studio.prepare_agent(project_id, body))
+                    if action == "visual-type":
+                        return self.json(studio.set_visual(project_id, body))
                     if action == "finish-agent":
                         return self.json(studio.finish_agent(project_id, body))
                     if action == "restore":

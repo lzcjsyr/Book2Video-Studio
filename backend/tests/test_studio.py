@@ -590,6 +590,7 @@ class MotionRenderTests(unittest.TestCase):
         self.assertEqual(len(calls),1);self.assertEqual(calls[0][:len(hyperframes_command())+1],[*hyperframes_command(),'render'])
         payload=json.loads(calls[0][calls[0].index('--variables')+1]);self.assertEqual(payload['durationSeconds'],1.0);self.assertEqual(payload['content'],script['segments'][0]['content'])
         self.assertEqual((self.p/'images/segment_1.mp4').read_bytes(),b'rendered media');self.assertFalse((self.p/'images/segment_1.png').exists())
+        self.assertEqual((self.p/'images/stills/segment_1.png').read_bytes(),b'previous image')
 
 class ImageModelTests(unittest.TestCase):
     """A model left over from another image service is refused before any provider is called."""
@@ -674,6 +675,7 @@ class MotionContextTests(unittest.TestCase):
             self.assertIn(f"Segment {i} → `{self.p/'images/hyperframes'/f'segment_{i}'/'index.html'}`",context)
             self.assertIn(f'# Segment {i} (task',context)
         self.assertNotIn('segment_2/index.html',context)
+        self.assertEqual(launch['cwd'],str(self.p/'images/hyperframes'))
         (self.p/'images/hyperframes/segment_3/index.html').write_text('<!DOCTYPE html>')
         finished=self.studio.finish_agent(self.id,{})
         self.assertIn('segment 1.',finished['warning']);self.assertNotIn('3',finished['warning'])
@@ -681,7 +683,69 @@ class MotionContextTests(unittest.TestCase):
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[2]})
         context=Path(launch['context']).read_text()
         self.assertTrue(context.startswith('The selected segment is your task.'));self.assertNotIn('task 1 of',context)
+        work=self.p/'images/hyperframes/segment_2'
+        self.assertEqual(launch['cwd'],str(work));self.assertIn(f'cd "{work}"',context);self.assertIn(str(work/'snapshots'),context)
+        self.assertIn('Finish & render',context)
         self.studio.finish_agent(self.id,{})
+
+class SegmentVisualTests(unittest.TestCase):
+    """A segment switches between a still and motion without losing either; motion reports each stage."""
+    setUp=ProjectTests.setUp
+    open=ProjectTests.open
+    tearDown=ProjectTests.tearDown
+    def switch(self,visualizer,index=1):
+        d=self.studio.detail(self.p.name)
+        return self.studio.set_visual(self.p.name,{'index':index,'visualizer':visualizer,'expected_hash':d['hashes']['script']})
+    def compose(self,index=1,frames=2):
+        work=self.p/'images/hyperframes'/f'segment_{index}';(work/'snapshots').mkdir(parents=True,exist_ok=True)
+        (work/'index.html').write_text('<!DOCTYPE html>')
+        for n in range(frames):(work/'snapshots'/f'frame-0{n}-at-{n}.0s.png').write_bytes(b'frame')
+        os.utime(work/'index.html',(1000,1000))
+        return work
+    def test_motion_without_a_render_shows_no_video_but_keeps_the_still(self):
+        self.compose()
+        after=self.switch('hf');segment=after['segments'][0]
+        self.assertIsNone(segment['visual']);self.assertEqual(segment['still'],'images/segment_1.png')
+        self.assertEqual(segment['motion']['composition'],'images/hyperframes/segment_1/index.html')
+        self.assertEqual(len(segment['motion']['keyframes']),2);self.assertTrue(segment['motion']['keyframes_current'])
+        self.assertIsNone(segment['motion']['video']);self.assertIn('snapshots/frame-01',segment['poster'])
+        self.assertEqual(after['state']['stale']['4']['segments'],[1]);self.assertFalse(after['ready']['4'])
+        self.assertTrue((self.p/'images/segment_1.png').exists())
+    def test_rendered_motion_and_still_trade_places(self):
+        self.compose();(self.p/'images/segment_1.mp4').write_bytes(b'video')
+        after=self.switch('hf')
+        self.assertEqual(after['segments'][0]['visual'],'images/segment_1.mp4');self.assertTrue(after['segments'][0]['motion']['video_current'])
+        self.assertFalse((self.p/'images/segment_1.png').exists());self.assertEqual((self.p/'images/stills/segment_1.png').read_bytes(),b'visual')
+        self.assertNotIn('4',after['state']['stale']);self.assertIn('5',after['state']['stale'])
+        back=self.switch('image')
+        self.assertEqual(back['segments'][0]['visual'],'images/segment_1.png');self.assertEqual((self.p/'images/segment_1.png').read_bytes(),b'visual')
+        self.assertNotIn('4',back['state']['stale'])
+        self.assertEqual(json.loads((self.p/'text/script.json').read_text())['segments'][0]['visualizer'],'image')
+    def test_an_edited_composition_outdates_its_render(self):
+        work=self.compose();(self.p/'images/segment_1.mp4').write_bytes(b'video');os.utime(self.p/'images/segment_1.mp4',(500,500))
+        segment=self.switch('hf')['segments'][0]
+        self.assertFalse(segment['motion']['video_current']);self.assertEqual(self.studio.detail(self.p.name)['state']['stale']['4']['segments'],[1])
+        os.utime(work/'snapshots/frame-00-at-0.0s.png',(10,10))
+        self.assertFalse(self.studio.detail(self.p.name)['segments'][0]['motion']['keyframes_current'])
+    def test_switch_is_refused_during_an_agent_or_after_an_outside_edit(self):
+        with self.assertRaises(Conflict):
+            self.studio.set_visual(self.p.name,{'index':1,'visualizer':'hf','expected_hash':'old'})
+        state=self.studio.state(self.p);state['agent_active']={'step':'4','indices':[2]};self.studio.persist(self.p,state)
+        with self.assertRaises(Conflict):self.switch('hf')
+    def test_ending_a_motion_session_keeps_other_outdated_segments(self):
+        state=self.studio.state(self.p);state['stale']['4']={'reason':'Visual type changed','segments':[2]}
+        state['agent_active']={'step':'4','indices':[1],'launch':'x','owner':0,'raw_before':''};self.studio.persist(self.p,state)
+        script=json.loads((self.p/'text/script.json').read_text());script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
+        self.compose()
+        finished=self.studio.finish_agent(self.p.name,{})
+        self.assertEqual(finished['finished'],{'step':'4','indices':[1]});self.assertIsNone(finished['warning'])
+        self.assertEqual(finished['state']['stale']['4']['segments'],[1,2])
+
+    def test_an_interrupted_session_keeps_other_outdated_segments(self):
+        state=self.studio.state(self.p);state['stale']['4']={'reason':'Visual type changed','segments':[2]}
+        state['agent_active']={'step':'4','indices':[1],'launch':'x','owner':999999,'raw_before':''};self.studio.persist(self.p,state)
+        reopened=self.open().state(self.p)
+        self.assertNotIn('agent_active',reopened);self.assertEqual(reopened['stale']['4']['segments'],[1,2])
 
 class WorkspaceTests(unittest.TestCase):
     """Projects live in the workspace folder or at any location picked at creation."""

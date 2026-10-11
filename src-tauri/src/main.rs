@@ -403,6 +403,30 @@ fn open_folder(app: tauri::AppHandle, folder: String) -> Result<(), String> {
     reveal(&target)
 }
 
+/// Show a folder inside a project (such as a segment's motion work) in Finder or Explorer.
+#[tauri::command]
+async fn reveal_project_path(app: tauri::AppHandle, project: String, path: String) -> Result<(), String> {
+    off_main_thread(move || {
+        let info = app
+            .state::<Runtime>()
+            .info
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("Start the project service first")?;
+        let root = project_root(&info, &project)?;
+        let target = root.join(&path).canonicalize().map_err(|e| e.to_string())?;
+        if !target.starts_with(&root)
+            || !target.is_dir()
+            || target.components().any(|c| c.as_os_str() == ".studio")
+        {
+            return Err("Choose a folder inside this project".into());
+        }
+        reveal(&target)
+    })
+    .await
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -413,6 +437,7 @@ fn main() {
             export_artifact,
             open_library_folder,
             open_folder,
+            reveal_project_path,
             credentials::credential_status,
             credentials::credential_save,
             claude_code::claude_code_status,

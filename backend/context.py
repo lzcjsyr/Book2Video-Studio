@@ -66,7 +66,15 @@ def prepare(studio, project, body):
             payload = {"segmentIndex": segment["index"], "index": segment["index"], "title": segment.get("title") or f"Segment {segment['index']}", "content": segment["content"], "durationSeconds": seconds, "width": width, "height": height, "stylePreset": style, "descriptionSummary": summary.get("summary", "")}
             (work / "studio-payload.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
             template = (studio.library_root / "prompts/step4_hyperframes_agent.md").read_text()
-            prompt_parts.append(template.format(skill_path_context=build_step4_hyperframes_skill_path_context(studio.library_root / "skills/step4/hyperframes"), style_preset=style, style_context=build_step4_hyperframes_style_context(style, skills_root=studio.library_root / "skills/step4"), payload_json=json.dumps(payload, ensure_ascii=False, indent=2), target_index_html_path=str(work / "index.html")))
+            part = template.format(skill_path_context=build_step4_hyperframes_skill_path_context(studio.library_root / "skills/step4/hyperframes"), style_preset=style, style_context=build_step4_hyperframes_style_context(style, skills_root=studio.library_root / "skills/step4"), payload_json=json.dumps(payload, ensure_ascii=False, indent=2), target_index_html_path=str(work / "index.html"))
+            # Studio reads this segment's work from one folder: the composition and the keyframes it previews.
+            part += (f"\n\n### Studio 工作目录（段落 {segment['index']}）\n\n"
+                     f"- 本段所有文件只放在 `{work}` 内：`index.html`、`snapshots/`，以及你需要的辅助文件。\n"
+                     f"- 每条 hyperframes 命令（validate、inspect、snapshot）都必须在该目录内运行：先 `cd \"{work}\"`。"
+                     f"这样 `snapshot` 的关键帧会写入 `{work / 'snapshots'}`，Studio 会把它们显示为本段的预览。\n"
+                     "- 不要运行 `hyperframes render`，不要在 `images/` 下写入或删除 `segment_*.png` / `segment_*.mp4`："
+                     "会话结束后，Studio 会按录音实际时长把 `index.html` 渲染为本段视频。\n")
+            prompt_parts.append(part)
         targets = [project / "images/hyperframes" / f"segment_{s['index']}" / "index.html" for s in chosen]
         if len(chosen) == 1:
             prompt = "The selected segment is your task. Preserve its existing composition until you have revised it. The application will render your saved HTML.\n\n" + prompt_parts[0]
@@ -79,8 +87,13 @@ def prepare(studio, project, body):
                       "\n\nPreserve existing compositions until you have revised them. The application will render your saved HTML.\n\n" +
                       "\n\n".join(f"# Segment {s['index']} (task {n} of {len(chosen)})\n\n{part}\n\n# End of segment {s['index']}"
                                     for n, (s, part) in enumerate(zip(chosen, prompt_parts), 1)))
+        prompt += ("\n\nHow this session ends: when every composition above passes its checks, finish with a short summary and tell the user, "
+                   "in their language, that the composition is saved and that they can click **Finish & render** in Studio's Visuals panel "
+                   "(or type /exit here). Studio then renders each saved index.html to the segment's video and shows it in the preview. "
+                   "If the user asks for changes, revise index.html and repeat the checks and snapshots before saying it is ready again.")
         prompt += "\n\nThis application bundles the pinned HyperFrames CLI (0.7.10) as the `hyperframes` command, with its Chrome and FFmpeg. Wherever these instructions or skills say `npx hyperframes ...` or `npx --yes hyperframes@0.7.10 ...`, run `hyperframes ...` instead.\n"
-        cwd = project / "images/hyperframes" / f"segment_{chosen[0]['index']}"
+        # One segment: work inside its folder. Several: start beside all of them; each section names its folder.
+        cwd = targets[0].parent if len(chosen) == 1 else project / "images/hyperframes"
         scope = f"Visuals · {len(chosen)} selected segment(s)"
     prompt += "\n\nYou are this step's main production agent. The application manages the project and later steps. Work interactively with the user. The GUI is the primary text editor; raw.json and script.json are canonical. Do not read an older DOCX over newer JSON. Follow the existing skill output contracts.\n"
     prompt_path = context_dir / "context.md"
