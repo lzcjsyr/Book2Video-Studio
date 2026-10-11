@@ -12,7 +12,7 @@ import {
   PanelRightClose,
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
-import type { Launch, Stage } from "../types";
+import type { ClaudeCodeMode, Launch, Stage } from "../types";
 
 export default function AgentPane({
   step,
@@ -22,6 +22,7 @@ export default function AgentPane({
   onClose,
   onError,
   directWriting,
+  claudeMode,
   disabled,
 }: {
   step: Stage;
@@ -31,6 +32,7 @@ export default function AgentPane({
   onClose: () => void;
   onError: (message: string) => void;
   directWriting: boolean;
+  claudeMode: ClaudeCodeMode;
   disabled: boolean;
 }) {
   const { t } = useI18n();
@@ -134,7 +136,6 @@ export default function AgentPane({
         onFinished();
       });
   }, [launch]);
-  const eligible = step === "1" || step === "4";
   async function stop() {
     if (session.current)
       await invoke("terminal_stop", { id: session.current.id });
@@ -161,14 +162,12 @@ export default function AgentPane({
           <span className={running ? "status-dot live" : "status-dot"} />
           <span>{running ? t("Interactive session") : t("Step agent")}</span>
           <span className="muted">
-            {(launch?.scope && t(launch.scope)) ||
-              (step === "1"
-                ? t("Writing")
-                : step === "4"
-                  ? t("Visuals")
-                  : t("Available in Writing & Visuals"))}
+            {(launch?.scope && t(launch.scope)) || (step === "1" ? t("Writing") : t("Visuals"))}
           </span>
         </div>
+        <p className="small-muted agent-mode">
+          {t(claudeMode === "subscription" ? "Your Claude Code · subscription" : "Built-in Claude Code · API key")}
+        </p>
         {launch && (
           <p title={launch.cwd} className="context-path">
             {launch.cwd.split(/[\\/]/).slice(-3).join(" / ")}
@@ -194,18 +193,14 @@ export default function AgentPane({
             </p>
             <button
               className="button agent-activate"
-              disabled={disabled || !eligible || !isTauri()}
+              disabled={disabled || !isTauri()}
               onClick={onActivate}
             >
               <Play size={13} /> {t("Activate Claude Code")}
               <ArrowUpRight size={14} />
             </button>
             <span className="small-muted">
-              {!isTauri()
-                ? t("Launch the desktop app to use the terminal.")
-                : eligible
-                  ? t("An interactive agent for this step.")
-                  : t("Select Writing or Visuals to activate.")}
+              {isTauri() ? t("An interactive agent for this step.") : t("Launch the desktop app to use the terminal.")}
             </span>
           </div>
         )}

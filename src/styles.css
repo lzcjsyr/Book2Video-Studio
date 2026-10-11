@@ -567,14 +567,15 @@ a {
   flex: 1;
   min-height: 0;
 }
+/* Each label takes its row's exact height (ruler 21px, picture 58px, gap 6px, voice 26px), so it sits centred on the row. */
 .track-labels {
   width: 83px;
   min-width: 83px;
   display: flex;
   flex-direction: column;
   padding-left: 16px;
-  padding-top: 41px;
-  gap: 27px;
+  padding-top: 21px;
+  gap: 6px;
   font-size: 8px;
   letter-spacing: 0.8px;
   color: #7f8c98;
@@ -583,6 +584,16 @@ a {
   display: flex;
   gap: 7px;
   align-items: center;
+}
+.track-label-visual {
+  height: 58px;
+}
+.track-label-voice {
+  height: 26px;
+}
+.timeline.focus-visual .track-label-visual,
+.timeline.focus-voice .track-label-voice {
+  color: #dda07f;
 }
 .timeline-scroll {
   display: flex;
@@ -628,11 +639,15 @@ a {
   object-fit: cover;
   filter: brightness(0.8);
 }
-.timeline-item.selected .timeline-thumb {
+.timeline:not(.focus-voice) .timeline-item.selected .timeline-thumb {
   border: 2px solid #dda07f;
 }
-.timeline-item.selected .timeline-thumb img {
+.timeline:not(.focus-voice) .timeline-item.selected .timeline-thumb img {
   filter: brightness(1);
+}
+.timeline:not(.focus-visual) .timeline-item.selected .voice-clip {
+  box-shadow: inset 0 0 0 2px #dda07f;
+  color: #eef3f1;
 }
 .clip-number {
   position: absolute;
@@ -1834,6 +1849,86 @@ a {
 .credential-footnote {
   margin: 16px 0 0;
 }
+.key-needs {
+  margin: 14px 0 6px;
+  padding: 12px 14px;
+  border: 1px solid #35404a;
+  border-radius: 6px;
+  background: #1b2227;
+}
+.key-needs.incomplete {
+  border-color: #6b4f2c;
+}
+.key-needs h4,
+.credential-group h4 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #edf2f6;
+}
+.key-needs.complete h4 {
+  color: #8eba9f;
+}
+.key-needs.incomplete h4 {
+  color: #e2b46f;
+}
+.key-needs ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.key-needs li {
+  display: grid;
+  grid-template-columns: 1.4fr 1.2fr auto;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 11px;
+  color: #aab7c2;
+  border-top: 1px solid #252e36;
+}
+.key-needs li.missing {
+  color: #edf2f6;
+}
+.key-needs li span {
+  text-align: left;
+}
+.key-needs li .key-need-state {
+  text-align: right;
+  color: #8eba9f;
+}
+.key-needs li.missing .key-need-state,
+.key-missing {
+  color: #e2b46f;
+  font-size: 11px;
+}
+.credential-group {
+  margin-top: 20px;
+}
+.credential-row.needed {
+  border-left: 2px solid #e2b46f;
+  padding-left: 10px;
+}
+.key-tag {
+  font-size: 9px;
+  padding: 1px 6px;
+  border: 1px solid #3a434a;
+  border-radius: 8px;
+  color: #9aa7b2;
+}
+.key-reminder {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 8px;
+  padding: 4px 9px;
+  border: 1px solid #6b4f2c;
+  border-radius: 5px;
+  background: #2a2318;
+  color: #e2b46f;
+  font-size: 10px;
+}
 .history-modal {
   width: 650px;
 }
@@ -2117,4 +2212,90 @@ a {
 .remove-warning {
   color: #f0a79c;
   line-height: 1.7;
+}
+.settings-warning {
+  margin: 10px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid #e2b46f;
+  color: #e2b46f;
+  font-size: 12px;
+}
+.adc-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.adc-result {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #8eba9f;
+}
+.adc-result li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.adc-result li svg {
+  flex: none;
+  margin-top: 2px;
+}
+.adc-result li.failed {
+  color: #e2b46f;
+}
+.claude-code-modes {
+  margin-top: 4px;
+}
+.mode-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.mode-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid #343a42;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.mode-option.selected {
+  border-color: var(--accent);
+}
+.mode-option input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+.mode-option > span {
+  display: grid;
+  gap: 4px;
+}
+.mode-option strong {
+  font-size: 12px;
+  color: #edf2f6;
+}
+.claude-login {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.claude-login > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.key-ok {
+  color: #8eba9f;
+}
+.agent-mode {
+  margin: 4px 0 0;
 }

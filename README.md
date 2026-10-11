@@ -27,7 +27,20 @@ The packaged app needs nothing installed on the computer. It ships:
 - Node.js 22, the pinned HyperFrames 0.7.10 CLI and the Chrome Headless Shell it renders with;
 - static FFmpeg and FFprobe.
 
-**System check** (bottom of the sidebar) lists every bundled component. You only need your own API keys (Settings → API keys): Claude Code runs on the provider you choose (DeepSeek, Kimi, MiMo, OpenRouter, Volcengine, SiliconFlow); image and cover generation support Doubao and Google; voice uses ByteDance TTS.
+**System check** (bottom of the sidebar) lists every bundled component. You only need your own API keys, in **Settings → API keys**, grouped by what they do:
+
+- **Language models** (DeepSeek, Kimi, MiMo, OpenRouter, SiliconFlow, Volcengine): writing, agent segmentation, visual direction and the Claude Code motion agent (only when a segment uses motion). Each step uses the provider chosen in its settings. Static images need no language model.
+- **Image generation** (Volcengine Seedream, Google): segment images, the opening background and covers. Google ADC uses your Google Cloud login instead of a key; **Check connection** in Settings → API keys confirms the login, project and models, and shows when it last passed.
+- **Voice** (ByteDance TTS): narration. The default voice works out of the box; enter your own **Voice ID** in Settings (a cloned voice `S_…` works too, and the matching TTS resource is chosen automatically). **Opening masthead** in Settings sets the channel name shown on the opening; it is empty by default.
+
+The tab lists exactly which keys the open project needs for the whole production and which are missing. A reminder in the header shows how many are missing, and a step whose key is not saved opens the API keys tab instead of starting.
+
+### Claude Code: API key or subscription
+
+Writing and Visuals (motion segments) work with Claude Code in a terminal on the right; the other steps don't show it. **Settings → API keys → Claude Code** chooses how it runs:
+
+- **Built-in Claude Code · API key** (default): the copy bundled with Studio, connected to the language-model provider chosen for Writing and Motion.
+- **Your Claude Code · subscription:** the Claude Code installed on this computer, signed in with your Claude account, so your Claude plan covers those sessions and they need no key. Studio finds it (even when opened from the Finder), shows its version and sign-in, and starts it without any provider settings. Agent segmentation and the other background steps still use API keys.
 
 ## Where your files live
 
@@ -115,7 +128,20 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 - Node.js 22、固定版本的 HyperFrames 0.7.10 CLI，以及它渲染所用的 Chrome Headless Shell；
 - 静态编译的 FFmpeg 和 FFprobe。
 
-侧边栏底部的 **系统检查** 会列出所有内置组件。你只需要准备自己的 API 密钥（设置 → API 密钥）：Claude Code 使用你选择的服务商（DeepSeek、Kimi、MiMo、OpenRouter、火山引擎、SiliconFlow）；图片和封面生成支持豆包与 Google；配音使用字节跳动 TTS。
+侧边栏底部的 **系统检查** 会列出所有内置组件。你只需要在 **设置 → API 密钥** 中准备自己的密钥，它们按用途分组：
+
+- **语言模型**（DeepSeek、Kimi、MiMo、OpenRouter、SiliconFlow、火山引擎）：写作、智能体分段、画面基调，以及 Claude Code 动画智能体（仅当有段落使用动画时）。每个步骤使用其设置中选择的服务商。静态图片无需语言模型。
+- **图像生成**（火山引擎 Seedream、Google）：分段图片、开场背景和封面。Google ADC 使用你的 Google Cloud 登录，无需密钥；在 设置 → API 密钥 中点击 **检查连接** 可确认登录、项目和模型，并显示上次检查时间。
+- **配音**（字节跳动 TTS）：旁白配音。默认音色可直接使用；也可在设置中填写自己的 **音色 ID**（支持 `S_…` 复刻音色，会自动匹配对应的 TTS 资源）。设置中的 **开场刊头** 用于开场显示的频道名，默认留空。
+
+该页面会列出当前项目完成整个制作所需的全部密钥，以及缺少哪些。缺少密钥时，顶部会显示提醒；某个步骤缺少密钥时，会打开 API 密钥页面而不是直接开始。
+
+### Claude Code：API 密钥或订阅
+
+写作和画面（动画段落）在右侧终端中与 Claude Code 协作，其他步骤不显示该终端。在 **设置 → API 密钥 → Claude Code** 中选择运行方式：
+
+- **内置 Claude Code · API 密钥**（默认）：使用 Studio 自带的 Claude Code，连接写作和动画所选的语言模型服务商。
+- **你的 Claude Code · 订阅：** 使用本机安装的 Claude Code，并以你的 Claude 账号登录，这些会话由你的 Claude 订阅承担，无需密钥。Studio 会自动找到它（即使从访达打开），显示版本和登录状态，并在不带任何服务商设置的情况下启动它。智能体分段和其他后台步骤仍使用 API 密钥。
 
 ## 文件保存在哪里
 

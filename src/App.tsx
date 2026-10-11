@@ -21,6 +21,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  KeyRound,
   Settings2,
   ShieldCheck,
   TerminalSquare,
@@ -38,6 +39,8 @@ import {
 } from "./api";
 import type {
   Bootstrap,
+  ClaudeCodeMode,
+  ClaudeCodeStatus,
   Detail,
   Job,
   Launch,
@@ -61,6 +64,8 @@ import SegmentEditor from "./components/SegmentEditor";
 import { writingOptions, sameWriting, type WritingOptions } from "./writing";
 import { useCollapsed } from "./collapse";
 import { librarySettings } from "./library";
+import { distinctGaps, keyNeeds, providerName, unmet, type NeedId } from "./keys";
+import type { KeyStatus } from "./components/ApiKeysPanel";
 
 // Stage ids follow the engine (Segments is its step 1.5); `number` is what people see.
 const stages: {
@@ -163,6 +168,8 @@ export default function App() {
   const projectRef = useRef(""),
     dirtyRef = useRef(false),
     jobsSeen = useRef(new Set<string>()),
+    // Jobs that ended before this window opened (a reload, a reconnect) are not news.
+    openedAt = useRef(Date.now() / 1000),
     queue = useRef<Stage[]>([]),
     video = useRef<HTMLVideoElement>(null),
     revisionRef = useRef(""),
@@ -171,6 +178,14 @@ export default function App() {
   projectRef.current = detail?.id || "";
   stepRef.current = step;
   const notice = useCallback((message: string) => setToast(message), []);
+  // Saved API keys (names only) and the Settings tab to open, for key reminders.
+  const [keyStatus, setKeyStatus] = useState<KeyStatus | null>(null);
+  const [claudeMode, setClaudeMode] = useState<ClaudeCodeMode>("api_key");
+  const [settingsTab, setSettingsTab] = useState<"production" | "keys" | undefined>();
+  function openSettings(tab?: "production" | "keys") {
+    setSettingsTab(tab);
+    setModal("settings");
+  }
   const activeJob = jobs.find(
     (j) =>
       j.project === detail?.id &&
@@ -239,6 +254,10 @@ export default function App() {
       setBootstrap(b);
       setProjects(p);
       setError("");
+      if (isTauri()) {
+        invoke<KeyStatus>("credential_status").then(setKeyStatus).catch(() => setKeyStatus(null));
+        invoke<ClaudeCodeStatus>("claude_code_status", { check: false }).then((s) => setClaudeMode(s.mode)).catch(() => {});
+      }
       const remembered = localStorage.getItem("studio-project");
       const choice =
         p.find((x) => x.id === remembered) ||
@@ -269,7 +288,7 @@ export default function App() {
             !jobsSeen.current.has(j.id)
           ) {
             jobsSeen.current.add(j.id);
-            if (j.project === projectRef.current) {
+            if (j.project === projectRef.current && j.started >= openedAt.current) {
               const d = await load(j.project);
               notice(j.result?.message || `Step ${stageNumber(j.step)} ${j.status}`);
               if (
@@ -380,6 +399,34 @@ export default function App() {
     scriptSegment = (
       draftKind === "script" ? draft.segments : detail?.script.segments
     )?.find((s) => s.index === selected);
+  // What the narration box shows: the opening quote, or the segment's (possibly unsaved) text.
+  const narration = String((selected === 0 ? detail?.raw.golden_quotes?.[0] : scriptSegment?.content) || "");
+  // Keys the whole production needs with this project's providers (the Writing
+  // setup draft decides the writing agent), and the ones not saved yet.
+  const keySettings: Settings = { ...bootstrap?.defaults };
+  Object.entries(detail?.state.settings || {}).forEach(([k, v]) => (keySettings[k] = { ...keySettings[k], ...v }));
+  if (writing) keySettings.step1 = { ...keySettings.step1, llm_server: writing.llm_server };
+  // Only Writing and Visuals work with Claude Code. The pane stays mounted elsewhere so a running session survives.
+  const agentStep = step === "1" || step === "4";
+  const agentShown = agentStep && agentVisible;
+  const hasMotion = Boolean(detail?.segments.some((s) => s.visualizer === "hf"));
+  const missingKeys = detail ? unmet(keyNeeds(keySettings, { motion: true, subscription: claudeMode === "subscription" }), keyStatus?.saved) : [];
+  // The header and the API keys tab count the motion agent only when a segment uses motion.
+  const projectGaps = missingKeys.filter((n) => hasMotion || n.id !== "motion_agent");
+  /** Remind the user (and open the API keys tab) when a step's key is not saved. */
+  function keysReady(ids: NeedId[]) {
+    const gap = missingKeys.find((n) => ids.includes(n.id));
+    if (!gap) return true;
+    notice(gap.key
+      ? t("{use} needs a {provider} API key. Save it in Settings → API keys.", { use: t(gap.use), provider: t(providerName(gap.key)) })
+      : t("{use} uses an unsupported provider. Choose another one in Settings.", { use: t(gap.use) }));
+    openSettings(gap.key ? "keys" : "production");
+    return false;
+  }
+  // Static images also write their shared direction first when it is missing or outdated.
+  const visualNeeds = (): NeedId[] =>
+    detail && (detail.state.summary_stale || !String(detail.summary.summary || "").trim())
+      ? ["direction", "images"] : ["images"];
   const openingEnabled = Boolean(
     detail?.state.settings.global?.opening_quote ??
       bootstrap?.defaults.global?.opening_quote ?? true,
@@ -420,6 +467,7 @@ export default function App() {
       notice("Save changes before activating the agent.");
       return;
     }
+    if (!keysReady([step === "1" ? "writing" : "motion_agent"])) return;
     if (step === "4" && indices?.includes(0)) {
       notice(
         "Regenerate the opening through Visuals; the motion agent works on narration segments.",
@@ -504,6 +552,8 @@ export default function App() {
         await activateFor(indices);
         return;
       }
+      const required: Partial<Record<Stage, NeedId[]>> = { "1.5": ["segments"], "3": ["voice"], "4": mode === "render" ? [] : visualNeeds(), "6": ["covers"] };
+      if (!keysReady(required[step] || [])) return;
       if (step === "4" && mode === "render") {
         const selectedMotion = detail.segments.filter(
           (s) =>
@@ -555,6 +605,7 @@ export default function App() {
   }
   async function startVisualJob(body: { mode: string; batch?: string }, message: string) {
     if (!detail) return;
+    if (!keysReady(body.mode === "summary" ? ["direction"] : visualNeeds())) return;
     await action(async () => {
       if (unsaved) throw new Error(t("Save changes before regenerating."));
       const job = await api<Job>(projectRoute(detail.id) + "/job", { step: "4", ...body });
@@ -745,11 +796,17 @@ export default function App() {
               ? t("Production running")
               : t("Local workspace")}
         </span>
+        {detail && projectGaps.length > 0 && (
+          <button className="key-reminder" onClick={() => openSettings("keys")}
+            title={projectGaps.map((n) => `${t(n.use)}: ${n.key ? t(providerName(n.key)) : t("unsupported provider")}`).join("\n")}>
+            <KeyRound size={13} /> {distinctGaps(projectGaps) === 1 ? t("1 API key missing") : t("{count} API keys missing", { count: distinctGaps(projectGaps) })}
+          </button>
+        )}
         <button
           className="icon-button"
           title={t("Settings")}
           aria-label={t("Settings")}
-          onClick={() => setModal("settings")}
+          onClick={() => openSettings()}
         >
           <Settings2 size={17} />
         </button>
@@ -762,7 +819,7 @@ export default function App() {
         >
           <History size={17} />
         </button>
-        {!agentVisible && (
+        {agentStep && !agentVisible && (
           <button
             className="icon-button"
             aria-label={t("Show Claude Code pane")}
@@ -1012,7 +1069,7 @@ export default function App() {
                 {step === "1" ? (
                   <div className="manuscript-workspace">
                     {writing && <WritingSetup value={writing} bootstrap={bootstrap}
-                      disabled={busy || activeAgent || Boolean(activeJob)} pending={writingPending}
+                      disabled={busy || activeAgent || Boolean(activeJob)} pending={writingPending} subscription={claudeMode === "subscription"}
                       onChange={editWriting} onEditSkill={() => openLibrary()}
                       onSave={() => action(async () => { await saveWriting(); notice("Writing setup saved."); })} />}
                     <section className={"opening-quote-panel" + (openingEnabled ? "" : " excluded") + (openingCollapsed ? " collapsed" : "")} aria-label={t("Opening quote")}>
@@ -1143,9 +1200,11 @@ export default function App() {
                               ? t("{count} candidates", {
                                   count: detail.covers.length,
                                 })
-                              : segment?.visualizer === "hf"
-                                ? t("Motion composition")
-                                : t("Static image")}
+                              : selected === 0
+                                ? t("Opening quote")
+                                : segment?.visualizer === "hf"
+                                  ? t("Motion composition")
+                                  : t("Static image")}
                         </span>
                       </div>
                       <div>
@@ -1318,6 +1377,9 @@ export default function App() {
                           <span>
                             <FileText size={14} /> {t("Narration")}
                           </span>
+                          {selected === 0 ? (
+                            <span className="small-muted">{t("Edit the opening quote in Writing.")}</span>
+                          ) : (
                           <div>
                             <select
                               aria-label={t("Segment visual type")}
@@ -1339,19 +1401,16 @@ export default function App() {
                             <button
                               className="icon-button"
                               aria-label={t("More visual settings")}
-                              onClick={() => setModal("settings")}
+                              onClick={() => openSettings()}
                             >
                               <MoreHorizontal size={16} />
                             </button>
                           </div>
+                          )}
                         </div>
                         <textarea
                           aria-label={t("Narration editor")}
-                          value={
-                            selected === 0
-                              ? detail.raw.golden_quotes?.[0] || ""
-                              : scriptSegment?.content || ""
-                          }
+                          value={narration}
                           onChange={(e) =>
                             editSegment("content", e.target.value)
                           }
@@ -1361,7 +1420,7 @@ export default function App() {
                         />
                         <div className="narration-footer">
                           <span>
-                            {segment?.length || 0} {t("characters ·")}{" "}
+                            {narration.length} {t("characters ·")}{" "}
                             {reviewAudio?.duration
                               ? t("Recorded duration")
                               : t("Estimated duration")}
@@ -1404,7 +1463,7 @@ export default function App() {
                         </span>
                         <button
                           className="button small"
-                          onClick={() => setModal("settings")}
+                          onClick={() => openSettings()}
                         >
                           <Settings2 size={13} /> {t("Assembly settings")}
                         </button>
@@ -1459,6 +1518,7 @@ export default function App() {
                   selected={selected}
                   onSelect={changeSegment}
                   version={version}
+                  focus={step === "3" ? "voice" : step === "4" ? "visual" : "both"}
                 />
               )}
               {activeJob && (
@@ -1485,12 +1545,12 @@ export default function App() {
         {detail && (
           <>
             <div
-              className={`pane-resizer ${agentVisible ? "" : "hidden"}`}
+              className={`pane-resizer ${agentShown ? "" : "hidden"}`}
               onPointerDown={resizeAgent}
             />
             <div
               className={
-                agentVisible ? "agent-container" : "agent-container hidden"
+                agentShown ? "agent-container" : "agent-container hidden"
               }
             >
               <AgentPane
@@ -1501,6 +1561,7 @@ export default function App() {
                 onClose={() => setAgentVisible(false)}
                 onError={notice}
                 directWriting={step === "1" && writing?.mode === "direct"}
+                claudeMode={claudeMode}
                 disabled={busy || unsaved || activeAgent || Boolean(activeJob)}
               />
             </div>
@@ -1544,6 +1605,10 @@ export default function App() {
         <SettingsPanel
           detail={detail}
           bootstrap={bootstrap}
+          initialTab={settingsTab}
+          claudeMode={claudeMode}
+          onClaudeMode={setClaudeMode}
+          onKeyStatus={setKeyStatus}
           onLibraryChanged={refreshLibrary}
           onClose={() => setModal(null)}
           onSave={(settings: Settings) =>

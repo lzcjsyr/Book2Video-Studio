@@ -108,6 +108,10 @@ fn save(app: &tauri::AppHandle, name: String, value: Option<String>) -> Result<S
             if value.is_empty() || value.len() > 2400 || value.chars().any(char::is_control) {
                 return Err("Enter a valid API key (up to 2,400 characters).".into());
             }
+            // A pasted line can carry a comment or label; providers would only answer "invalid key" later.
+            if !value.is_ascii() || value.chars().any(char::is_whitespace) {
+                return Err("An API key has no spaces or other text. Paste only the key itself.".into());
+            }
             credential.set_password(value).map_err(|_| {
                 "Cannot save the API key in the system credential store.".to_string()
             })?;

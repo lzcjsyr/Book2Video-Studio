@@ -228,6 +228,24 @@ class ProjectTests(unittest.TestCase):
         job={'id':'test','project':self.p.name,'step':'3','status':'running','log':[],'result':None,'scope':[1],'opening':False}
         self.studio.observe_job(job,process)
         self.assertEqual(self.studio.state(self.p)['stale']['3']['segments'],[2])
+    def test_failed_job_that_changed_nothing_keeps_the_step_current(self):
+        self.studio.detail(self.p.name);state=self.studio.state(self.p);state['stale']={};self.studio.persist(self.p,state)
+        process=subprocess.Popen([sys.executable,'-c','print(\'STUDIO_RESULT:{"success":false}\')'],stdout=subprocess.PIPE,text=True)
+        job={'id':'test','project':self.p.name,'step':'3','status':'running','log':[],'result':None,'scope':None,'opening':True}
+        self.studio.observe_job(job,process)
+        self.assertEqual(job['status'],'failed');self.assertEqual(self.studio.detail(self.p.name)['state']['stale'],{})
+    def test_opening_only_recording_outdates_only_the_opening_downstream(self):
+        self.studio.detail(self.p.name);state=self.studio.state(self.p);state['stale']={};self.studio.persist(self.p,state)
+        recording(self.p/'voice/opening.wav');(self.p/'voice/字幕.srt').write_text('1\n')
+        process=subprocess.Popen([sys.executable,'-c','print(\'STUDIO_RESULT:{"success":true}\')'],stdout=subprocess.PIPE,text=True)
+        job={'id':'test','project':self.p.name,'step':'3','status':'running','log':[],'result':None,'scope':[],'opening':True}
+        self.studio.observe_job(job,process)
+        stale=self.studio.detail(self.p.name)['state']['stale']
+        self.assertNotIn('3',stale);self.assertEqual(stale['4']['segments'],[0])
+    def test_subtitle_file_belongs_to_no_segment(self):
+        self.studio.detail(self.p.name);state=self.studio.state(self.p);state['stale']={};self.studio.persist(self.p,state)
+        (self.p/'voice/字幕.srt').write_text('changed\n')
+        self.assertEqual(self.studio.detail(self.p.name)['state']['stale'],{})
     def test_pipeline_managed_rewrite_does_not_invalidate_its_own_step(self):
         self.studio.detail(self.p.name)
         raw=copy.deepcopy(RAW);raw['created_time']=None;atomic_json(self.p/'text/raw.json',raw)
@@ -349,6 +367,28 @@ class ProjectTests(unittest.TestCase):
             conn.request('GET',route,headers={'Range':'bytes=999999-'});self.assertEqual(conn.getresponse().status,416)
             conn.close()
         finally:server.shutdown();server.server_close()
+
+    def test_unchanged_script_save_keeps_later_steps_current(self):
+        detail=self.studio.detail(self.p.name);state=self.studio.state(self.p);state['stale']={};self.studio.persist(self.p,state)
+        events=len(state['events'])
+        after=self.studio.save(self.p.name,{'kind':'script','value':detail['script'],'expected_hash':detail['hashes']['script'],'segments':[1]})
+        self.assertEqual(after['state']['stale'],{});self.assertEqual(len(after['state']['events']),events)
+
+    def test_settings_change_marks_only_the_affected_step(self):
+        state=self.studio.state(self.p);state['settings']={'step1':{'llm_model':'chosen-model'},'step4':{'image_size':'1280x720'}};state['stale']={}
+        self.studio.persist(self.p,state)
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+            body={'settings':{'step1':{'llm_model':'chosen-model'},'step4':{'image_server':'google_adc'}}}
+            route='/api/projects/'+__import__('urllib.parse',fromlist=['quote']).quote(self.p.name)+'/settings'
+            conn.request('POST',route,body=json.dumps(body),headers={'Authorization':'Bearer test-token','Content-Type':'application/json'})
+            self.assertEqual(conn.getresponse().status,200);conn.close()
+        finally:server.shutdown();server.server_close()
+        state=self.studio.state(self.p)
+        self.assertEqual(state['settings']['step4'],{'image_size':'1280x720','image_server':'google_adc'})
+        self.assertIn('4',state['stale']);self.assertNotIn('1',state['stale']);self.assertNotIn('1.5',state['stale'])
 
     def test_saved_keys_override_environment_without_entering_project_data(self):
         from unittest.mock import patch
@@ -550,6 +590,98 @@ class MotionRenderTests(unittest.TestCase):
         self.assertEqual(len(calls),1);self.assertEqual(calls[0][:len(hyperframes_command())+1],[*hyperframes_command(),'render'])
         payload=json.loads(calls[0][calls[0].index('--variables')+1]);self.assertEqual(payload['durationSeconds'],1.0);self.assertEqual(payload['content'],script['segments'][0]['content'])
         self.assertEqual((self.p/'images/segment_1.mp4').read_bytes(),b'rendered media');self.assertFalse((self.p/'images/segment_1.png').exists())
+
+class ImageModelTests(unittest.TestCase):
+    """A model left over from another image service is refused before any provider is called."""
+    setUp=PipelineTests.setUp
+    tearDown=PipelineTests.tearDown
+    def run_job(self,step,section,settings):
+        from unittest.mock import patch
+        import runner
+        atomic_json(self.p/'text/script.json',copy.deepcopy(SCRIPT))
+        original=Path.cwd()
+        try:
+            with patch('core.infra.ai.llm_client.text_to_image_google') as google:
+                with self.assertRaisesRegex(ValueError,'doubao-seedream-4-0-250828 does not work with google_adc'):
+                    runner.run({'engine':str(ENGINE),'project':str(self.p),'step':step,'settings':{section:settings}})
+                google.assert_not_called()
+        finally:os.chdir(original)
+    def test_segment_images(self):
+        self.run_job('4','step4',{'image_server':'google_adc','image_model':'doubao-seedream-4-0-250828'})
+    def test_covers(self):
+        self.run_job('6','step6',{'cover_image_server':'google_adc','cover_image_model':'doubao-seedream-4-0-250828'})
+
+class GoogleLoginCheckTests(unittest.TestCase):
+    """The Settings check of the Google Cloud login keeps its last result across restarts."""
+    setUp=ProjectTests.setUp
+    open=ProjectTests.open
+    tearDown=ProjectTests.tearDown
+    def test_result_and_time_are_kept(self):
+        from unittest.mock import patch
+        self.assertEqual(self.studio.google_adc_status(),{})
+        output=json.dumps({'ok':True,'project':'p','location':'global','models':[{'model':'gemini-3.1-flash-image','ok':True}]})
+        with patch('server.subprocess.run',return_value=subprocess.CompletedProcess([],0,output+'\n','')) as run:
+            result=self.studio.check_google_adc({'models':['gemini-3.1-flash-image','gemini-3.1-flash-image',' ']})
+        self.assertEqual(json.loads(run.call_args.args[0][-1])['models'],['gemini-3.1-flash-image'])
+        self.assertTrue(result['ok']);self.assertIn('T',result['checked'])
+        self.assertEqual(self.open().google_adc_status(),result)
+    def test_a_stalled_check_is_reported(self):
+        from unittest.mock import patch
+        with patch('server.subprocess.run',side_effect=subprocess.TimeoutExpired('google_check',90)):
+            result=self.studio.check_google_adc({})
+        self.assertFalse(result['ok']);self.assertIn('90 seconds',result['message']);self.assertIn('checked',result)
+
+class VoiceJobTests(unittest.TestCase):
+    """The voice job gets the TTS service, and a project saved with an empty voice uses the default one."""
+    setUp=PipelineTests.setUp
+    tearDown=PipelineTests.tearDown
+    def test_service_and_default_voice(self):
+        from unittest.mock import patch
+        import runner
+        atomic_json(self.p/'text/script.json',copy.deepcopy(SCRIPT))
+        import functools
+        sys.path.insert(0,str(ENGINE));from core.pipeline import steps
+        captured={}
+        @functools.wraps(steps.run_step_3)  # the runner passes what the real signature accepts
+        def fake(**kwargs):
+            captured.update(kwargs);return {'success':True}
+        original=Path.cwd()
+        try:
+            with patch.object(steps,'run_step_3',fake):
+                runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'3','settings':{'step3':{'voice':''}}})
+        finally:os.chdir(original)
+        self.assertEqual(captured['tts_server'],'bytedance')
+        self.assertTrue(captured['voice'])
+
+class MotionContextTests(unittest.TestCase):
+    """A session for several motion segments lists every target; a missing composition is reported when it ends."""
+    def setUp(self):
+        if not ENGINE.exists():self.skipTest('Sibling CLI engine is not installed')
+        self.temp=tempfile.TemporaryDirectory();root=Path(self.temp.name)
+        self.studio=Studio(ENGINE,root/'data',root/'workspace')
+        created=self.studio.create({'name':'Motion','source':'','settings':{'step1':{'writing_mode':'direct'}}})
+        self.id,self.p=created['id'],Path(created['path'])
+        script={'segments':[{'index':i,'content':f'第{i}段','visualizer':'hf'} for i in (1,2,3)]}
+        atomic_json(self.p/'text/script.json',script);atomic_json(self.p/'text/mini_summary.json',{'summary':'基调'})
+        for i in (1,2,3):recording(self.p/f'voice/voice_{i}.wav')
+        self.studio.detail(self.id)
+    def tearDown(self):
+        if hasattr(self,'temp'):self.temp.cleanup()
+    def test_task_list_and_missing_composition_warning(self):
+        launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[1,3]})
+        context=Path(launch['context']).read_text()
+        for i in (1,3):
+            self.assertIn(f"Segment {i} → `{self.p/'images/hyperframes'/f'segment_{i}'/'index.html'}`",context)
+            self.assertIn(f'# Segment {i} (task',context)
+        self.assertNotIn('segment_2/index.html',context)
+        (self.p/'images/hyperframes/segment_3/index.html').write_text('<!DOCTYPE html>')
+        finished=self.studio.finish_agent(self.id,{})
+        self.assertIn('segment 1.',finished['warning']);self.assertNotIn('3',finished['warning'])
+    def test_single_segment_keeps_its_own_instructions(self):
+        launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[2]})
+        context=Path(launch['context']).read_text()
+        self.assertTrue(context.startswith('The selected segment is your task.'));self.assertNotIn('task 1 of',context)
+        self.studio.finish_agent(self.id,{})
 
 class WorkspaceTests(unittest.TestCase):
     """Projects live in the workspace folder or at any location picked at creation."""

@@ -93,7 +93,12 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
         })
         .map_err(|e| e.to_string())?;
     let installation = crate::installation(&app)?;
-    let mut command = CommandBuilder::new(&installation.claude);
+    let mode = crate::claude_code::mode(&app);
+    let program = match mode {
+        crate::claude_code::Mode::ApiKey => installation.claude.clone(),
+        crate::claude_code::Mode::Subscription => crate::claude_code::local_program(&app, &installation)?,
+    };
+    let mut command = CommandBuilder::new(&program);
     command.args(&trusted.args);
     command.cwd(&trusted.cwd);
     command.env("TERM", "xterm-256color");
@@ -103,30 +108,17 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
     for name in crate::Installation::CLEARED {
         command.env_remove(name);
     }
-    // Provider credentials are read by the engine and passed directly to the
-    // child. They are never emitted to the WebView or written into a manifest.
-    let resolved = installation
-        .command(&installation.python)
-        .arg(installation.backend_script("agent_env.py"))
-        .arg(&installation.engine)
-        .arg(&project_root)
-        .arg(&trusted.step)
-        .envs(crate::credentials::load()?)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !resolved.status.success() {
-        return Err(format!(
-            "Cannot prepare the configured agent provider: {}",
-            String::from_utf8_lossy(&resolved.stderr)
-        ));
+    if mode == crate::claude_code::Mode::Subscription {
+        // The user's own login pays for the session; no provider endpoint or key may override it.
+        for name in crate::claude_code::PROVIDER_ENV {
+            command.env_remove(name);
+        }
+    } else {
+        apply_provider(&mut command, &installation, &project_root, &trusted.step)?;
     }
-    let env: HashMap<String, String> = serde_json::from_slice(&resolved.stdout)
-        .map_err(|_| "The engine did not return a valid agent environment")?;
-    for (name, value) in env {
-        command.env(name, value);
-    }
-    let child = pair.slave.spawn_command(command).map_err(|e| {
-        format!("Cannot launch Claude Code: {e}. Reinstall Book2Video Studio.")
+    let child = pair.slave.spawn_command(command).map_err(|e| match mode {
+        crate::claude_code::Mode::ApiKey => format!("Cannot launch Claude Code: {e}. Reinstall Book2Video Studio."),
+        crate::claude_code::Mode::Subscription => format!("Cannot launch your Claude Code ({}): {e}. Check it in Settings → API keys.", program.display()),
     })?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -248,4 +240,35 @@ pub fn terminal_list(state: tauri::State<Terminals>) -> Vec<serde_json::Value> {
         .iter()
         .map(|(id, s)| serde_json::json!({"id":id,"project":s.project}))
         .collect()
+}
+
+/// Built-in mode: the engine resolves the step's provider endpoint and key. Credentials go
+/// straight to the child and are never emitted to the WebView or written into a manifest.
+fn apply_provider(
+    command: &mut CommandBuilder,
+    installation: &crate::Installation,
+    project_root: &std::path::Path,
+    step: &str,
+) -> Result<(), String> {
+    let resolved = installation
+        .command(&installation.python)
+        .arg(installation.backend_script("agent_env.py"))
+        .arg(&installation.engine)
+        .arg(project_root)
+        .arg(step)
+        .envs(crate::credentials::load()?)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !resolved.status.success() {
+        return Err(format!(
+            "Cannot prepare the configured agent provider: {}",
+            String::from_utf8_lossy(&resolved.stderr)
+        ));
+    }
+    let env: HashMap<String, String> = serde_json::from_slice(&resolved.stdout)
+        .map_err(|_| "The engine did not return a valid agent environment")?;
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    Ok(())
 }

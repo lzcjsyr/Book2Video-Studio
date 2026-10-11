@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import mimetypes
@@ -27,6 +28,7 @@ STAGES = ["1", "1.5", "3", "4", "5", "6"]
 DISPLAY = {"1.5": "2"}
 LINKS_FILE = "projects.json"
 HIDDEN_FILE = "hidden-projects.json"
+GOOGLE_CHECK_FILE = "google-adc-check.json"
 LIBRARY_ENV = "AIGC_VIDEO_LIBRARY_DIR"
 MEDIA = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".mp4", ".mov", ".webm", ".srt", ".pdf", ".txt"}
 TEXT_FILES = {"raw": "raw.json", "script": "script.json", "summary": "mini_summary.json"}
@@ -52,6 +54,21 @@ def atomic_json(path: Path, value):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
+
+
+def segment_of(relative: str) -> int | None:
+    """The segment a media file belongs to (0 for the opening), or None (subtitles, logs)."""
+    if match := re.search(r"(?:^|/)(?:voice|segment)_(\d+)(?=[./]|$)", relative):
+        return int(match.group(1))
+    return 0 if re.search(r"(?:^|/)(?:voice/opening|images/(?:segment_)?opening)", relative) else None
+
+
+def editable(value: dict) -> dict:
+    """What an edit can change in raw.json or script.json; the counts the app recomputes are left out."""
+    kept = {k: v for k, v in value.items() if k not in {"total_length", "actual_segments"}}
+    if isinstance(value.get("segments"), list):
+        kept["segments"] = [{k: v for k, v in s.items() if k != "length"} for s in value["segments"]]
+    return kept
 
 
 def fingerprint(path: Path) -> str:
@@ -313,7 +330,27 @@ class Studio:
     def defaults(self):
         import yaml
         data = yaml.safe_load((self.engine / "config.yaml" if (self.engine / "config.yaml").exists() else self.engine / "config.example.yaml").read_text())
-        return {k: v for k, v in data.items() if isinstance(v, dict) and k in {"global", "step1", "step1_5", "step2", "step3", "step4", "step5", "step6", "subtitles"}}
+        return {k: v for k, v in data.items() if isinstance(v, dict) and k in {"global", "step1", "step1_5", "step2", "step3", "step4", "step5", "step6", "subtitles", "hyperframes_opening"}}
+
+    def google_adc_status(self):
+        """The last Google Cloud login check, kept across restarts."""
+        return read_json(self.data / GOOGLE_CHECK_FILE, {})
+
+    def check_google_adc(self, body):
+        models = sorted({str(m).strip() for m in body.get("models") or [] if str(m).strip()}) or ["gemini-3.1-flash-image"]
+        request = json.dumps({"engine": str(self.engine), "models": models}, ensure_ascii=False)
+        try:
+            # Its own process: Google's libraries stay out of the service, and a stalled network call is bounded.
+            completed = subprocess.run([sys.executable, str(Path(__file__).with_name("google_check.py")), request],
+                                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
+                                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            lines = completed.stdout.strip().splitlines()
+            result = json.loads(lines[-1]) if lines else {"ok": False, "message": "The check stopped unexpectedly: " + completed.stderr.strip()[-300:]}
+        except subprocess.TimeoutExpired:
+            result = {"ok": False, "message": "Google did not answer within 90 seconds. Check the network and try again."}
+        result["checked"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        atomic_json(self.data / GOOGLE_CHECK_FILE, result)
+        return result
 
     def components(self):
         """The programs production relies on, and whether each ships with the app."""
@@ -462,9 +499,10 @@ class Studio:
             if previous is not None:
                 changes = {k for k in previous.keys() | assets.keys() if previous.get(k) != assets.get(k)}
                 for prefix, stage in [("voice/", "3"), ("images/", "4")]:
-                    changed = [k for k in changes if k.startswith(prefix)]
-                    if changed:
-                        indices = [int(m.group(1)) for k in changed if (m := re.search(r'(?:voice_|segment_)(\d+)', k))]
+                    # Only a segment's own media (or the opening's, index 0) makes later steps outdated;
+                    # files such as voice/字幕.srt belong to no segment.
+                    indices = sorted({i for k in changes if k.startswith(prefix) and (i := segment_of(k)) is not None})
+                    if indices:
                         self.invalidate(state, stage, indices)
             state["assets"] = assets
             opening_visual = self.asset(p, "images", "opening", [".mp4", ".mov", ".png", ".jpg"])
@@ -527,6 +565,9 @@ class Studio:
                 visual_only = len(before) == len(value["segments"]) and all(a.get("index") == b.get("index") and a.get("content") == b.get("content") for a, b in zip(before, value["segments"])) and any(a.get("visualizer", "image") != b.get("visualizer", "image") for a, b in zip(before, value["segments"]))
             elif not str(value.get("summary", "")).strip():
                 raise ValueError("The visual direction cannot be empty.")
+            if editable(value) == editable(previous):
+                # Nothing changed (for example a switch flipped and flipped back): later steps stay current.
+                return self.detail(project_id)
             self.snapshot(p, [path], f"Before editing {kind}")
             atomic_json(path, value)
             state = self.state(p)
@@ -738,6 +779,9 @@ class Studio:
                     state["stale"].pop(active["step"], None)
                 if active["step"] == "4":
                     state["stale"]["4"] = {"reason": "Render the revised motion compositions to review the new visuals", "segments": active["indices"]}
+                    missing = [i for i in active["indices"] or [] if not (p / "images/hyperframes" / f"segment_{i}" / "index.html").is_file()]
+                    if missing:
+                        warning = f"Claude Code ended without a composition for segment {', '.join(map(str, missing))}. Activate Claude Code for it again."
             self.persist(p, state)
         result = self.detail(project_id)
         result["warning"] = warning
@@ -843,31 +887,38 @@ class Studio:
                     self.direction_changed(state)
                 self.persist(p, state)
                 return
-            self.invalidate(state, job["step"], job.get("scope"))
-            if job["status"] == "succeeded":
-                stale = state["stale"].get(job["step"])
-                if stale and job["step"] in {"3", "4"}:
-                    script = read_json(p / "text/script.json", {})
-                    segments = script.get("segments", [])
-                    all_indices = {s["index"] for s in segments}
-                    global_settings = {**self.defaults().get("global", {}), **state.get("settings", {}).get("global", {})}
-                    if global_settings.get("opening_quote", True):
-                        all_indices.add(0)
-                    completed = set(job["scope"] if job["scope"] is not None else all_indices - {0})
-                    if job["step"] == "4" and job["mode"] in {"static", "render"}:
-                        desired = "hf" if job["mode"] == "render" else "image"
-                        completed &= {s["index"] for s in segments if s.get("visualizer", "image") == desired}
-                    if job["opening"]:
-                        completed.add(0)
-                    remaining = set(stale["segments"] or all_indices) - completed
-                    if remaining:
-                        stale["segments"] = sorted(remaining)
-                    else:
-                        state["stale"].pop(job["step"], None)
+            if job["status"] != "succeeded":
+                # A failed or cancelled job leaves the step as it was; files it did rewrite are
+                # picked up by the asset comparison in detail(), segment by segment.
+                self.persist(p, state)
+                return
+            # Later steps are outdated for what this job made: its segments, plus the opening (0).
+            scope = job.get("scope")
+            if scope is not None:
+                scope = sorted(set(scope) | ({0} if job.get("opening") else set()))
+            if scope is None or scope:
+                self.invalidate(state, job["step"], scope)
+            stale = state["stale"].get(job["step"])
+            if stale and job["step"] in {"3", "4"}:
+                script = read_json(p / "text/script.json", {})
+                segments = script.get("segments", [])
+                all_indices = {s["index"] for s in segments}
+                global_settings = {**self.defaults().get("global", {}), **state.get("settings", {}).get("global", {})}
+                if global_settings.get("opening_quote", True):
+                    all_indices.add(0)
+                completed = set(job["scope"] if job["scope"] is not None else all_indices - {0})
+                if job["step"] == "4" and job["mode"] in {"static", "render"}:
+                    desired = "hf" if job["mode"] == "render" else "image"
+                    completed &= {s["index"] for s in segments if s.get("visualizer", "image") == desired}
+                if job["opening"]:
+                    completed.add(0)
+                remaining = set(stale["segments"] or all_indices) - completed
+                if remaining:
+                    stale["segments"] = sorted(remaining)
                 else:
                     state["stale"].pop(job["step"], None)
             else:
-                state["stale"][job["step"]] = {"reason": "Generation interrupted or failed", "segments": []}
+                state["stale"].pop(job["step"], None)
             self.persist(p, state)
 
     def cancel_job(self, job_id):
@@ -937,6 +988,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("API keys are managed by the desktop app.")
                 studio.set_credentials(body)
                 return self.json({"applied": True})
+            if parts == ["api", "google-adc"]:
+                return self.json(studio.check_google_adc(body) if method == "POST" else studio.google_adc_status())
             if parts == ["api", "bootstrap"]:
                 return self.json(studio.bootstrap())
             if parts == ["api", "library"] and method == "GET":
@@ -1000,8 +1053,12 @@ class Handler(BaseHTTPRequestHandler):
                             for section, fields in old.items():
                                 effective.setdefault(section, {}).update(fields)
                             # The engine's step-2 settings write the visual direction used by Visuals.
-                            mapping = {"global": "3", "step1": "1", "step1_5": "1.5", "step2": "4", "step3": "3", "step4": "4", "step5": "5", "subtitles": "5", "step6": "6"}
-                            sections = [k for k, v in body["settings"].items() if k in mapping and v != effective.get(k, {})]
+                            mapping = {"global": "3", "step1": "1", "step1_5": "1.5", "step2": "4", "step3": "3", "step4": "4", "step5": "5", "subtitles": "5", "step6": "6", "hyperframes_opening": "4"}
+                            # Fields that are sent replace saved ones; anything left out keeps its saved value.
+                            settings = copy.deepcopy(old)
+                            for section, fields in body["settings"].items():
+                                settings[section] = {**old.get(section, {}), **fields} if isinstance(fields, dict) else fields
+                            sections = [k for k in body["settings"] if k in mapping and {**effective.get(k, {}), **settings[k]} != effective.get(k, {})]
                             changed = [mapping[k] for k in sections]
                             if "step2" in sections:
                                 state["summary_stale"] = True
@@ -1010,7 +1067,7 @@ class Handler(BaseHTTPRequestHandler):
                                 studio.invalidate(state, earliest)
                                 for s in changed:
                                     state["stale"][s] = {"reason": "Production settings changed", "segments": []}
-                            state["settings"] = body["settings"]
+                            state["settings"] = settings
                             if "source" in body:
                                 state["source"] = body["source"]
                             studio.persist(p, state)

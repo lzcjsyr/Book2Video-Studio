@@ -1,12 +1,11 @@
 import { useI18n } from "../i18n";
 import { useState } from "react";
 import { X } from "lucide-react";
-import type { Bootstrap, Detail, Settings, LibraryChoice } from "../types";
-import ApiKeysPanel from "./ApiKeysPanel";
+import type { Bootstrap, ClaudeCodeMode, Detail, Settings, LibraryChoice } from "../types";
+import ApiKeysPanel, { type KeyStatus } from "./ApiKeysPanel";
 import LibraryPanel from "./LibraryPanel";
 import { libraryChoices, librarySettings } from "../library";
-
-const imageProviders = ["doubao", "google", "google_adc"];
+import { imageModelFits, imageModelFor, imageServiceChoices, languageModelChoices } from "../keys";
 
 export default function SettingsPanel({
   detail,
@@ -14,12 +13,20 @@ export default function SettingsPanel({
   onSave,
   onClose,
   onLibraryChanged,
+  onKeyStatus,
+  initialTab,
+  claudeMode,
+  onClaudeMode,
 }: {
   detail: Detail | null;
   bootstrap: Bootstrap | null;
   onSave: (settings: Settings) => void;
   onClose: () => void;
   onLibraryChanged: () => Promise<void>;
+  onKeyStatus?: (status: KeyStatus) => void;
+  initialTab?: "production" | "keys";
+  claudeMode?: ClaudeCodeMode;
+  onClaudeMode?: (mode: ClaudeCodeMode) => void;
 }) {
   const { t, locale, setLocale } = useI18n();
   const [settings, setSettings] = useState<Settings>(() => {
@@ -30,7 +37,7 @@ export default function SettingsPanel({
     return m;
   });
   const [tab, setTab] = useState<"production" | "keys" | "library">(
-    detail && bootstrap ? "production" : "keys",
+    initialTab ?? (detail && bootstrap ? "production" : "keys"),
   );
   const [libraryTarget, setLibraryTarget] = useState({ group: "writing_skills", id: "" });
   const [libraryDirty, setLibraryDirty] = useState(false);
@@ -46,8 +53,25 @@ export default function SettingsPanel({
       setTab("library");
     }}>{t(label)}</button>;
   }
+  // Choosing another image service also swaps a model that only the previous service accepts.
+  const modelFor: Record<string, string> = { image_server: "image_model", cover_image_server: "cover_image_model" };
   const set = (section: string, key: string, value: unknown) =>
-    setSettings((s) => ({ ...s, [section]: { ...s[section], [key]: value } }));
+    setSettings((s) => {
+      const next = { ...s[section], [key]: value };
+      const model = modelFor[key];
+      if (model && next[model]) next[model] = imageModelFor(String(value), String(next[model]));
+      return { ...s, [section]: next };
+    });
+  const modelWarning = (section: string, serverKey: string, modelKey: string) => {
+    const server = String(settings[section]?.[serverKey] ?? "");
+    const model = String(settings[section]?.[modelKey] ?? "");
+    const choice = imageServiceChoices.find((c) => c.id === server);
+    return choice && model && !imageModelFits(server, model) ? (
+      <p className="settings-warning" role="alert">
+        {t("{model} does not work with {provider}. Choose a {provider} model, such as {example}.", { model, provider: t(choice.label), example: choice.model })}
+      </p>
+    ) : null;
+  };
   const field = (
     section: string,
     key: string,
@@ -184,7 +208,8 @@ export default function SettingsPanel({
             role="tabpanel"
             aria-labelledby="api-keys-tab"
           >
-            <ApiKeysPanel />
+            {/* The keys this project needs follow the provider choices in this unsaved draft. */}
+            <ApiKeysPanel settings={detail ? settings : null} motion={Boolean(detail?.segments.some((s) => s.visualizer === "hf"))} claudeMode={claudeMode} onClaudeMode={onClaudeMode} onStatus={onKeyStatus} />
           </div>
         )}
         {tab === "production" && detail && bootstrap && (
@@ -203,6 +228,7 @@ export default function SettingsPanel({
                   "manual",
                   "agent",
                 ])}
+                {field("step1_5", "llm_server", t("Segmentation agent provider (agent mode)"), languageModelChoices)}
               </div>
               <h3>{t("Voice")}</h3>
               <div className="form-grid">
@@ -218,14 +244,15 @@ export default function SettingsPanel({
               <h3>{t("Visuals")}</h3>
               <div className="form-grid">
                 {field("step4", "image_size", t("Image dimensions"))}
-                {field("step4", "image_model", t("Image model"))}
                 {field(
                   "step4",
                   "image_server",
                   t("Image provider"),
-                  imageProviders,
+                  imageServiceChoices,
                 )}
+                {field("step4", "image_model", t("Image model"))}
                 {field("step4", "image_style_preset", t("Image style"), libraryChoices(bootstrap.library, "image_styles"))}
+                {field("hyperframes_opening", "ip_name", t("Opening masthead"))}
                 {field("step4", "image_prompt_template", t("Image prompt"), libraryChoices(bootstrap.library, "image_templates"))}
                 {field(
                   "step4",
@@ -233,11 +260,12 @@ export default function SettingsPanel({
                   t("Animation style"),
                   libraryChoices(bootstrap.library, "motion_styles"),
                 )}
-                {field("step4", "llm_server", t("Visual agent provider"))}
-                {field("step4", "llm_model", t("Visual agent model"))}
-                {field("step2", "llm_server", t("Visual direction provider"))}
+                {field("step4", "llm_server", t("Motion agent provider"), languageModelChoices)}
+                {field("step4", "llm_model", t("Motion agent model"))}
+                {field("step2", "llm_server", t("Visual direction provider"), languageModelChoices)}
                 {field("step2", "llm_model", t("Visual direction model"))}
               </div>
+              {modelWarning("step4", "image_server", "image_model")}
               <div className="settings-manage-row">
                 {manage("summary", "Edit visual direction instructions")}
                 {manage("image_styles", "Edit image styles")}
@@ -283,10 +311,11 @@ export default function SettingsPanel({
                   "step6",
                   "cover_image_server",
                   t("Cover provider"),
-                  imageProviders,
+                  imageServiceChoices,
                 )}
                 {field("step6", "cover_image_model", t("Cover model"))}
               </div>
+              {modelWarning("step6", "cover_image_server", "cover_image_model")}
               {manage("cover_styles", "Edit cover styles")}
               <p className="small-muted">
                 {t(

@@ -4,14 +4,16 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCollapsed } from "../collapse";
 import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
+import { languageModelChoices } from "../keys";
 import type { Bootstrap } from "../types";
 import type { WritingOptions } from "../writing";
 
-export default function WritingSetup({ value, bootstrap, disabled, pending, onChange, onSave, onEditSkill }: {
+export default function WritingSetup({ value, bootstrap, disabled, pending, subscription, onChange, onSave, onEditSkill }: {
   value: WritingOptions;
   bootstrap: Bootstrap | null;
   disabled: boolean;
   pending: boolean;
+  subscription: boolean;
   onChange: (value: WritingOptions) => void;
   onSave: () => void;
   onEditSkill: () => void;
@@ -74,8 +76,12 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, onCh
     </div>
     <details className="writing-agent-settings">
       <summary>{t("Writing agent provider & model")}</summary>
+      {subscription && <p className="small-muted">{t("Not used now: Writing runs in your own Claude Code on your Claude subscription. Change this in Settings → API keys.")}</p>}
       <div className="form-grid">
-        <label className="field"><span>{t("Writing agent provider")}</span><input value={value.llm_server} disabled={disabled} onChange={(e) => change("llm_server", e.target.value)} /></label>
+        <label className="field"><span>{t("Writing agent provider")}</span><select value={value.llm_server} disabled={disabled} onChange={(e) => change("llm_server", e.target.value)}>
+          {!languageModelChoices.some((c) => c.id === value.llm_server) && <option value={value.llm_server}>{t("Unavailable: {id}", { id: value.llm_server || "—" })}</option>}
+          {languageModelChoices.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </select></label>
         <label className="field"><span>{t("Writing agent model")}</span><input value={value.llm_model} disabled={disabled} onChange={(e) => change("llm_model", e.target.value)} /></label>
       </div>
     </details>

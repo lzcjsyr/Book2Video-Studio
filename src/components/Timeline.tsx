@@ -15,12 +15,15 @@ export default function Timeline({
   onSelect,
   version,
   openingEnabled,
+  focus,
 }: {
   detail: Detail;
   selected: number;
   onSelect: (n: number) => void;
   version: number;
   openingEnabled: boolean;
+  /** The track the current step works on; it carries the selection highlight. */
+  focus: "visual" | "voice" | "both";
 }) {
   const { t } = useI18n();
   const active = useRef<HTMLButtonElement | null>(null);
@@ -47,7 +50,7 @@ export default function Timeline({
     );
   }
   return (
-    <section className="timeline">
+    <section className={`timeline focus-${focus}`}>
       <div className="timeline-heading">
         <div>
           <Images size={14} />
@@ -80,10 +83,10 @@ export default function Timeline({
       </div>
       <div className="timeline-body">
         <div className="track-labels">
-          <span>
+          <span className="track-label-visual">
             <Images size={13} /> {t("VISUAL")}
           </span>
-          <span>
+          <span className="track-label-voice">
             <Music2 size={13} /> {t("VOICE")}
           </span>
         </div>

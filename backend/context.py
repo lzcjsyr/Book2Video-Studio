@@ -67,7 +67,18 @@ def prepare(studio, project, body):
             (work / "studio-payload.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
             template = (studio.library_root / "prompts/step4_hyperframes_agent.md").read_text()
             prompt_parts.append(template.format(skill_path_context=build_step4_hyperframes_skill_path_context(studio.library_root / "skills/step4/hyperframes"), style_preset=style, style_context=build_step4_hyperframes_style_context(style, skills_root=studio.library_root / "skills/step4"), payload_json=json.dumps(payload, ensure_ascii=False, indent=2), target_index_html_path=str(work / "index.html")))
-        prompt = "Each segment below is an independent task. Work only on the selected segments, in order. Preserve existing compositions until you have revised them. The application will render your saved HTML.\n\n" + "\n\n".join(prompt_parts)
+        targets = [project / "images/hyperframes" / f"segment_{s['index']}" / "index.html" for s in chosen]
+        if len(chosen) == 1:
+            prompt = "The selected segment is your task. Preserve its existing composition until you have revised it. The application will render your saved HTML.\n\n" + prompt_parts[0]
+        else:
+            # Each part says "the current single segment"; without a task list a model treats the last part as the whole job.
+            tasks = "\n".join(f"{n}. Segment {s['index']} → `{t}`" for n, (s, t) in enumerate(zip(chosen, targets), 1))
+            prompt = (f"You have {len(chosen)} segments to produce, one after another. Each is an independent task with its own section below; "
+                      "inside a section, \"the current segment\" means that section's segment. Finish each segment completely (write, check, fix) "
+                      "before starting the next, and you are done only when every file in this list exists:\n\n" + tasks +
+                      "\n\nPreserve existing compositions until you have revised them. The application will render your saved HTML.\n\n" +
+                      "\n\n".join(f"# Segment {s['index']} (task {n} of {len(chosen)})\n\n{part}\n\n# End of segment {s['index']}"
+                                    for n, (s, part) in enumerate(zip(chosen, prompt_parts), 1)))
         prompt += "\n\nThis application bundles the pinned HyperFrames CLI (0.7.10) as the `hyperframes` command, with its Chrome and FFmpeg. Wherever these instructions or skills say `npx hyperframes ...` or `npx --yes hyperframes@0.7.10 ...`, run `hyperframes ...` instead.\n"
         cwd = project / "images/hyperframes" / f"segment_{chosen[0]['index']}"
         scope = f"Visuals · {len(chosen)} selected segment(s)"

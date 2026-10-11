@@ -13,6 +13,15 @@ def call(fn, values):
     return fn(**{key: values[key] for key in inspect.signature(fn).parameters if key in values})
 
 
+def check_image_model(server, model):
+    """A model left over from another provider would only fail at the provider (Google answers 404)."""
+    from core.config import Config
+    try:
+        Config.validate_model_provider_pair("image", server, model)
+    except ValueError:
+        raise ValueError(f"The image model {model} does not work with {server}. Choose a matching model in Settings → Production.") from None
+
+
 def run(request):
     engine = Path(request["engine"])
     project = Path(request["project"])
@@ -87,6 +96,7 @@ def run(request):
         values["split_mode"] = params.get("step1_5_split_mode", "auto")
     if step == "4":
         values.update(visual_mode="static_image", llm_server=params["llm_server_step4"], llm_model=params["llm_model_step4"], llm_base_url=params["llm_base_url_step4"])
+        check_image_model(params["image_server"], params["image_model"])
         if request.get("mode") == "opening":
             values.update(target_segments=[], regenerate_opening=True)
         elif indices is None:
@@ -99,6 +109,12 @@ def run(request):
         cover_size = cover.get("cover_image_size_presets", {}).get(cover.get("default_cover_image_size_key", ""))
         values.update(cover_image_size=cover_size or params["image_size"],
                       cover_image_server=params.get("cover_image_server") or params["image_server"])
+        if params.get("cover_image_model"):
+            check_image_model(values["cover_image_server"], params["cover_image_model"])
+    if step == "3":
+        # Projects saved before the engine had a default voice carry an empty one.
+        default_voice = (yaml.safe_load(config_path.read_text()).get("step3") or {}).get("voice", "")
+        values.update(tts_server=config.SUPPORTED_TTS_SERVERS[0], voice=params.get("voice") or default_voice)
     if step in {"3", "5"}:
         values["mute_cut_min_silence_ms"] = params.get("mute_cut_min_silence_ms", 200)
     result = call(fn, values)

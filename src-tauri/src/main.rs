@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod claude_code;
 mod credentials;
 mod terminal;
 
@@ -414,6 +415,8 @@ fn main() {
             open_folder,
             credentials::credential_status,
             credentials::credential_save,
+            claude_code::claude_code_status,
+            claude_code::claude_code_set_mode,
             terminal::terminal_start,
             terminal::terminal_write,
             terminal::terminal_resize,

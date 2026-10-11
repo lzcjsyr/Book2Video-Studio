@@ -80,6 +80,8 @@ export interface Job {
   status: "running" | "succeeded" | "failed" | "cancelled" | "cancelling";
   log: string[];
   result?: { message?: string; success?: boolean };
+  /** Seconds since the epoch, from the project service. */
+  started: number;
 }
 export interface Bootstrap {
   default_location: string;
@@ -138,4 +140,19 @@ export interface Launch {
   context: string;
   scope: string;
   args: string[];
+}
+
+/** How Claude Code runs: the bundled copy with a provider API key, or the user's installed copy on their Claude login. */
+export type ClaudeCodeMode = "api_key" | "subscription";
+export interface ClaudeCodeStatus {
+  mode: ClaudeCodeMode;
+  local: null | {
+    path: string | null;
+    version: string | null;
+    logged_in: boolean;
+    auth_method: string | null;
+    subscription: string | null;
+    email: string | null;
+    error: string | null;
+  };
 }
