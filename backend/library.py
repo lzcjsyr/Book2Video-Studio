@@ -27,7 +27,7 @@ class LibraryConflict(Exception):
 
 GROUPS = {
     "writing_skills": ("Writing skills", "skill", "skills/step1"),
-    "summary": ("Visual direction prompt", "prompt", "prompts/step2_summary.md"),
+    "summary": ("Content summary prompt", "prompt", "prompts/step2_summary.md"),
     "image_styles": ("Image styles", "style", "prompts/step4_styles.yaml"),
     "image_templates": ("Image templates", "image_template", "prompts/step4_image_templates.yaml"),
     "motion_styles": ("Motion styles", "motion_style", "prompts/step4_hyperframes_styles.yaml"),
@@ -171,7 +171,7 @@ class Library:
                     items.append({"id": package.name, "label": package.name})
             elif group == "summary":
                 if path.is_file():
-                    items.append({"id": "summary", "label": "Visual direction instructions"})
+                    items.append({"id": "summary", "label": "Content summary instructions"})
             elif group == "templates":
                 items = [{"id": name, "label": info[0]} for name, info in PROMPTS.items() if (path / name).is_file()]
             else:
@@ -185,7 +185,7 @@ class Library:
                     error = str(exception)
                 for name, value in data.items():
                     items.append({"id": name, "label": value.get("label", name) if isinstance(value, dict) else name,
-                                  "description": (value.get("description") or value.get("best_for") or "") if isinstance(value, dict) else str(value)[:100]})
+                                  "description": (value.get("description") or value.get("best_for") or "") if isinstance(value, dict) else str(value) if group == "cover_styles" else str(value)[:100]})
             groups.append({"id": group, "label": label, "kind": kind, "items": items,
                            "hash": digest(path) if kind not in {"skill", "prompt"} else "", "path": str(path), "error": error})
         return {"groups": groups}

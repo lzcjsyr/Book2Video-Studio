@@ -16,8 +16,8 @@ def resolve(engine, project, step):
     path=engine/'config.yaml' if (engine/'config.yaml').exists() else engine/'config.example.yaml'
     merged=yaml.safe_load(path.read_text(encoding='utf-8'))
     state=json.loads((project/'.studio/state.json').read_text(encoding='utf-8'))
-    from server import engine_settings
-    for section,values in engine_settings(state.get('settings',{})).items():merged.setdefault(section,{}).update(values)
+    from server import engine_settings,migrate_state
+    for section,values in engine_settings(migrate_state(state).get('settings',{})).items():merged.setdefault(section,{}).update(values)
     with tempfile.TemporaryDirectory() as temporary:
         runtime=Path(temporary)/'agent-config.yaml';runtime.write_text(yaml.safe_dump(merged,allow_unicode=True),encoding='utf-8');apply_yaml_config(runtime)
     from core.infra.ai.claude_agent import build_step1_agent_env,build_step4_hyperframes_agent_env

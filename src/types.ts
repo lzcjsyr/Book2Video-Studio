@@ -1,4 +1,4 @@
-export type Stage = "1" | "1.5" | "3" | "4" | "5" | "6";
+export type Stage = "1" | "2" | "3" | "4" | "5" | "6";
 export type Settings = Record<string, Record<string, unknown>>;
 export interface Project {
   id: string;
@@ -20,11 +20,28 @@ export interface Segment {
   visual: string | null;
   duration: number | null;
   composition: string | null;
-  /** The still image, in images/ or set aside in images/stills/ while the segment uses motion. */
-  still?: string | null;
-  /** A picture that stands for the segment in the sequence (still, or a motion keyframe). */
-  poster?: string | null;
+  /** Every still image and motion clip the segment has had, oldest first. */
+  takes: Take[];
+  /** The take the segment uses (the only one in the sequence and the assembly), or none yet. */
+  take: string | null;
+  /** A picture that stands for the selected take in the sequence (the still, or a clip's keyframe). */
+  poster: string | null;
+  /** The selected motion clip, when the segment uses one. */
+  motion: Motion | null;
+}
+/** One still image or motion clip of a segment (or of the opening). */
+export interface Take {
+  id: string;
+  /** A background is the opening's: kept, and rendered under the quote into an opening clip. */
+  kind: "still" | "motion" | "background";
+  /** When it was made (seconds since the epoch). */
+  created: number;
+  /** The image, or a clip's rendered video (null until rendered). */
+  path: string | null;
+  poster: string | null;
   motion?: Motion;
+  /** The opening background the next opening render uses. */
+  current?: boolean;
 }
 /** Where a segment's motion stands: Claude Code's composition, its keyframes, the rendered video. */
 export interface Motion {
@@ -69,6 +86,9 @@ export interface Detail {
   ready: Record<Stage, boolean>;
   opening: {
     visual: string | null;
+    takes: Take[];
+    take: string | null;
+    poster: string | null;
     audio: string | null;
     duration: number | null;
   };
@@ -81,6 +101,8 @@ export interface Detail {
     stale: Record<string, { reason: string; segments: number[] }>;
     reviewed: Record<string, string>;
     summary_stale?: boolean;
+    /** The 3:4 copy's panel settings changed since it was made; the landscape video is unaffected. */
+    three_by_four_stale?: boolean;
     agent_active?: { step: Stage; indices: number[]; launch: string };
     events: Revision[];
   };
@@ -111,7 +133,9 @@ export interface Bootstrap {
   defaults: Settings;
   skills: string[];
   library: LibraryCatalog;
+  /** Background music: the bundled tracks, then the ones the user added (also listed in user_music). */
   music: string[];
+  user_music?: string[];
   components: { name: string; path: string | null; bundled: boolean }[];
 }
 export interface LibraryChoice {

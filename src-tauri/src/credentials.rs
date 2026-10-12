@@ -1,6 +1,6 @@
 //! Provider keys stay in the operating system's credential store. The WebView
 //! can submit a replacement and read presence flags, but cannot retrieve keys.
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, sync::Mutex, time::Duration};
 
 use keyring::{Entry, Error};
 use serde::Serialize;
@@ -24,6 +24,11 @@ pub struct Status {
     applied: bool,
 }
 
+/// All keys live in one item, so macOS asks for access once instead of once per provider.
+const VAULT: &str = "provider-keys";
+/// Read the store once per launch; every later lookup is served from memory.
+static CACHE: Mutex<Option<BTreeMap<String, String>>> = Mutex::new(None);
+
 fn entry(name: &str) -> Result<Entry, String> {
     if !PROVIDERS.contains(&name) {
         return Err("Choose a supported API provider.".into());
@@ -31,7 +36,21 @@ fn entry(name: &str) -> Result<Entry, String> {
     Entry::new(SERVICE, name).map_err(|_| "Cannot access the system credential store.".into())
 }
 
-pub fn load() -> Result<BTreeMap<String, String>, String> {
+fn vault() -> Result<Entry, String> {
+    Entry::new(SERVICE, VAULT).map_err(|_| "Cannot access the system credential store.".into())
+}
+
+const READ_ERROR: &str =
+    "Cannot read saved API keys. Unlock the system credential store and retry.";
+
+fn write(keys: &BTreeMap<String, String>) -> Result<(), String> {
+    vault()?
+        .set_password(&serde_json::to_string(keys).unwrap())
+        .map_err(|_| "Cannot save the API key in the system credential store.".into())
+}
+
+/// Builds before the single vault kept one item per provider; move them over once.
+fn migrate() -> Result<BTreeMap<String, String>, String> {
     let mut keys = BTreeMap::new();
     for name in PROVIDERS {
         match entry(name)?.get_password() {
@@ -39,14 +58,27 @@ pub fn load() -> Result<BTreeMap<String, String>, String> {
                 keys.insert(name.into(), value);
             }
             Err(Error::NoEntry) => {}
-            Err(_) => {
-                return Err(
-                    "Cannot read saved API keys. Unlock the system credential store and retry."
-                        .into(),
-                );
-            }
+            Err(_) => return Err(READ_ERROR.into()),
         }
     }
+    write(&keys)?;
+    for name in PROVIDERS {
+        let _ = entry(name)?.delete_credential();
+    }
+    Ok(keys)
+}
+
+pub fn load() -> Result<BTreeMap<String, String>, String> {
+    let mut cache = CACHE.lock().unwrap();
+    if let Some(keys) = cache.as_ref() {
+        return Ok(keys.clone());
+    }
+    let keys = match vault()?.get_password() {
+        Ok(json) => serde_json::from_str(&json).map_err(|_| READ_ERROR.to_string())?,
+        Err(Error::NoEntry) => migrate()?,
+        Err(_) => return Err(READ_ERROR.into()),
+    };
+    *cache = Some(keys.clone());
     Ok(keys)
 }
 
@@ -72,7 +104,8 @@ pub fn apply(info: &crate::Bootstrap, keys: &BTreeMap<String, String>) -> Result
         .header("Authorization", format!("Bearer {}", info.token))
         .send_json(keys)
         .map_err(|_| {
-            "Cannot apply API keys to the production service. Restart Book2Video Studio.".to_string()
+            "Cannot apply API keys to the production service. Restart Book2Video Studio."
+                .to_string()
         })?;
     Ok(())
 }
@@ -100,7 +133,7 @@ pub async fn credential_save(
 fn save(app: &tauri::AppHandle, name: String, value: Option<String>) -> Result<Status, String> {
     let runtime = app.state::<crate::Runtime>();
     let _startup = runtime.startup.lock().unwrap();
-    let credential = entry(&name)?;
+    entry(&name)?;
     let mut keys = load()?;
     match value {
         Some(value) => {
@@ -110,25 +143,18 @@ fn save(app: &tauri::AppHandle, name: String, value: Option<String>) -> Result<S
             }
             // A pasted line can carry a comment or label; providers would only answer "invalid key" later.
             if !value.is_ascii() || value.chars().any(char::is_whitespace) {
-                return Err("An API key has no spaces or other text. Paste only the key itself.".into());
+                return Err(
+                    "An API key has no spaces or other text. Paste only the key itself.".into(),
+                );
             }
-            credential.set_password(value).map_err(|_| {
-                "Cannot save the API key in the system credential store.".to_string()
-            })?;
             keys.insert(name, value.into());
         }
         None => {
-            match credential.delete_credential() {
-                Ok(()) | Err(Error::NoEntry) => {}
-                Err(_) => {
-                    return Err(
-                        "Cannot remove the API key from the system credential store.".into(),
-                    )
-                }
-            }
             keys.remove(&name);
         }
     }
+    write(&keys)?;
+    *CACHE.lock().unwrap() = Some(keys.clone());
     let applied = runtime
         .info
         .lock()

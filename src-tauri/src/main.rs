@@ -88,7 +88,9 @@ impl Installation {
         let tool = |relative: &str| runtime.join(relative);
         // Bundled programs come first; the system PATH remains for the agent's own shell use.
         let mut paths: Vec<PathBuf> = manifest.path.iter().map(|p| runtime.join(p)).collect();
-        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
         if !cfg!(windows) {
             for system in ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] {
                 if !paths.iter().any(|p| p == Path::new(system)) {
@@ -100,13 +102,22 @@ impl Installation {
         let ffmpeg = tool(&manifest.ffmpeg);
         let claude = tool(&manifest.claude);
         let environment = vec![
-            ("PATH".into(), std::env::join_paths(paths).map_err(|e| e.to_string())?),
+            (
+                "PATH".into(),
+                std::env::join_paths(paths).map_err(|e| e.to_string())?,
+            ),
             ("AIGC_VIDEO_LIBRARY_DIR".into(), library.clone().into()),
-            ("AIGC_HYPERFRAMES_CLI".into(), tool(&manifest.hyperframes).into()),
+            (
+                "AIGC_HYPERFRAMES_CLI".into(),
+                tool(&manifest.hyperframes).into(),
+            ),
             ("HYPERFRAMES_BROWSER_PATH".into(), chrome.clone().into()),
             ("PRODUCER_HEADLESS_SHELL_PATH".into(), chrome.into()),
             ("HYPERFRAMES_FFMPEG_PATH".into(), ffmpeg.clone().into()),
-            ("HYPERFRAMES_FFPROBE_PATH".into(), tool(&manifest.ffprobe).into()),
+            (
+                "HYPERFRAMES_FFPROBE_PATH".into(),
+                tool(&manifest.ffprobe).into(),
+            ),
             ("IMAGEIO_FFMPEG_EXE".into(), ffmpeg.into()),
             ("HYPERFRAMES_NO_UPDATE_CHECK".into(), "1".into()),
             ("HYPERFRAMES_NO_TELEMETRY".into(), "1".into()),
@@ -270,7 +281,10 @@ fn start_service(app: &tauri::AppHandle) -> Result<Bootstrap, String> {
                 let _ = BufReader::new(stderr).read_to_string(&mut error);
             }
             let _ = std::fs::write(logs.join("service.log"), &error);
-            return Err(format!("The project service could not start: {}", error.trim()));
+            return Err(format!(
+                "The project service could not start: {}",
+                error.trim()
+            ));
         }
     };
     drain(stdout, log.try_clone().map_err(|e| e.to_string())?);
@@ -302,62 +316,12 @@ async fn bootstrap(app: tauri::AppHandle) -> Result<Bootstrap, String> {
     .await
 }
 
-#[tauri::command]
-async fn export_artifact(
-    app: tauri::AppHandle,
-    project: String,
-    path: String,
-    destination: String,
-) -> Result<(), String> {
-    off_main_thread(move || copy_artifact(&app, &project, &path, &destination)).await
-}
-
-fn copy_artifact(
-    app: &tauri::AppHandle,
-    project: &str,
-    path: &str,
-    destination: &str,
-) -> Result<(), String> {
-    let info = app
-        .state::<Runtime>()
-        .info
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("Start the project service first")?;
-    // The project may be in the workspace or at any location chosen at creation.
-    let root = project_root(&info, project)?;
-    let source = root.join(path).canonicalize().map_err(|e| e.to_string())?;
-    if !source.starts_with(&root)
-        || !source.is_file()
-        || source.components().any(|c| c.as_os_str() == ".studio")
-    {
-        return Err("Choose a project output".into());
-    }
-    let extension = source
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    if ![
-        "mp4", "mov", "webm", "png", "jpg", "jpeg", "wav", "mp3", "srt", "docx", "txt",
-    ]
-    .contains(&extension.as_str())
-    {
-        return Err("Unsupported output format".into());
-    }
-    std::fs::copy(source, destination)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
-}
-
 fn library_source_folder(library: &Path, path: &str) -> Result<PathBuf, String> {
     let library = library.canonicalize().map_err(|e| e.to_string())?;
     let source = PathBuf::from(path)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    if !source.starts_with(library.join("skills")) && !source.starts_with(library.join("prompts"))
-    {
+    if !source.starts_with(library.join("skills")) && !source.starts_with(library.join("prompts")) {
         return Err("Choose a source file inside the skill and template library.".into());
     }
     if source.is_dir() {
@@ -385,6 +349,24 @@ fn reveal(folder: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Show a file selected in its folder (Finder and Explorer select it; elsewhere the folder opens).
+fn reveal_file(file: &Path) -> Result<(), String> {
+    let mut command = if cfg!(target_os = "macos") {
+        let mut c = Command::new("open");
+        c.arg("-R").arg(file);
+        c
+    } else if cfg!(windows) {
+        let mut c = Command::new("explorer.exe");
+        c.arg(format!("/select,{}", file.display()));
+        c
+    } else {
+        let mut c = Command::new("xdg-open");
+        c.arg(file.parent().ok_or("No folder")?);
+        c
+    };
+    command.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn open_library_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     reveal(&library_source_folder(&installation(&app)?.library, &path)?)
@@ -403,9 +385,14 @@ fn open_folder(app: tauri::AppHandle, folder: String) -> Result<(), String> {
     reveal(&target)
 }
 
-/// Show a folder inside a project (such as a segment's motion work) in Finder or Explorer.
+/// Show the project folder, a folder inside it (such as a segment's motion work), or one of its
+/// files selected, in Finder or Explorer. An empty path is the project folder itself.
 #[tauri::command]
-async fn reveal_project_path(app: tauri::AppHandle, project: String, path: String) -> Result<(), String> {
+async fn reveal_project_path(
+    app: tauri::AppHandle,
+    project: String,
+    path: String,
+) -> Result<(), String> {
     off_main_thread(move || {
         let info = app
             .state::<Runtime>()
@@ -416,13 +403,14 @@ async fn reveal_project_path(app: tauri::AppHandle, project: String, path: Strin
             .ok_or("Start the project service first")?;
         let root = project_root(&info, &project)?;
         let target = root.join(&path).canonicalize().map_err(|e| e.to_string())?;
-        if !target.starts_with(&root)
-            || !target.is_dir()
-            || target.components().any(|c| c.as_os_str() == ".studio")
-        {
-            return Err("Choose a folder inside this project".into());
+        if !target.starts_with(&root) || target.components().any(|c| c.as_os_str() == ".studio") {
+            return Err("Choose a file or folder inside this project".into());
         }
-        reveal(&target)
+        if target.is_file() {
+            reveal_file(&target)
+        } else {
+            reveal(&target)
+        }
     })
     .await
 }
@@ -434,7 +422,6 @@ fn main() {
         .manage(terminal::Terminals::default())
         .invoke_handler(tauri::generate_handler![
             bootstrap,
-            export_artifact,
             open_library_folder,
             open_folder,
             reveal_project_path,

@@ -4,8 +4,8 @@ import { adcModels, distinctGaps, imageModelFits, imageModelFor, keyNeeds, unmet
 
 const settings = {
   step1: { llm_server: "deepseek" },
-  step1_5: { split_mode: "auto", llm_server: "kimi" },
-  step2: { llm_server: "deepseek" },
+  step2: { split_mode: "auto", llm_server: "kimi" },
+  step4_summary: { llm_server: "deepseek" },
   step4: { llm_server: "volcengine", image_server: "doubao" },
   step6: { cover_image_server: "google_adc" },
 };
@@ -21,7 +21,7 @@ test("each step needs the key of the provider chosen in its settings", () => {
   });
 });
 test("segmentation needs a model key only in agent mode", () => {
-  const agent = { ...settings, step1_5: { split_mode: "agent", llm_server: "kimi" } };
+  const agent = { ...settings, step2: { split_mode: "agent", llm_server: "kimi" } };
   assert.equal(keys(keyNeeds(agent)).segments, "KIMI_API_KEY");
 });
 test("missing keys and unsupported providers are reported; Google ADC needs no key", () => {
@@ -30,7 +30,7 @@ test("missing keys and unsupported providers are reported; Google ADC needs no k
   assert.deepEqual(unmet(keyNeeds(settings), saved, ["voice", "covers"]), []);
   // Two steps share the missing Volcengine key: one key to add.
   assert.equal(distinctGaps(unmet(keyNeeds(settings, { motion: true }), saved)), 1);
-  const typo = { ...settings, step2: { llm_server: "deepsek" } };
+  const typo = { ...settings, step4_summary: { llm_server: "deepsek" } };
   assert.deepEqual(unmet(keyNeeds(typo), { ...saved, VOLCENGINE_API_KEY: true }).map((n) => n.id), ["direction"]);
   // Before the saved keys are known, nothing is reported as missing.
   assert.deepEqual(unmet(keyNeeds(settings), undefined), []);

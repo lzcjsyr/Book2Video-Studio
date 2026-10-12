@@ -61,7 +61,8 @@ def prepare(studio, project, body):
             seconds = duration(audio)
             if not seconds:
                 raise ValueError(f"Segment {segment['index']} needs a recording before animated visual production.")
-            work = project / "images/hyperframes" / f"segment_{segment['index']}"
+            # The motion clip this session makes or revises; the segment's other clips and stills are not touched.
+            work = body["folders"][segment["index"]]
             work.mkdir(parents=True, exist_ok=True)
             payload = {"segmentIndex": segment["index"], "index": segment["index"], "title": segment.get("title") or f"Segment {segment['index']}", "content": segment["content"], "durationSeconds": seconds, "width": width, "height": height, "stylePreset": style, "descriptionSummary": summary.get("summary", "")}
             (work / "studio-payload.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -72,10 +73,13 @@ def prepare(studio, project, body):
                      f"- 本段所有文件只放在 `{work}` 内：`index.html`、`snapshots/`，以及你需要的辅助文件。\n"
                      f"- 每条 hyperframes 命令（validate、inspect、snapshot）都必须在该目录内运行：先 `cd \"{work}\"`。"
                      f"这样 `snapshot` 的关键帧会写入 `{work / 'snapshots'}`，Studio 会把它们显示为本段的预览。\n"
-                     "- 不要运行 `hyperframes render`，不要在 `images/` 下写入或删除 `segment_*.png` / `segment_*.mp4`："
+                     "- 不要运行 `hyperframes render`，不要在 `images/` 下写入或删除 `segment_*.png` / `segment_*.mp4`，"
+                     "也不要改动 `images/takes/` 下本段的其他图片和动态片段（它们是用户保留的其他版本）："
                      "会话结束后，Studio 会按录音实际时长把 `index.html` 渲染为本段视频。\n")
+            if not (work / "index.html").is_file():
+                part += "- 这是本段新建的动态片段：从头设计 `index.html`。本段之前的片段会原样保留，供用户比较和选择。\n"
             prompt_parts.append(part)
-        targets = [project / "images/hyperframes" / f"segment_{s['index']}" / "index.html" for s in chosen]
+        targets = [body["folders"][s["index"]] / "index.html" for s in chosen]
         if len(chosen) == 1:
             prompt = "The selected segment is your task. Preserve its existing composition until you have revised it. The application will render your saved HTML.\n\n" + prompt_parts[0]
         else:
@@ -93,7 +97,7 @@ def prepare(studio, project, body):
                    "If the user asks for changes, revise index.html and repeat the checks and snapshots before saying it is ready again.")
         prompt += "\n\nThis application bundles the pinned HyperFrames CLI (0.7.10) as the `hyperframes` command, with its Chrome and FFmpeg. Wherever these instructions or skills say `npx hyperframes ...` or `npx --yes hyperframes@0.7.10 ...`, run `hyperframes ...` instead.\n"
         # One segment: work inside its folder. Several: start beside all of them; each section names its folder.
-        cwd = targets[0].parent if len(chosen) == 1 else project / "images/hyperframes"
+        cwd = targets[0].parent if len(chosen) == 1 else project / "images/takes"
         scope = f"Visuals · {len(chosen)} selected segment(s)"
     prompt += "\n\nYou are this step's main production agent. The application manages the project and later steps. Work interactively with the user. The GUI is the primary text editor; raw.json and script.json are canonical. Do not read an older DOCX over newer JSON. Follow the existing skill output contracts.\n"
     prompt_path = context_dir / "context.md"

@@ -60,7 +60,11 @@ pub struct Status {
 }
 
 fn file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join(FILE))
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join(FILE))
 }
 
 fn load(app: &tauri::AppHandle) -> Saved {
@@ -75,7 +79,8 @@ fn store(app: &tauri::AppHandle, saved: &Saved) -> Result<(), String> {
     let path = file(app)?;
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec_pretty(saved).unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&temporary, serde_json::to_vec_pretty(saved).unwrap())
+        .map_err(|e| e.to_string())?;
     std::fs::rename(temporary, path).map_err(|e| e.to_string())
 }
 
@@ -85,7 +90,10 @@ pub fn mode(app: &tauri::AppHandle) -> Mode {
 
 /// Run a short command, giving up after `limit` (a login shell or a stalled CLI must not hang the app).
 fn run(mut command: Command, limit: Duration) -> Result<Output, String> {
-    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -107,7 +115,8 @@ fn run(mut command: Command, limit: Duration) -> Result<Output, String> {
 /// Where the user's own Claude Code is. Apps opened from the Finder do not get the
 /// shell's PATH, so ask the login shell first, then look in the installers' folders.
 fn find(bundled: &Path) -> Option<PathBuf> {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)?;
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)?;
     let mut candidates = Vec::new();
     #[cfg(not(windows))]
     {
@@ -116,9 +125,21 @@ fn find(bundled: &Path) -> Option<PathBuf> {
         lookup.args(["-ilc", "command -v claude"]);
         if let Ok(output) = run(lookup, Duration::from_secs(10)) {
             let text = String::from_utf8_lossy(&output.stdout).into_owned();
-            candidates.extend(text.lines().rev().map(str::trim).filter(|l| l.starts_with('/')).map(PathBuf::from));
+            candidates.extend(
+                text.lines()
+                    .rev()
+                    .map(str::trim)
+                    .filter(|l| l.starts_with('/'))
+                    .map(PathBuf::from),
+            );
         }
-        for relative in [".local/bin/claude", ".claude/local/claude", ".npm-global/bin/claude", ".bun/bin/claude", ".volta/bin/claude"] {
+        for relative in [
+            ".local/bin/claude",
+            ".claude/local/claude",
+            ".npm-global/bin/claude",
+            ".bun/bin/claude",
+            ".volta/bin/claude",
+        ] {
             candidates.push(home.join(relative));
         }
         candidates.extend(["/opt/homebrew/bin/claude", "/usr/local/bin/claude"].map(PathBuf::from));
@@ -133,7 +154,11 @@ fn find(bundled: &Path) -> Option<PathBuf> {
             },
             Duration::from_secs(10),
         ) {
-            candidates.extend(String::from_utf8_lossy(&output.stdout).lines().map(|l| PathBuf::from(l.trim())));
+            candidates.extend(
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(|l| PathBuf::from(l.trim())),
+            );
         }
         candidates.push(home.join(".local/bin/claude.exe"));
         if let Some(appdata) = std::env::var_os("APPDATA") {
@@ -167,10 +192,16 @@ fn inspect(program: &Path, installation: Option<&crate::Installation>) -> Local 
     version.arg("--version");
     match run(version, Duration::from_secs(20)) {
         Ok(output) if output.status.success() => {
-            local.version = String::from_utf8_lossy(&output.stdout).lines().next().map(|l| l.trim().to_string());
+            local.version = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .map(|l| l.trim().to_string());
         }
         Ok(output) => {
-            local.error = Some(format!("Claude Code did not start: {}", String::from_utf8_lossy(&output.stderr).trim()));
+            local.error = Some(format!(
+                "Claude Code did not start: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
             return local;
         }
         Err(e) => {
@@ -198,7 +229,10 @@ fn inspect(program: &Path, installation: Option<&crate::Installation>) -> Local 
 }
 
 /// The installed Claude Code to launch: the one found last time, or a fresh search.
-pub fn local_program(app: &tauri::AppHandle, installation: &crate::Installation) -> Result<PathBuf, String> {
+pub fn local_program(
+    app: &tauri::AppHandle,
+    installation: &crate::Installation,
+) -> Result<PathBuf, String> {
     let mut saved = load(app);
     if let Some(path) = saved.path.as_ref().filter(|p| p.is_file()) {
         return Ok(path.clone());
@@ -255,7 +289,10 @@ mod tests {
     fn modes_are_stored_by_name() {
         let saved: Saved = serde_json::from_str(r#"{"mode":"subscription"}"#).unwrap();
         assert_eq!(saved.mode, Mode::Subscription);
-        assert_eq!(serde_json::to_string(&Mode::ApiKey).unwrap(), r#""api_key""#);
+        assert_eq!(
+            serde_json::to_string(&Mode::ApiKey).unwrap(),
+            r#""api_key""#
+        );
         assert_eq!(Saved::default().mode, Mode::ApiKey);
     }
 
@@ -276,7 +313,14 @@ mod tests {
         let local = inspect(&program, None);
         assert!(local.version.is_some(), "{:?}", local.error);
         assert!(local.error.is_none(), "{:?}", local.error);
-        println!("{} {:?} logged_in={} via {:?} plan {:?}", program.display(), local.version, local.logged_in, local.auth_method, local.subscription);
+        println!(
+            "{} {:?} logged_in={} via {:?} plan {:?}",
+            program.display(),
+            local.version,
+            local.logged_in,
+            local.auth_method,
+            local.subscription
+        );
     }
 
     /// Starts the installed Claude Code as a subscription session does, with a launch prepared
@@ -285,17 +329,32 @@ mod tests {
     #[test]
     #[ignore]
     fn subscription_session_uses_the_login() {
-        assert!(std::env::var("ANTHROPIC_BASE_URL").is_ok(), "run with a dead ANTHROPIC_BASE_URL");
-        let path = std::env::var("STUDIO_TEST_LAUNCH").expect("STUDIO_TEST_LAUNCH names a launch.json");
-        let launch: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert!(
+            std::env::var("ANTHROPIC_BASE_URL").is_ok(),
+            "run with a dead ANTHROPIC_BASE_URL"
+        );
+        let path =
+            std::env::var("STUDIO_TEST_LAUNCH").expect("STUDIO_TEST_LAUNCH names a launch.json");
+        let launch: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         let program = find(Path::new("/nonexistent")).expect("Claude Code is installed");
         let mut command = local_command(&program, None);
         command.current_dir(launch["cwd"].as_str().unwrap());
-        command.args(launch["args"].as_array().unwrap().iter().map(|a| a.as_str().unwrap()));
+        command.args(
+            launch["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a.as_str().unwrap()),
+        );
         command.args(["-p", "Reply with the single word READY."]);
         let output = run(command, Duration::from_secs(180)).unwrap();
         let reply = String::from_utf8_lossy(&output.stdout);
-        assert!(output.status.success() && reply.contains("READY"), "{reply}\n{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success() && reply.contains("READY"),
+            "{reply}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         println!("Claude Code replied: {}", reply.trim());
     }
 }

@@ -109,6 +109,13 @@ class LibraryTests(unittest.TestCase):
                 self.library.restore({"revision": added["revision"]})
                 self.assertEqual(self.library.mapping(self.library.group(group)[2]), before)
 
+    def test_cover_style_descriptions_are_complete_before_selection(self):
+        description = "Read the complete composition and typography guidance.\n" * 5 + "Visible final detail."
+        self.create("cover_styles", "described_cover", description)
+        group = next(group for group in self.library.catalog()["groups"] if group["id"] == "cover_styles")
+        choice = next(choice for choice in group["items"] if choice["id"] == "described_cover")
+        self.assertEqual(choice["description"], description)
+
     def test_template_variables_and_last_style_are_protected(self):
         with self.assertRaisesRegex(ValueError, "variables"):
             self.create("image_templates", "custom", {"label": "Custom", "description": "Custom", "template": "{summary} {style_block}"})

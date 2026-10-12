@@ -22,6 +22,59 @@ def check_image_model(server, model):
         raise ValueError(f"The image model {model} does not work with {server}. Choose a matching model in Settings → Production.") from None
 
 
+def read_script(project):
+    for name in ["script.json", "raw.json"]:
+        if (project / "text" / name).is_file():
+            return json.loads((project / "text" / name).read_text())
+    return {}
+
+
+def panel_preview(project, params, output):
+    """A still of the 3:4 copy: a frame of the landscape video, else of the first segment's visual."""
+    import shutil
+    import tempfile
+    from PIL import Image
+    from core.domain.composer import VideoComposer, three_by_four_panel_options
+    from core.infra.media.three_by_four import render_layout_preview
+    from core.config import config
+    width, height = (int(n) for n in str(params.get("video_size") or params.get("image_size") or "1280x720").lower().replace("×", "x").split("x"))
+    with tempfile.TemporaryDirectory(prefix="studio-3x4-") as folder:
+        frame = Path(folder) / "frame.png"
+        master = project / "final_video.mp4"
+        segment_visuals = sorted((f for f in (project / "images").glob("segment_*.*") if f.stem.split("_")[-1].isdigit()),
+                                 key=lambda f: int(f.stem.split("_")[-1])) if (project / "images").is_dir() else []
+        source = None
+        ffmpeg = shutil.which("ffmpeg")
+        if master.is_file() and ffmpeg:
+            from server import duration
+            moment = max(0.0, (duration(master) or 0) * 0.35)
+            subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-ss", f"{moment:.2f}", "-i", str(master), "-frames:v", "1", str(frame)], check=True)
+            source = "video"
+        else:
+            for visual in segment_visuals:
+                if visual.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                    image = Image.open(visual).convert("RGB")
+                elif visual.suffix.lower() in {".mp4", ".mov", ".webm"} and ffmpeg:
+                    subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(visual), "-frames:v", "1", str(frame)], check=True)
+                    image = Image.open(frame).convert("RGB")
+                else:
+                    continue
+                # Fill the export frame the way assembly does: cover, then centre-crop.
+                scale = max(width / image.width, height / image.height)
+                image = image.resize((max(width, round(image.width * scale)), max(height, round(image.height * scale))))
+                left, top = (image.width - width) // 2, (image.height - height) // 2
+                image.crop((left, top, left + width, top + height)).save(frame)
+                source = "segment"
+                break
+            if not source:
+                Image.new("RGB", (width, height), (40, 44, 50)).save(frame)
+                source = "placeholder"
+        font, index = VideoComposer().resolve_subtitle_font(getattr(config, "SUBTITLE_FONT_FAMILY", "auto"), int(getattr(config, "SUBTITLE_FONT_TTC_INDEX", 0) or 0))
+        render_layout_preview(frame, project / output, read_script(project), panel=three_by_four_panel_options(),
+                              font_path=font, font_ttc_index=index)
+    return {"success": True, "source": source}
+
+
 def run(request):
     engine = Path(request["engine"])
     project = Path(request["project"])
@@ -35,7 +88,8 @@ def run(request):
     from server import engine_settings
     for section, fields in engine_settings(request.get("settings", {})).items():
         merged.setdefault(section, {}).update(fields)
-    runtime = project / ".studio/job-config.yaml"
+    # A layout preview may be drawn while a job runs; each keeps its own configuration.
+    runtime = project / (".studio/preview-config.yaml" if request.get("mode") == "preview" else ".studio/job-config.yaml")
     runtime.write_text(yaml.safe_dump(merged, allow_unicode=True), encoding="utf-8")
     apply_yaml_config(runtime)
     params = get_generation_params(runtime)
@@ -43,28 +97,30 @@ def run(request):
     step = request["step"]
     indices = request.get("indices")
     # The desktop's JSON editor is authoritative; keep the legacy DOCX bridge aligned.
-    if step == "1.5" or request.get("summary"):
+    if step == "2" or request.get("summary"):
         from core.domain.docx_transform import export_raw_to_docx
         raw = json.loads((project / "text/raw.json").read_text())
         export_raw_to_docx(raw, str(project / "text/raw.docx"))
     if request.get("summary"):
         # Every visual follows a shared direction written from the manuscript (engine step 2).
-        print("Generating the visual direction…", flush=True)
+        print("Generating the content summary…", flush=True)
         result = call(steps.run_step_2, {"project_output_dir": str(project), "llm_server": params["llm_server_step2"],
                                          "llm_model": params["llm_model_step2"], "llm_base_url": params["llm_base_url_step2"]})
         if not result.get("success"):
             return result
         if request.get("mode") == "summary":
-            return {"success": True, "message": "Visual direction generated."}
+            return {"success": True, "message": "Content summary generated."}
     if step == "4" and request.get("mode") == "render":
         from core.infra.hyperframes.runtime import hyperframes_command, subprocess_env
         script = json.loads((project / "text/script.json").read_text())
         selected = indices or [s["index"] for s in script["segments"] if s.get("visualizer") == "hf"]
         if not selected:
             raise ValueError("Select an animated segment to render.")
+        folders = {int(k): Path(v) for k, v in request.get("folders", {}).items()}
         for idx in selected:
-            work = project / "images/hyperframes" / f"segment_{idx}"
-            if not (work / "index.html").exists() or not (work / "studio-payload.json").exists():
+            # The motion clip to render: Studio names its folder (images/takes/segment_N/motion-…).
+            work = folders.get(idx)
+            if not work or not (work / "index.html").exists() or not (work / "studio-payload.json").exists():
                 raise ValueError(f"Segment {idx} has no saved composition. Activate Claude Code first.")
             payload = json.loads((work / "studio-payload.json").read_text())
             from server import duration
@@ -82,18 +138,42 @@ def run(request):
                 subprocess.run([*hyperframes_command(), "render", "--output", str(rendered), "--fps", str(params.get("hyperframes_render_fps", 30)), "--variables", json.dumps(payload, ensure_ascii=False)], cwd=work, check=True, env=subprocess_env())
                 if not rendered.is_file() or not duration(rendered):
                     raise ValueError(f"Segment {idx} renderer did not produce a playable video. Check FFprobe and the render log.")
-                rendered.replace(project / "images" / f"segment_{idx}.mp4")
+                # The clip keeps its own video; Studio puts it in the engine's place when the clip is selected.
+                for old in [".mp4", ".mov", ".webm"]:
+                    (work / ("video" + old)).unlink(missing_ok=True)
+                rendered.replace(work / "video.mp4")
             finally:
                 rendered.unlink(missing_ok=True)
-            # Assembly would prefer a still over the video; it waits in images/stills/ in case
-            # the segment goes back to a still image.
-            from server import Studio
-            Studio.park_still(project, idx)
         return {"success": True, "message": f"Rendered {len(selected)} saved composition(s)."}
-    functions = {"1.5": steps.run_step_1_5, "3": steps.run_step_3, "4": steps.run_step_4, "5": steps.run_step_5, "6": steps.run_step_6}
+    if step == "5" and request.get("mode") == "three_by_four":
+        from core.domain.composer import VideoComposer
+        master = project / "final_video.mp4"
+        if not master.is_file():
+            raise ValueError("Assemble the video first. The 3:4 copy is made from the current landscape video.")
+        print("Building the 3:4 copy from the landscape video…", flush=True)
+        VideoComposer().export_three_by_four(str(master), read_script(project))
+        return {"success": True, "message": "3:4 copy rebuilt from the landscape video."}
+    if step == "5" and request.get("mode") == "preview":
+        return panel_preview(project, params, request["output"])
+    # Studio's step 2 (Segments) is the engine's step 1.5.
+    if step == "4" and request.get("mode") == "opening_render":
+        # The engine draws the opening quote over its current background; that background is now the chosen one.
+        import shutil
+        from core.infra.hyperframes import render_opening_video
+        background = project / "images/opening_bg.png"
+        if Path(request["background"]).resolve() != background.resolve():
+            shutil.copy2(request["background"], background)
+        print("Rendering the opening with the chosen background…", flush=True)
+        script = json.loads((project / "text/script.json").read_text())
+        video = render_opening_video(image_size=str(params.get("image_size", "1280x720")), output_dir=str(project / "images"),
+                                     script_data=script, opening_quote=True, opening_bg_path=str(background))
+        if not video:
+            raise ValueError("The opening could not be rendered. Choose and save an opening quote in Writing first.")
+        return {"success": True, "message": "Opening rendered with the chosen background."}
+    functions = {"2": steps.run_step_1_5, "3": steps.run_step_3, "4": steps.run_step_4, "5": steps.run_step_5, "6": steps.run_step_6}
     fn = functions[step]
     values = {**params, "project_output_dir": str(project), "target_segments": indices, "regenerate_opening": request.get("opening", False)}
-    if step == "1.5":
+    if step == "2":
         values["split_mode"] = params.get("step1_5_split_mode", "auto")
     if step == "4":
         values.update(visual_mode="static_image", llm_server=params["llm_server_step4"], llm_model=params["llm_model_step4"], llm_base_url=params["llm_base_url_step4"])
@@ -105,6 +185,11 @@ def run(request):
             values["target_segments"] = [s["index"] for s in script["segments"] if s.get("visualizer") != "hf"]
     if step == "5":
         values["image_size"] = params.get("video_size") or params["image_size"]
+        # Music the user added lives in the app's data folder, not beside the bundled tracks.
+        track = str(values.get("bgm_filename") or "")
+        added = Path(request.get("music_dir") or "") / track
+        if track and Path(track).name == track and not (engine / "music" / track).is_file() and added.is_file():
+            values["bgm_filename"] = str(added)
     if step == "6":
         cover = merged.get("step6", {})
         cover_size = cover.get("cover_image_size_presets", {}).get(cover.get("default_cover_image_size_key", ""))
@@ -119,6 +204,9 @@ def run(request):
     if step in {"3", "5"}:
         values["mute_cut_min_silence_ms"] = params.get("mute_cut_min_silence_ms", 200)
     result = call(fn, values)
+    if step == "5" and result.get("success") and not getattr(config, "THREE_BY_FOUR_ENABLED", True):
+        # Revision history keeps the earlier copy; left here it would no longer match the video.
+        (project / "final_video_3x4.mp4").unlink(missing_ok=True)
     if step == "3" and result.get("missing_segments"):
         result["message"] = result.get("message", "") + " · Other recordings are still missing."
     return result

@@ -74,7 +74,7 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(after['raw'][field][0], value[field][index])
             self.assertCountEqual(after['raw'][field], value[field])
         self.assertEqual(self.studio.detail(self.p.name)['raw'], after['raw'])
-        self.assertIn('1.5', after['state']['stale'])
+        self.assertIn('2', after['state']['stale'])
         self.assertIn('6', after['state']['stale'])
         restored = self.studio.restore(self.p.name, {'revision': after['state']['events'][0]['id']})
         for field in choices:
@@ -101,12 +101,6 @@ class ProjectTests(unittest.TestCase):
         recording(self.p/'voice/voice_1.wav')
         d=self.studio.detail(self.p.name)
         self.assertIn('5',d['state']['stale']);self.assertNotIn('6',d['state']['stale'])
-    def test_hf_visual_selection_and_delivery_refresh(self):
-        script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
-        (self.p/'images/segment_1.mp4').write_bytes(b'video')
-        d=self.studio.detail(self.p.name);self.assertEqual(d['segments'][0]['visual'],'images/segment_1.mp4')
-        (self.p/'final_video.mp4').write_bytes(b'export')
-        self.assertNotEqual(d['revision'],self.studio.detail(self.p.name)['revision'])
     def test_malformed_agent_output_releases_edit_lock(self):
         state=self.studio.state(self.p);state['agent_active']={'step':'1','indices':[]};self.studio.persist(self.p,state)
         (self.p/'text/raw.json').write_text('{incomplete')
@@ -156,7 +150,7 @@ class ProjectTests(unittest.TestCase):
     def test_opening_switch_persists_and_preserves_candidates_and_segment_media(self):
         before = self.studio.detail(self.p.name)
         state = before['state']; state['settings'] = {'global': {'opening_quote': True, 'other_option': 'keep'}, 'step3': {'voice': 'chosen'}}
-        state['reviewed'] = {s: 'reviewed' for s in ['1','1.5','3','4','5','6']}
+        state['reviewed'] = {s: 'reviewed' for s in ['1','2','3','4','5','6']}
         self.studio.persist(self.p, state)
         assets = [self.p/'images/segment_1.png', self.p/'voice/voice_1.wav']
         hashes = [fingerprint(p) for p in assets]
@@ -250,9 +244,9 @@ class ProjectTests(unittest.TestCase):
         self.studio.detail(self.p.name)
         raw=copy.deepcopy(RAW);raw['created_time']=None;atomic_json(self.p/'text/raw.json',raw)
         process=subprocess.Popen([sys.executable,'-c','print(\'STUDIO_RESULT:{"success":true}\')'],stdout=subprocess.PIPE,text=True)
-        job={'id':'test','project':self.p.name,'step':'1.5','status':'running','log':[],'result':None}
+        job={'id':'test','project':self.p.name,'step':'2','status':'running','log':[],'result':None}
         self.studio.observe_job(job,process)
-        self.assertNotIn('1.5',self.studio.detail(self.p.name)['state']['stale'])
+        self.assertNotIn('2',self.studio.detail(self.p.name)['state']['stale'])
     def test_noop_writing_session_keeps_downstream_current(self):
         state=self.studio.state(self.p);state['agent_active']={'step':'1','indices':[],'raw_before':fingerprint(self.p/'text/raw.json')};self.studio.persist(self.p,state)
         result=self.studio.finish_agent(self.p.name,{})
@@ -260,6 +254,57 @@ class ProjectTests(unittest.TestCase):
     def test_assembly_rejects_outdated_inputs(self):
         state=self.studio.state(self.p);state['stale']['3']={'reason':'Edit','segments':[1]};self.studio.persist(self.p,state)
         with self.assertRaises(Conflict):self.studio.run_job(self.p.name,{'step':'5'})
+    def post_settings(self, settings):
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+            route='/api/projects/'+__import__('urllib.parse',fromlist=['quote']).quote(self.p.name)+'/settings'
+            conn.request('POST',route,body=json.dumps({'settings':settings}),headers={'Authorization':'Bearer test-token','Content-Type':'application/json'})
+            self.assertEqual(conn.getresponse().status,200);conn.close()
+        finally:server.shutdown();server.server_close()
+        return self.studio.state(self.p)
+    def test_panel_settings_outdate_only_the_three_by_four_copy(self):
+        (self.p/'final_video.mp4').write_bytes(b'master')
+        state=self.studio.state(self.p);state['stale']={};state['reviewed']={'5':'reviewed'};self.studio.persist(self.p,state)
+        state=self.post_settings({'three_by_four':{'theme':'paper','top_share':0.4}})
+        self.assertEqual(state['stale'],{});self.assertTrue(state['three_by_four_stale']);self.assertEqual(state['reviewed'],{'5':'reviewed'})
+        state=self.post_settings({'step5':{'bgm_default_volume':0.3}})
+        self.assertIn('5',state['stale'])
+    def test_three_by_four_rebuild_needs_a_current_landscape_video(self):
+        with self.assertRaises(Conflict):self.studio.run_job(self.p.name,{'step':'5','mode':'three_by_four'})
+        (self.p/'final_video.mp4').write_bytes(b'master')
+        state=self.studio.state(self.p);state['stale']={'5':{'reason':'Edit','segments':[]}};self.studio.persist(self.p,state)
+        with self.assertRaises(Conflict):self.studio.run_job(self.p.name,{'step':'5','mode':'three_by_four'})
+        with self.assertRaises(ValueError):self.studio.run_job(self.p.name,{'step':'5','mode':'unknown'})
+    def test_three_by_four_rebuild_keeps_the_landscape_step_as_it_was(self):
+        state=self.studio.state(self.p);state['stale']={'6':{'reason':'Edit','segments':[]}};state['three_by_four_stale']=True;state['reviewed']={'5':'reviewed'}
+        self.studio.persist(self.p,state)
+        process=subprocess.Popen([sys.executable,'-c','print(\'STUDIO_RESULT:{"success":true}\')'],stdout=subprocess.PIPE,text=True)
+        job={'id':'test','project':self.p.name,'step':'5','status':'running','log':[],'result':None,'scope':None,'mode':'three_by_four','opening':False}
+        self.studio.observe_job(job,process)
+        state=self.studio.state(self.p)
+        self.assertNotIn('three_by_four_stale',state);self.assertEqual(state['reviewed'],{'5':'reviewed'});self.assertIn('6',state['stale'])
+    def test_added_music_is_listed_served_and_confined(self):
+        track=Path(self.temp.name)/'My theme.mp3';track.write_bytes(b'ID3music')
+        first=self.studio.import_music({'path':str(track)});second=self.studio.import_music({'path':str(track)})
+        self.assertEqual((first['name'],second['name']),('My theme.mp3','My theme (2).mp3'))
+        self.assertEqual(self.studio.bootstrap()['user_music'],['My theme (2).mp3','My theme.mp3'])
+        self.assertEqual(self.studio.music_file('My theme.mp3').read_bytes(),b'ID3music')
+        for name in ['../escape.mp3','', 'missing.mp3']:
+            with self.assertRaises(ValueError):self.studio.music_file(name)
+        (Path(self.temp.name)/'notes.txt').write_text('x')
+        with self.assertRaises(ValueError):self.studio.import_music({'path':str(Path(self.temp.name)/'notes.txt')})
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            from urllib.parse import urlencode
+            conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+            conn.request('GET','/api/music?'+urlencode({'name':'My theme.mp3','token':'test-token'}));response=conn.getresponse()
+            self.assertEqual((response.status,response.read()),(200,b'ID3music'))
+            conn.request('GET','/api/music?'+urlencode({'name':'My theme.mp3'}));self.assertEqual(conn.getresponse().status,401)
+            conn.close()
+        finally:server.shutdown();server.server_close()
     def batch_request(self, batch):
         from unittest.mock import patch
         with patch('server.subprocess.Popen') as spawn, patch('server.threading.Thread'):
@@ -291,7 +336,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(request['indices'], []); self.assertTrue(request['opening'])
     def test_batch_requires_current_segments(self):
         state = self.studio.state(self.p)
-        state['stale']['1.5'] = {'reason':'Changed manuscript','segments':[]}
+        state['stale']['2'] = {'reason':'Changed manuscript','segments':[]}
         self.studio.persist(self.p,state)
         with self.assertRaisesRegex(Conflict, 'current segments'):
             self.batch_request('all')
@@ -305,11 +350,11 @@ class ProjectTests(unittest.TestCase):
     def test_manuscript_edit_outdates_the_direction_and_a_new_direction_outdates_only_visuals(self):
         d = self.studio.detail(self.p.name); value = copy.deepcopy(RAW); value['content'] = 'GUI 新版本。'
         after = self.studio.save(self.p.name, {'kind':'raw','value':value,'expected_hash':d['hashes']['raw']})
-        self.assertTrue(after['state']['summary_stale']); self.assertNotIn('2', after['ready'])
+        self.assertTrue(after['state']['summary_stale'])
         self.studio.persist(self.p, {**self.studio.state(self.p), 'stale': {}})
         after = self.studio.save(self.p.name, {'kind':'summary','value':{'summary':'新的画面基调'},'expected_hash':after['hashes']['summary']})
         self.assertNotIn('summary_stale', after['state'])
-        self.assertEqual(sorted(after['state']['stale']), ['4','5']); self.assertEqual(after['state']['stale']['4']['reason'], 'Visual direction changed')
+        self.assertEqual(sorted(after['state']['stale']), ['4','5']); self.assertEqual(after['state']['stale']['4']['reason'], 'Content summary changed')
         restored = self.studio.restore(self.p.name, {'revision': after['state']['events'][0]['id']})
         self.assertEqual(restored['summary']['summary'], '上下文'); self.assertEqual(sorted(restored['state']['stale']), ['4','5'])
     def test_direction_job_outdates_visuals_and_clears_its_marker(self):
@@ -321,14 +366,32 @@ class ProjectTests(unittest.TestCase):
         self.studio.observe_job(job, process)
         after = self.studio.detail(self.p.name)
         self.assertNotIn('summary_stale', after['state']); self.assertEqual(sorted(after['state']['stale']), ['4','5'])
+    def legacy_state(self, **fields):
+        """A state file as builds before Studio's own step numbers wrote it."""
+        atomic_json(self.p/'.studio/state.json', {'stale':{}, 'reviewed':{}, 'settings':{}, 'source':'', 'events':[], **fields})
     def test_legacy_context_markers_move_to_the_direction(self):
-        state = self.studio.state(self.p); state['stale']['2'] = {'reason':'Step 1.5 changed','segments':[]}; state['reviewed']['2'] = 'reviewed'
-        self.studio.persist(self.p, state)
+        self.legacy_state(stale={'2':{'reason':'Step 1.5 changed','segments':[]}}, reviewed={'2':'reviewed'})
         after = self.studio.detail(self.p.name)
         self.assertTrue(after['state']['summary_stale']); self.assertNotIn('2', after['state']['stale']); self.assertNotIn('2', after['state']['reviewed'])
+    def test_legacy_engine_numbering_becomes_studio_steps(self):
+        self.legacy_state(stale={'1.5':{'reason':'Step 1 changed','segments':[]}}, reviewed={'1.5':'reviewed'},
+                          settings={'step1_5':{'num_segments':7}, 'step2':{'llm_server':'kimi'}})
+        state = self.studio.state(self.p)
+        self.assertEqual(state['stale'], {'2':{'reason':'Step 1 changed','segments':[]}}); self.assertEqual(state['reviewed'], {'2':'reviewed'})
+        self.assertEqual(state['settings'], {'step2':{'num_segments':7}, 'step4_summary':{'llm_server':'kimi'}})
+        self.assertNotIn('summary_stale', state)
+        # Migrated once: Segments' own "2" markers are never mistaken for the old Context stage.
+        self.studio.persist(self.p, state)
+        self.assertEqual(self.studio.state(self.p)['stale'], {'2':{'reason':'Step 1 changed','segments':[]}})
+    def test_settings_reach_the_engine_under_its_own_section_names(self):
+        from server import engine_settings
+        self.assertEqual(engine_settings({'step2':{'split_mode':'agent'}, 'step4_summary':{'llm_server':'kimi'}, 'step1':{'writing_mode':'direct', 'agent_skill':'x'}}),
+                         {'step1_5':{'split_mode':'agent'}, 'step2':{'llm_server':'kimi'}, 'step1':{'agent_skill':'x'}})
+        (self.engine/'config.yaml').write_text('step1_5:\n  num_segments: 9\nstep2:\n  llm_server: kimi\n')
+        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'kimi'}})
     def test_motion_agent_requires_a_current_direction(self):
         state = self.studio.state(self.p); state['summary_stale'] = True; self.studio.persist(self.p, state)
-        with self.assertRaisesRegex(Conflict, 'visual direction'):
+        with self.assertRaisesRegex(Conflict, 'content summary'):
             self.studio.prepare_agent(self.p.name, {'step':'4','indices':[1]})
     def test_completed_static_batch_keeps_motion_outdated(self):
         script = copy.deepcopy(SCRIPT)
@@ -352,7 +415,7 @@ class ProjectTests(unittest.TestCase):
         chosen=self.studio.scoped_media(paths,self.p,[1])
         self.assertTrue(chosen);self.assertTrue(all('_1.' in p.name for p in chosen));self.assertFalse(any('_2.' in p.name for p in chosen))
     def test_covers_reject_outdated_metadata(self):
-        state=self.studio.state(self.p);state['stale']['1.5']={'reason':'Title edit','segments':[]};self.studio.persist(self.p,state)
+        state=self.studio.state(self.p);state['stale']['2']={'reason':'Title edit','segments':[]};self.studio.persist(self.p,state)
         with self.assertRaises(Conflict):self.studio.run_job(self.p.name,{'step':'6'})
     def test_media_auth_and_byte_ranges(self):
         server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
@@ -381,14 +444,46 @@ class ProjectTests(unittest.TestCase):
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
             conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
-            body={'settings':{'step1':{'llm_model':'chosen-model'},'step4':{'image_server':'google_adc'}}}
+            body={'settings':{'step1':{'llm_model':'chosen-model'},'step4':{'image_style_preset':'style07'}}}
             route='/api/projects/'+__import__('urllib.parse',fromlist=['quote']).quote(self.p.name)+'/settings'
             conn.request('POST',route,body=json.dumps(body),headers={'Authorization':'Bearer test-token','Content-Type':'application/json'})
             self.assertEqual(conn.getresponse().status,200);conn.close()
         finally:server.shutdown();server.server_close()
         state=self.studio.state(self.p)
-        self.assertEqual(state['settings']['step4'],{'image_size':'1280x720','image_server':'google_adc'})
-        self.assertIn('4',state['stale']);self.assertNotIn('1',state['stale']);self.assertNotIn('1.5',state['stale'])
+        self.assertEqual(state['settings']['step4'],{'image_size':'1280x720','image_style_preset':'style07'})
+        self.assertIn('4',state['stale']);self.assertNotIn('1',state['stale']);self.assertNotIn('2',state['stale'])
+
+    def test_new_providers_and_models_keep_finished_work_current(self):
+        state=self.studio.state(self.p);state['stale']={};state['reviewed']={'2':'reviewed','4':'reviewed'};self.studio.persist(self.p,state)
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+            body={'settings':{'step2':{'llm_server':'deepseek','llm_model':'deepseek-flash'},'step3':{'tts_model':'seed-tts-2.0-standard'},
+                              'step4':{'image_server':'google_adc','image_model':'gemini-3.1-flash-image','llm_server':'kimi','llm_model':'kimi-k2'},
+                              'step4_summary':{'llm_server':'deepseek','llm_model':'deepseek-flash'},'step6':{'cover_image_server':'doubao','cover_image_model':'seedream'}}}
+            route='/api/projects/'+__import__('urllib.parse',fromlist=['quote']).quote(self.p.name)+'/settings'
+            conn.request('POST',route,body=json.dumps(body),headers={'Authorization':'Bearer test-token','Content-Type':'application/json'})
+            self.assertEqual(conn.getresponse().status,200);conn.close()
+        finally:server.shutdown();server.server_close()
+        state=self.studio.state(self.p)
+        self.assertEqual(state['settings']['step4']['image_model'],'gemini-3.1-flash-image');self.assertEqual(state['settings']['step4_summary']['llm_model'],'deepseek-flash')
+        self.assertEqual(state['stale'],{});self.assertNotIn('summary_stale',state);self.assertEqual(state['reviewed'],{'2':'reviewed','4':'reviewed'})
+
+    def test_a_new_writing_model_keeps_the_manuscript_current(self):
+        state=self.studio.state(self.p);state['stale']={};state['reviewed']={'1':'reviewed'};self.studio.persist(self.p,state)
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+            body={'settings':{'step1':{'llm_server':'kimi','llm_model':'kimi-k2'}}}
+            route='/api/projects/'+__import__('urllib.parse',fromlist=['quote']).quote(self.p.name)+'/settings'
+            conn.request('POST',route,body=json.dumps(body),headers={'Authorization':'Bearer test-token','Content-Type':'application/json'})
+            self.assertEqual(conn.getresponse().status,200);conn.close()
+        finally:server.shutdown();server.server_close()
+        state=self.studio.state(self.p)
+        self.assertEqual(state['settings']['step1'],{'llm_server':'kimi','llm_model':'kimi-k2'})
+        self.assertEqual(state['stale'],{});self.assertEqual(state['reviewed'],{'1':'reviewed'})
 
     def test_saved_keys_override_environment_without_entering_project_data(self):
         from unittest.mock import patch
@@ -460,7 +555,7 @@ class PipelineTests(unittest.TestCase):
     def test_gui_manuscript_overrides_stale_docx_before_segmentation(self):
         sys.path.insert(0,str(ENGINE));from core.domain.docx_transform import export_raw_to_docx
         old=copy.deepcopy(RAW);old['content']='旧的 Word 内容。';export_raw_to_docx(old,str(self.p/'text/raw.docx'))
-        self.run_worker('1.5',{'step1':{'writing_mode':'direct'},'step1_5':{'num_segments':2,'split_mode':'manual'}})
+        self.run_worker('2',{'step1':{'writing_mode':'direct'},'step2':{'num_segments':2,'split_mode':'manual'}})
         text=''.join(s['content'] for s in json.loads((self.p/'text/script.json').read_text())['segments'])
         self.assertIn('GUI',text);self.assertNotIn('旧的 Word',text)
     def test_selected_boxes_reach_script_cover_and_opening_inputs(self):
@@ -480,7 +575,7 @@ class PipelineTests(unittest.TestCase):
         sys.path.insert(0, str(ENGINE))
         from core.domain.docx_transform import export_raw_to_docx
         export_raw_to_docx(RAW, str(self.p/'text/raw.docx'))
-        self.run_worker('1.5', {'step1_5': {'num_segments': 2, 'split_mode': 'manual'}})
+        self.run_worker('2', {'step2': {'num_segments': 2, 'split_mode': 'manual'}})
         script = json.loads((self.p/'text/script.json').read_text())
         raw = json.loads((self.p/'text/raw.json').read_text())
         from core.domain.metadata import get_primary_video_title, get_primary_cover_title, get_primary_cover_subtitle, get_primary_golden_quote
@@ -511,6 +606,26 @@ class PipelineTests(unittest.TestCase):
                     self.assertEqual(bool(red > blue), enabled)
                 self.assertTrue((self.p/'voice/opening.wav').exists())
                 self.assertTrue((self.p/'images/opening.png').exists())
+    def test_three_by_four_copy_is_optional_rebuildable_and_previewable(self):
+        from PIL import Image
+        atomic_json(self.p/'text/script.json',{**copy.deepcopy(SCRIPT),'cover_titles':['封面'],'golden_quotes':['开场金句']})
+        for i in [1,2]:
+            Image.new('RGB',(320,180),(30*i,80,100)).save(self.p/f'images/segment_{i}.png');recording(self.p/f'voice/voice_{i}.wav')
+        step5={'video_size':'320x180','video_output_fps':12,'video_codec':'h264','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0}
+        request=lambda settings, **extra: {'engine':str(ENGINE),'project':str(self.p),'step':'5','settings':settings,**extra}
+        def worker(body):
+            result=subprocess.run([sys.executable,'-u',str(DESKTOP/'backend/runner.py'),json.dumps(body,ensure_ascii=False)],capture_output=True,text=True,timeout=120)
+            self.assertEqual(result.returncode,0,result.stdout[-4000:]+result.stderr[-2000:])
+        # The layout preview works before anything is assembled, from a segment's image.
+        worker(request({'global':{'opening_quote':False},'step5':step5},mode='preview',output='.studio/preview_3x4.png'))
+        with Image.open(self.p/'.studio/preview_3x4.png') as preview:self.assertEqual(preview.size,(320,428))
+        (self.p/'final_video_3x4.mp4').write_bytes(b'outdated copy')
+        worker(request({'global':{'opening_quote':False},'step5':step5,'three_by_four':{'enabled':False}}))
+        self.assertTrue((self.p/'final_video.mp4').is_file());self.assertFalse((self.p/'final_video_3x4.mp4').exists())
+        master=(self.p/'final_video.mp4').read_bytes()
+        worker(request({'global':{'opening_quote':False},'step5':step5,'three_by_four':{'theme':'blur','top_share':0.3}},mode='three_by_four'))
+        self.assertEqual((self.p/'final_video.mp4').read_bytes(),master)
+        self.assertAlmostEqual(duration(self.p/'final_video_3x4.mp4'),2.0,delta=.5)
 
 
 class AgentContextTests(unittest.TestCase):
@@ -531,7 +646,7 @@ class AgentContextTests(unittest.TestCase):
         atomic_json(self.p/'text/script.json',copy.deepcopy(SCRIPT));atomic_json(self.p/'text/mini_summary.json',{'summary':'Shared context'})
         recording(self.p/'voice/voice_1.wav')
         for step in ['1','4']:
-            launch=prepare(studio,self.p,{'step':step,'indices':[1]})
+            launch=prepare(studio,self.p,{'step':step,'indices':[1],'folders':{1:self.p/'images/takes/segment_1/motion-test'}})
             context=Path(launch['context']).read_text()
             self.assertIn('--append-system-prompt-file',launch['args']);self.assertNotIn('{output_json}',context)
             if step=='4':self.assertIn('"durationSeconds": 1.0',context);self.assertIn('Shared context',context)
@@ -572,7 +687,7 @@ class MotionRenderTests(unittest.TestCase):
         from unittest.mock import patch
         import runner
         script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
-        work=self.p/'images/hyperframes/segment_1';work.mkdir(parents=True)
+        work=self.p/'images/takes/segment_1/motion-20260101-000000-abcd';work.mkdir(parents=True)
         html='<!DOCTYPE html><p>Existing user composition</p>';(work/'index.html').write_text(html)
         atomic_json(work/'studio-payload.json',{'durationSeconds':99,'content':'Old narration'})
         recording(self.p/'voice/voice_1.wav');(self.p/'images/segment_1.png').write_bytes(b'previous image')
@@ -583,14 +698,39 @@ class MotionRenderTests(unittest.TestCase):
         original=Path.cwd()
         try:
             with patch('runner.subprocess.run',side_effect=render),patch('server.duration',return_value=1.0):
-                result=runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'4','mode':'render','indices':[1],'settings':{}})
+                result=runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'4','mode':'render','indices':[1],'settings':{},'folders':{'1':str(work)}})
         finally:os.chdir(original)
         from core.infra.hyperframes.runtime import hyperframes_command
         self.assertTrue(result['success']);self.assertEqual((work/'index.html').read_text(),html)
         self.assertEqual(len(calls),1);self.assertEqual(calls[0][:len(hyperframes_command())+1],[*hyperframes_command(),'render'])
         payload=json.loads(calls[0][calls[0].index('--variables')+1]);self.assertEqual(payload['durationSeconds'],1.0);self.assertEqual(payload['content'],script['segments'][0]['content'])
-        self.assertEqual((self.p/'images/segment_1.mp4').read_bytes(),b'rendered media');self.assertFalse((self.p/'images/segment_1.png').exists())
-        self.assertEqual((self.p/'images/stills/segment_1.png').read_bytes(),b'previous image')
+        # The clip keeps its own video; the still in the engine's place is left to Studio.
+        self.assertEqual((work/'video.mp4').read_bytes(),b'rendered media');self.assertEqual((self.p/'images/segment_1.png').read_bytes(),b'previous image')
+    def test_the_opening_is_rendered_over_the_chosen_background(self):
+        from unittest.mock import patch
+        import runner
+        if str(ENGINE) not in sys.path:sys.path.insert(0,str(ENGINE))
+        chosen=self.p/'images/takes/opening/background-20260101-000000-000-abcd.png';chosen.parent.mkdir(parents=True)
+        chosen.write_bytes(b'older background');(self.p/'images/opening_bg.png').write_bytes(b'newest background')
+        atomic_json(self.p/'text/script.json',copy.deepcopy(SCRIPT))
+        calls={}
+        def render(**kwargs):
+            calls.update(kwargs);(self.p/'images/opening.mp4').write_bytes(b'opening video');return str(self.p/'images/opening.mp4')
+        original=Path.cwd()
+        try:
+            with patch('core.infra.hyperframes.render_opening_video',side_effect=render):
+                result=runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'4','mode':'opening_render','background':str(chosen),'settings':{}})
+        finally:os.chdir(original)
+        self.assertTrue(result['success']);self.assertEqual(calls['opening_bg_path'],str(self.p/'images/opening_bg.png'))
+        self.assertEqual((self.p/'images/opening_bg.png').read_bytes(),b'older background')
+    def test_a_clip_without_a_composition_is_refused(self):
+        import runner
+        script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
+        original=Path.cwd()
+        try:
+            with self.assertRaisesRegex(ValueError,'no saved composition'):
+                runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'4','mode':'render','indices':[1],'settings':{},'folders':{}})
+        finally:os.chdir(original)
 
 class ImageModelTests(unittest.TestCase):
     """A model left over from another image service is refused before any provider is called."""
@@ -668,84 +808,301 @@ class MotionContextTests(unittest.TestCase):
         self.studio.detail(self.id)
     def tearDown(self):
         if hasattr(self,'temp'):self.temp.cleanup()
+    def clip(self,index):
+        return self.p/'images/takes'/f'segment_{index}'/self.studio.state(self.p)['takes'][str(index)]
     def test_task_list_and_missing_composition_warning(self):
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[1,3]})
         context=Path(launch['context']).read_text()
         for i in (1,3):
-            self.assertIn(f"Segment {i} → `{self.p/'images/hyperframes'/f'segment_{i}'/'index.html'}`",context)
+            self.assertIn(f"Segment {i} → `{self.clip(i)/'index.html'}`",context)
             self.assertIn(f'# Segment {i} (task',context)
-        self.assertNotIn('segment_2/index.html',context)
-        self.assertEqual(launch['cwd'],str(self.p/'images/hyperframes'))
-        (self.p/'images/hyperframes/segment_3/index.html').write_text('<!DOCTYPE html>')
+        self.assertNotIn('segment_2/',context)
+        self.assertEqual(launch['cwd'],str(self.p/'images/takes'))
+        (self.clip(3)/'index.html').write_text('<!DOCTYPE html>')
         finished=self.studio.finish_agent(self.id,{})
         self.assertIn('segment 1.',finished['warning']);self.assertNotIn('3',finished['warning'])
+        # The new clip Claude Code never composed is gone; the composed one is the segment's visual.
+        self.assertEqual(finished['segments'][0]['takes'],[]);self.assertIsNone(finished['segments'][0]['take'])
+        self.assertEqual([t['kind'] for t in finished['segments'][2]['takes']],['motion'])
+        self.assertEqual(finished['segments'][2]['take'],finished['segments'][2]['takes'][0]['id'])
     def test_single_segment_keeps_its_own_instructions(self):
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[2]})
         context=Path(launch['context']).read_text()
         self.assertTrue(context.startswith('The selected segment is your task.'));self.assertNotIn('task 1 of',context)
-        work=self.p/'images/hyperframes/segment_2'
+        work=self.clip(2)
         self.assertEqual(launch['cwd'],str(work));self.assertIn(f'cd "{work}"',context);self.assertIn(str(work/'snapshots'),context)
-        self.assertIn('Finish & render',context)
+        self.assertIn('Finish & render',context);self.assertIn('新建的动态片段',context)
         self.studio.finish_agent(self.id,{})
+    def test_revising_a_clip_works_in_its_folder_and_a_new_clip_keeps_it(self):
+        self.studio.prepare_agent(self.id,{'step':'4','indices':[1]})
+        first=self.clip(1);(first/'index.html').write_text('<!DOCTYPE html><p>first</p>')
+        self.studio.finish_agent(self.id,{})
+        launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[1],'take':first.name})
+        self.assertEqual(launch['cwd'],str(first));self.assertNotIn('新建的动态片段',Path(launch['context']).read_text())
+        self.studio.finish_agent(self.id,{})
+        launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[1],'take':'new'})
+        second=self.clip(1);self.assertNotEqual(second,first);self.assertEqual(launch['cwd'],str(second))
+        (second/'index.html').write_text('<!DOCTYPE html><p>second</p>')
+        finished=self.studio.finish_agent(self.id,{})
+        self.assertEqual([t['id'] for t in finished['segments'][0]['takes']],[first.name,second.name])
+        self.assertEqual(finished['segments'][0]['take'],second.name)
+        self.assertEqual((first/'index.html').read_text(),'<!DOCTYPE html><p>first</p>')
+    def test_an_abandoned_new_clip_restores_the_previous_visual(self):
+        (self.p/'images/segment_1.png').write_bytes(b'still');self.studio.detail(self.id)
+        still=self.studio.state(self.p)['takes']['1']
+        self.studio.prepare_agent(self.id,{'step':'4','indices':[1],'take':'new'})
+        self.assertFalse((self.p/'images/segment_1.png').exists())
+        finished=self.studio.finish_agent(self.id,{})
+        self.assertEqual(finished['segments'][0]['take'],still);self.assertEqual((self.p/'images/segment_1.png').read_bytes(),b'still')
+        self.assertEqual(finished['segments'][0]['visualizer'],'image');self.assertEqual(len(finished['segments'][0]['takes']),1)
+    def test_revising_a_missing_clip_is_refused(self):
+        with self.assertRaisesRegex(ValueError,'no longer in the project'):
+            self.studio.prepare_agent(self.id,{'step':'4','indices':[1],'take':'motion-19990101-000000-dead'})
+        with self.assertRaisesRegex(ValueError,'one segment'):
+            self.studio.prepare_agent(self.id,{'step':'4','indices':[1,2],'take':'new'})
 
-class SegmentVisualTests(unittest.TestCase):
-    """A segment switches between a still and motion without losing either; motion reports each stage."""
+class SegmentTakeTests(unittest.TestCase):
+    """Each segment keeps every still and motion clip it has had; the selected one is in the engine's place."""
     setUp=ProjectTests.setUp
     open=ProjectTests.open
     tearDown=ProjectTests.tearDown
-    def switch(self,visualizer,index=1):
-        d=self.studio.detail(self.p.name)
-        return self.studio.set_visual(self.p.name,{'index':index,'visualizer':visualizer,'expected_hash':d['hashes']['script']})
-    def compose(self,index=1,frames=2):
-        work=self.p/'images/hyperframes'/f'segment_{index}';(work/'snapshots').mkdir(parents=True,exist_ok=True)
-        (work/'index.html').write_text('<!DOCTYPE html>')
+    def takes(self,index=1):
+        return self.studio.detail(self.p.name)['segments'][index-1]['takes']
+    def select(self,take,index=1):
+        return self.studio.select_take(self.p.name,{'index':index,'take':take})
+    def clip(self,index=1,frames=2,video=None,composed=1000):
+        """A motion clip as a Claude Code session leaves it, optionally rendered."""
+        self.studio.detail(self.p.name)
+        work=self.p/'images/takes'/f'segment_{index}'/'motion-20260101-000000-abcd';(work/'snapshots').mkdir(parents=True,exist_ok=True)
+        (work/'index.html').write_text('<!DOCTYPE html>');(work/'studio-payload.json').write_text('{}')
         for n in range(frames):(work/'snapshots'/f'frame-0{n}-at-{n}.0s.png').write_bytes(b'frame')
-        os.utime(work/'index.html',(1000,1000))
+        os.utime(work/'index.html',(composed,composed))
+        if video:(work/'video.mp4').write_bytes(video)
         return work
+    def test_a_legacy_project_moves_its_still_composition_and_render_into_takes(self):
+        script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
+        (self.p/'images/stills').mkdir();(self.p/'images/segment_1.png').replace(self.p/'images/stills/segment_1.png');os.utime(self.p/'images/stills/segment_1.png',(500,500))
+        work=self.p/'images/hyperframes/segment_1';(work/'snapshots').mkdir(parents=True)
+        (work/'index.html').write_text('<!DOCTYPE html>');(work/'snapshots/frame-00-at-0.0s.png').write_bytes(b'frame');os.utime(work/'index.html',(1000,1000))
+        (self.p/'images/hyperframes/.DS_Store').write_bytes(b'finder')
+        (self.p/'images/segment_1.mp4').write_bytes(b'video')
+        segment=self.studio.detail(self.p.name)['segments'][0]
+        self.assertEqual([t['kind'] for t in segment['takes']],['still','motion'])
+        self.assertEqual(segment['take'],segment['takes'][1]['id']);self.assertEqual(segment['visual'],'images/segment_1.mp4')
+        self.assertTrue(segment['motion']['video_current']);self.assertIn('/snapshots/frame-00',segment['poster'])
+        self.assertFalse((self.p/'images/stills').exists());self.assertFalse((self.p/'images/hyperframes').exists())
+        self.assertEqual(Path(self.p/segment['takes'][0]['path']).read_bytes(),b'visual')
+        # A still segment keeps using its image.
+        second=self.studio.detail(self.p.name)['segments'][1]
+        self.assertEqual(second['visual'],'images/segment_2.png');self.assertEqual(second['take'],second['takes'][0]['id'])
+    def test_hf_visual_selection_and_delivery_refresh(self):
+        script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
+        (self.p/'images/segment_1.mp4').write_bytes(b'video')
+        d=self.studio.detail(self.p.name);self.assertEqual(d['segments'][0]['visual'],'images/segment_1.mp4')
+        self.assertFalse((self.p/'images/segment_1.png').exists())
+        (self.p/'final_video.mp4').write_bytes(b'export')
+        self.assertNotEqual(d['revision'],self.studio.detail(self.p.name)['revision'])
+    def test_a_new_image_becomes_a_take_and_the_old_one_is_kept(self):
+        first=self.takes()[0]['id']
+        (self.p/'images/segment_1.png').write_bytes(b'new visual')
+        segment=self.studio.detail(self.p.name)['segments'][0]
+        self.assertEqual(len(segment['takes']),2);self.assertEqual(segment['take'],segment['takes'][1]['id'])
+        self.assertIn('5',self.studio.state(self.p)['stale'])
+        after=self.select(first)
+        self.assertEqual((self.p/'images/segment_1.png').read_bytes(),b'visual');self.assertEqual(after['segments'][0]['take'],first)
+        self.assertEqual(len(after['segments'][0]['takes']),2)
+    def test_a_new_image_replaces_a_motion_clip_as_the_visual(self):
+        work=self.clip(video=b'video');self.select(work.name)
+        (self.p/'images/segment_1.png').write_bytes(b'regenerated')
+        segment=self.studio.detail(self.p.name)['segments'][0]
+        self.assertEqual(segment['visualizer'],'image');self.assertEqual(segment['visual'],'images/segment_1.png')
+        self.assertFalse((self.p/'images/segment_1.mp4').exists());self.assertEqual(len(segment['takes']),3)
+    def test_rendered_motion_and_still_trade_places(self):
+        still=self.takes()[0]['id'];work=self.clip(video=b'video')
+        after=self.select(work.name);segment=after['segments'][0]
+        self.assertEqual(segment['visual'],'images/segment_1.mp4');self.assertTrue(segment['motion']['video_current'])
+        self.assertEqual((self.p/'images/segment_1.mp4').read_bytes(),b'video');self.assertFalse((self.p/'images/segment_1.png').exists())
+        self.assertEqual(json.loads((self.p/'text/script.json').read_text())['segments'][0]['visualizer'],'hf')
+        self.assertNotIn('4',after['state']['stale']);self.assertIn('5',after['state']['stale'])
+        self.assertNotIn('2',after['state']['stale'])
+        back=self.select(still)
+        self.assertEqual(back['segments'][0]['visual'],'images/segment_1.png');self.assertEqual((self.p/'images/segment_1.png').read_bytes(),b'visual')
+        self.assertFalse((self.p/'images/segment_1.mp4').exists());self.assertNotIn('4',back['state']['stale'])
+        self.assertEqual(json.loads((self.p/'text/script.json').read_text())['segments'][0]['visualizer'],'image')
     def test_motion_without_a_render_shows_no_video_but_keeps_the_still(self):
-        self.compose()
-        after=self.switch('hf');segment=after['segments'][0]
-        self.assertIsNone(segment['visual']);self.assertEqual(segment['still'],'images/segment_1.png')
-        self.assertEqual(segment['motion']['composition'],'images/hyperframes/segment_1/index.html')
+        work=self.clip()
+        after=self.select(work.name);segment=after['segments'][0]
+        self.assertIsNone(segment['visual']);self.assertEqual(segment['motion']['composition'],f'images/takes/segment_1/{work.name}/index.html')
         self.assertEqual(len(segment['motion']['keyframes']),2);self.assertTrue(segment['motion']['keyframes_current'])
         self.assertIsNone(segment['motion']['video']);self.assertIn('snapshots/frame-01',segment['poster'])
         self.assertEqual(after['state']['stale']['4']['segments'],[1]);self.assertFalse(after['ready']['4'])
-        self.assertTrue((self.p/'images/segment_1.png').exists())
-    def test_rendered_motion_and_still_trade_places(self):
-        self.compose();(self.p/'images/segment_1.mp4').write_bytes(b'video')
-        after=self.switch('hf')
-        self.assertEqual(after['segments'][0]['visual'],'images/segment_1.mp4');self.assertTrue(after['segments'][0]['motion']['video_current'])
-        self.assertFalse((self.p/'images/segment_1.png').exists());self.assertEqual((self.p/'images/stills/segment_1.png').read_bytes(),b'visual')
-        self.assertNotIn('4',after['state']['stale']);self.assertIn('5',after['state']['stale'])
-        back=self.switch('image')
-        self.assertEqual(back['segments'][0]['visual'],'images/segment_1.png');self.assertEqual((self.p/'images/segment_1.png').read_bytes(),b'visual')
-        self.assertNotIn('4',back['state']['stale'])
-        self.assertEqual(json.loads((self.p/'text/script.json').read_text())['segments'][0]['visualizer'],'image')
+        self.assertFalse((self.p/'images/segment_1.png').exists());self.assertEqual(len(segment['takes']),2)
     def test_an_edited_composition_outdates_its_render(self):
-        work=self.compose();(self.p/'images/segment_1.mp4').write_bytes(b'video');os.utime(self.p/'images/segment_1.mp4',(500,500))
-        segment=self.switch('hf')['segments'][0]
+        work=self.clip(video=b'video');os.utime(work/'video.mp4',(500,500))
+        segment=self.select(work.name)['segments'][0]
         self.assertFalse(segment['motion']['video_current']);self.assertEqual(self.studio.detail(self.p.name)['state']['stale']['4']['segments'],[1])
         os.utime(work/'snapshots/frame-00-at-0.0s.png',(10,10))
         self.assertFalse(self.studio.detail(self.p.name)['segments'][0]['motion']['keyframes_current'])
-    def test_switch_is_refused_during_an_agent_or_after_an_outside_edit(self):
-        with self.assertRaises(Conflict):
-            self.studio.set_visual(self.p.name,{'index':1,'visualizer':'hf','expected_hash':'old'})
-        state=self.studio.state(self.p);state['agent_active']={'step':'4','indices':[2]};self.studio.persist(self.p,state)
-        with self.assertRaises(Conflict):self.switch('hf')
+    def test_a_rendered_clip_reaches_the_engine_when_selected(self):
+        work=self.clip();self.select(work.name)
+        (work/'video.mp4').write_bytes(b'fresh render')
+        segment=self.studio.detail(self.p.name)['segments'][0]
+        self.assertEqual(segment['visual'],'images/segment_1.mp4');self.assertEqual((self.p/'images/segment_1.mp4').read_bytes(),b'fresh render')
+    def test_selection_is_refused_during_a_job_or_a_session_on_that_segment(self):
+        work=self.clip(video=b'video')
+        with self.assertRaisesRegex(ValueError,'no longer in the project'):self.select('still-19990101-000000-dead')
+        state=self.studio.state(self.p);state['agent_active']={'step':'4','indices':[1]};self.studio.persist(self.p,state)
+        with self.assertRaises(Conflict):self.select(work.name)
+        # Other segments can still change their visual while Claude Code works on segment 1.
+        self.select(self.takes(2)[0]['id'],index=2)
+        state=self.studio.state(self.p);state.pop('agent_active');self.studio.persist(self.p,state)
+        self.studio.jobs['j']={'project':self.p.name,'status':'running'}
+        with self.assertRaises(Conflict):self.select(work.name)
+    def test_a_version_that_is_not_in_use_can_be_deleted_and_restored(self):
+        work=self.clip(video=b'video');still=next(t['id'] for t in self.takes() if t['kind']=='still')
+        after=self.studio.delete_take(self.p.name,{'index':1,'take':work.name})
+        self.assertFalse(work.exists());self.assertEqual([t['id'] for t in after['segments'][0]['takes']],[still])
+        event=after['state']['events'][0];self.assertEqual(event['label'],'Before deleting a version of segment 1')
+        self.assertIn(f'images/takes/segment_1/{work.name}/video.mp4',event['files'])
+        # Revision history brings it back.
+        restored=self.studio.restore(self.p.name,{'revision':event['id']})
+        self.assertIn(work.name,[t['id'] for t in restored['segments'][0]['takes']])
+    def test_the_version_in_use_and_the_current_background_cannot_be_deleted(self):
+        still=self.takes()[0]['id']
+        with self.assertRaisesRegex(Conflict,'in use'):self.studio.delete_take(self.p.name,{'index':1,'take':still})
+        (self.p/'images/opening_bg.png').write_bytes(b'background')
+        background=next(t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background')
+        with self.assertRaisesRegex(Conflict,'next opening'):self.studio.delete_take(self.p.name,{'index':0,'take':background['id']})
+        with self.assertRaisesRegex(ValueError,'no longer in the project'):self.studio.delete_take(self.p.name,{'index':1,'take':'still-19990101-000000-000-dead'})
+        work=self.clip(video=b'video')
+        state=self.studio.state(self.p);state['agent_active']={'step':'4','indices':[1]};self.studio.persist(self.p,state)
+        with self.assertRaises(Conflict):self.studio.delete_take(self.p.name,{'index':1,'take':work.name})
+    def test_a_cover_other_than_the_chosen_one_can_be_deleted(self):
+        for name in ['cover_a.png','cover_b.png']:(self.p/name).write_bytes(name.encode())
+        after=self.studio.delete_cover(self.p.name,{'path':'cover_b.png'})
+        self.assertEqual(after['covers'],['cover_a.png']);self.assertFalse((self.p/'cover_b.png').exists())
+        self.assertEqual(after['state']['events'][0]['label'],'Before deleting a cover');self.assertNotIn('6',after['state']['stale'])
+        with self.assertRaisesRegex(ValueError,'no longer in the project'):self.studio.delete_cover(self.p.name,{'path':'cover_b.png'})
+    def test_deleting_the_chosen_cover_selects_a_remaining_cover_and_keeps_history(self):
+        for name in ['cover_a.png', 'cover_b.png', 'cover_c.png']:
+            (self.p/name).write_bytes(name.encode())
+        for selected in [None, 'cover_b.png']:
+            with self.subTest(selected=selected):
+                state=self.studio.state(self.p)
+                state['reviewed']['6']='reviewed';state['reviewed']['5']='assembly reviewed'
+                if selected:state['selected_cover']=selected
+                else:state.pop('selected_cover',None)
+                self.studio.persist(self.p,state)
+                path=selected or 'cover_a.png'
+                after=self.studio.delete_cover(self.p.name,{'path':path})
+                self.assertNotIn(path,after['covers'])
+                self.assertEqual(after['state']['selected_cover'],after['covers'][0])
+                self.assertEqual(self.studio.detail(self.p.name)['state']['selected_cover'],after['covers'][0])
+                self.assertNotIn('6',after['state']['reviewed'])
+                self.assertEqual(after['state']['reviewed']['5'],'assembly reviewed')
+                event=after['state']['events'][0]
+                self.assertEqual((self.p/'.studio/history'/event['id']/path).read_bytes(),path.encode())
+    def test_deleting_the_last_cover_clears_selection_and_can_be_restored(self):
+        path='cover_only.png';(self.p/path).write_bytes(b'only cover')
+        state=self.studio.state(self.p);state['selected_cover']=path;state['reviewed']['6']='reviewed'
+        self.studio.persist(self.p,state)
+        after=self.studio.delete_cover(self.p.name,{'path':path})
+        self.assertEqual(after['covers'],[]);self.assertFalse(after['ready']['6'])
+        self.assertNotIn('selected_cover',after['state']);self.assertNotIn('6',after['state']['reviewed'])
+        restored=self.studio.restore(self.p.name,{'revision':after['state']['events'][0]['id']})
+        self.assertEqual(restored['covers'],[path]);self.assertTrue(restored['ready']['6'])
+        self.assertEqual((self.p/path).read_bytes(),b'only cover')
+    def test_cover_deletion_waits_for_jobs_and_agents(self):
+        (self.p/'cover_a.png').write_bytes(b'cover')
+        self.studio.jobs['cover-job']={'project':self.p.name,'status':'running'}
+        with self.assertRaisesRegex(Conflict,'running job'):
+            self.studio.delete_cover(self.p.name,{'path':'cover_a.png'})
+        self.studio.jobs.clear()
+        state=self.studio.state(self.p);state['agent_active']={'step':'1','indices':[]}
+        self.studio.persist(self.p,state)
+        with self.assertRaisesRegex(Conflict,'Claude Code session'):
+            self.studio.delete_cover(self.p.name,{'path':'cover_a.png'})
+        self.assertTrue((self.p/'cover_a.png').exists())
+    def test_switching_type_in_segments_uses_the_newest_take_of_that_type(self):
+        work=self.clip(video=b'video')
+        d=self.studio.detail(self.p.name);value=copy.deepcopy(SCRIPT);value['segments'][0]['visualizer']='hf'
+        after=self.studio.save(self.p.name,{'kind':'script','value':value,'expected_hash':d['hashes']['script'],'segments':[1]})
+        self.assertEqual(after['segments'][0]['take'],work.name);self.assertEqual(after['segments'][0]['visual'],'images/segment_1.mp4')
+        value=copy.deepcopy(SCRIPT);value['segments'][1]['visualizer']='hf'
+        after=self.studio.save(self.p.name,{'kind':'script','value':value,'expected_hash':after['hashes']['script'],'segments':[2]})
+        # No clip yet: segment 2 waits for one, its still kept among its takes.
+        self.assertIsNone(after['segments'][1]['take']);self.assertIsNone(after['segments'][1]['visual'])
+        self.assertEqual(after['segments'][1]['visualizer'],'hf');self.assertEqual(len(after['segments'][1]['takes']),1)
+        self.assertEqual(after['segments'][0]['visualizer'],'image')
     def test_ending_a_motion_session_keeps_other_outdated_segments(self):
+        work=self.clip()
         state=self.studio.state(self.p);state['stale']['4']={'reason':'Visual type changed','segments':[2]}
-        state['agent_active']={'step':'4','indices':[1],'launch':'x','owner':0,'raw_before':''};self.studio.persist(self.p,state)
-        script=json.loads((self.p/'text/script.json').read_text());script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
-        self.compose()
+        state['agent_active']={'step':'4','indices':[1],'launch':'x','owner':0,'raw_before':'','takes':{'1':work.name},'created':[],'previous':{}};self.studio.persist(self.p,state)
         finished=self.studio.finish_agent(self.p.name,{})
         self.assertEqual(finished['finished'],{'step':'4','indices':[1]});self.assertIsNone(finished['warning'])
         self.assertEqual(finished['state']['stale']['4']['segments'],[1,2])
-
     def test_an_interrupted_session_keeps_other_outdated_segments(self):
         state=self.studio.state(self.p);state['stale']['4']={'reason':'Visual type changed','segments':[2]}
         state['agent_active']={'step':'4','indices':[1],'launch':'x','owner':999999,'raw_before':''};self.studio.persist(self.p,state)
         reopened=self.open().state(self.p)
         self.assertNotIn('agent_active',reopened);self.assertEqual(reopened['stale']['4']['segments'],[1,2])
+    def test_an_interrupted_new_clip_is_dropped_and_the_still_returns(self):
+        self.studio.detail(self.p.name);still=self.studio.state(self.p)['takes']['1']
+        empty=self.p/'images/takes/segment_1/motion-20260101-000000-beef';empty.mkdir()
+        state=self.studio.state(self.p);state['takes']['1']=empty.name
+        state['agent_active']={'step':'4','indices':[1],'launch':'x','owner':999999,'raw_before':'','takes':{'1':empty.name},'created':[1],'previous':{'1':still}};self.studio.persist(self.p,state)
+        self.open()
+        self.assertFalse(empty.exists());self.assertEqual(self.studio.state(self.p)['takes']['1'],still)
+    def test_a_rendered_opening_shows_a_frame_of_its_video(self):
+        import shutil as tools
+        if not tools.which('ffmpeg'):self.skipTest('FFmpeg is not on PATH')
+        subprocess.run([tools.which('ffmpeg'),'-v','error','-f','lavfi','-i','color=c=orange:s=320x180:d=2','-pix_fmt','yuv420p',str(self.p/'images/opening.mp4')],check=True)
+        opening=self.studio.detail(self.p.name)['opening']
+        self.assertEqual(opening['visual'],'images/opening.mp4');self.assertTrue(opening['poster'].endswith('/poster.jpg'))
+        self.assertTrue((self.p/opening['poster']).stat().st_size>0)
+        # Made once: later views reuse the saved frame.
+        made=(self.p/opening['poster']).stat().st_mtime_ns
+        self.assertEqual((self.p/self.studio.detail(self.p.name)['opening']['poster']).stat().st_mtime_ns,made)
+    def test_every_opening_background_is_kept_and_the_current_one_marked(self):
+        (self.p/'images/opening_bg.png').write_bytes(b'first background');os.utime(self.p/'images/opening_bg.png',(1000,1000))
+        first=[t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background']
+        (self.p/'images/opening_bg.png').write_bytes(b'second background')
+        backgrounds=[t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background']
+        self.assertEqual(len(first),1);self.assertEqual(len(backgrounds),2)
+        self.assertEqual([t['current'] for t in backgrounds],[False,True])
+        # A background is never put in the engine's place as the opening itself.
+        self.assertFalse((self.p/'images/opening.png').exists());self.assertIsNone(self.studio.detail(self.p.name)['opening']['take'])
+    def test_backgrounds_replaced_before_they_were_kept_come_back_from_history(self):
+        old=self.p/'.studio/history/20260101-000000-aaaa/images/opening_bg.png';old.parent.mkdir(parents=True)
+        old.write_bytes(b'first background');os.utime(old,(1000,1000))
+        (self.p/'.studio/history/20260102-000000-bbbb/images').mkdir(parents=True)
+        (self.p/'.studio/history/20260102-000000-bbbb/images/opening_bg.png').write_bytes(b'newest background')
+        (self.p/'images/opening_bg.png').write_bytes(b'newest background')
+        backgrounds=[t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background']
+        self.assertEqual([(self.p/t['path']).read_bytes() for t in backgrounds],[b'first background',b'newest background'])
+        self.assertEqual([t['current'] for t in backgrounds],[False,True])
+        # Recovered once: a background removed later is not brought back.
+        (self.p/backgrounds[0]['path']).unlink()
+        self.assertEqual(len([t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background']),1)
+    def test_rendering_the_opening_with_a_kept_background(self):
+        from unittest.mock import patch
+        (self.p/'images/opening_bg.png').write_bytes(b'background')
+        background=next(t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background')
+        with patch('server.subprocess.Popen') as spawn, patch('server.threading.Thread'):
+            job=self.studio.run_job(self.p.name,{'step':'4','mode':'opening_render','take':background['id']})
+            request=json.loads(spawn.call_args.args[0][-1])
+        self.studio.jobs.clear()
+        self.assertTrue(job['opening']);self.assertEqual(job['scope'],[]);self.assertFalse(request['summary'])
+        self.assertEqual(request['background'],str(self.p/background['path']))
+        with self.assertRaisesRegex(ValueError,'no longer in the project'):
+            self.studio.run_job(self.p.name,{'step':'4','mode':'opening_render','take':'background-19990101-000000-000-dead'})
+    def test_the_opening_keeps_its_images_too(self):
+        (self.p/'images/opening.png').write_bytes(b'first opening');first=self.studio.detail(self.p.name)['opening']['take']
+        (self.p/'images/opening.png').write_bytes(b'second opening')
+        opening=self.studio.detail(self.p.name)['opening']
+        self.assertEqual(len(opening['takes']),2);self.assertNotEqual(opening['take'],first)
+        self.select(first,index=0)
+        self.assertEqual((self.p/'images/opening.png').read_bytes(),b'first opening')
 
 class WorkspaceTests(unittest.TestCase):
     """Projects live in the workspace folder or at any location picked at creation."""

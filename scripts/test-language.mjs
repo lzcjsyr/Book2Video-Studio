@@ -53,16 +53,16 @@ test("both languages interpolate counts and stage names", () => {
     "151 segments",
   );
   assert.equal(
-    translate("zh-CN", "Regenerate {stage}", { stage: "visuals" }),
-    "重新生成画面",
+    translate("zh-CN", "Generate {stage}", { stage: "visuals" }),
+    "生成画面",
   );
   assert.equal(
     translate("zh-CN", "Visual for segment {index}", { index: 2 }),
     "分段 2 的画面",
   );
   assert.equal(
-    translate("zh-CN", "Regenerate {stage}", { stage: "segments" }),
-    "重新生成分段",
+    translate("zh-CN", "Generate {stage}", { stage: "segments" }),
+    "生成分段",
   );
 });
 test("persisted notices, revision labels, and known service errors render in Chinese", () => {

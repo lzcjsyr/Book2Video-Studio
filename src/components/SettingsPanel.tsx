@@ -7,6 +7,18 @@ import LibraryPanel from "./LibraryPanel";
 import { libraryChoices, librarySettings } from "../library";
 import { imageModelFits, imageModelFor, imageServiceChoices, languageModelChoices } from "../keys";
 
+// The engine's split modes (auto / manual / agent), named for what they do.
+const splitMethods: LibraryChoice[] = [
+  { id: "auto", label: "Split evenly" },
+  { id: "manual", label: "One segment per line" },
+  { id: "agent", label: "Agent (split by meaning)" },
+];
+const splitHints: Record<string, string> = {
+  auto: "Cuts at sentence ends into segments of similar length. Every segment starts as an image.",
+  manual: "Each manuscript line becomes a segment. Lines ending in 【hf】 become motion segments.",
+  agent: "An agent groups sentences by meaning and chooses image or motion for each segment.",
+};
+
 export default function SettingsPanel({
   detail,
   bootstrap,
@@ -72,16 +84,23 @@ export default function SettingsPanel({
       </p>
     ) : null;
   };
+  // Headings carry the step number shown in the sidebar.
+  const step = (number: number, name: string) => <h3>{t("Step {number} · {name}", { number, name })}</h3>;
+  // On a Claude subscription, Claude Code runs on the user's own login: agent providers are not used.
+  const subscription = claudeMode === "subscription";
   const field = (
     section: string,
     key: string,
     label: string,
     options?: (string | LibraryChoice)[],
+    disabled = false,
+    hint?: string,
   ) => (
     <label className="field" key={`${section}.${key}`}>
       <span>{t(label)}</span>
       {options ? (
         <select
+          disabled={disabled}
           value={String(settings[section]?.[key] ?? "")}
           onChange={(e) => set(section, key, e.target.value)}
         >
@@ -96,6 +115,7 @@ export default function SettingsPanel({
         </select>
       ) : (
         <input
+          disabled={disabled}
           value={String(settings[section]?.[key] ?? "")}
           type={
             typeof settings[section]?.[key] === "number" ? "number" : "text"
@@ -111,6 +131,7 @@ export default function SettingsPanel({
           }
         />
       )}
+      {hint && <small className="field-hint">{t(hint)}</small>}
     </label>
   );
   return (
@@ -220,17 +241,25 @@ export default function SettingsPanel({
               role="tabpanel"
               aria-labelledby="production-settings-tab"
             >
-              <h3>{t("Segmentation")}</h3>
+              {step(1, "Writing")}
+              <p className="small-muted settings-note">{t(subscription
+                ? "Not used now: Writing runs in your own Claude Code on your Claude subscription. Change this in Settings → API keys."
+                : "Claude Code writes the manuscript with this provider's API key. Changes apply to the next writing session.")}</p>
               <div className="form-grid">
-                {field("step1_5", "num_segments", t("Target segments"))}
-                {field("step1_5", "split_mode", t("Segmentation"), [
-                  "auto",
-                  "manual",
-                  "agent",
-                ])}
-                {field("step1_5", "llm_server", t("Segmentation agent provider (agent mode)"), languageModelChoices)}
+                {field("step1", "llm_server", t("Writing agent provider"), languageModelChoices, subscription)}
+                {field("step1", "llm_model", t("Writing agent model"), undefined, subscription)}
               </div>
-              <h3>{t("Voice")}</h3>
+              {step(2, "Segments")}
+              <div className="form-grid">
+                {field("step2", "split_mode", t("Split method"), splitMethods, false,
+                  splitHints[String(settings.step2?.split_mode ?? "auto")])}
+                {field("step2", "num_segments", t("Target segments"), undefined, false,
+                  "Split evenly aims for about this many segments; the agent uses it as its target. One segment per line ignores it.")}
+                {field("step2", "llm_server", t("Agent provider"), languageModelChoices, settings.step2?.split_mode !== "agent",
+                  "Used only by Agent (split by meaning).")}
+                {field("step2", "llm_model", t("Agent model"), undefined, settings.step2?.split_mode !== "agent")}
+              </div>
+              {step(3, "Voice")}
               <div className="form-grid">
                 {field("step3", "voice", t("Voice ID"))}
                 {field("step3", "tts_model", t("TTS model"))}
@@ -241,82 +270,77 @@ export default function SettingsPanel({
                   "sad",
                 ])}
               </div>
-              <h3>{t("Visuals")}</h3>
+              {step(4, "Visuals")}
+              {/* Visuals has three parts: the summary every visual draws on, still images, and motion clips. */}
+              <section className="settings-part" aria-labelledby="settings-summary">
+                <h4 id="settings-summary">{t("Content summary")}</h4>
+                <p className="small-muted">{t("Written from the manuscript; every image and motion clip draws on it.")}</p>
+                <div className="form-grid">
+                  {field("step4_summary", "llm_server", t("Content summary provider"), languageModelChoices)}
+                  {field("step4_summary", "llm_model", t("Content summary model"))}
+                </div>
+                <div className="settings-manage-row">
+                  {manage("summary", "Edit content summary instructions")}
+                </div>
+              </section>
+              <section className="settings-part" aria-labelledby="settings-images">
+                <h4 id="settings-images">{t("Image generation")}</h4>
+                <p className="small-muted">{t("Still images for segments, and the background of the opening.")}</p>
+                <div className="form-grid">
+                  {field("step4", "image_size", t("Frame size (images and clips)"))}
+                  {field(
+                    "step4",
+                    "image_server",
+                    t("Image provider"),
+                    imageServiceChoices,
+                  )}
+                  {field("step4", "image_model", t("Image model"))}
+                  {field("step4", "image_style_preset", t("Image style"), libraryChoices(bootstrap.library, "image_styles"))}
+                  {field("step4", "image_prompt_template", t("Image prompt"), libraryChoices(bootstrap.library, "image_templates"))}
+                  {field("hyperframes_opening", "ip_name", t("Opening masthead"))}
+                </div>
+                {modelWarning("step4", "image_server", "image_model")}
+                <div className="settings-manage-row">
+                  {manage("image_styles", "Edit image styles")}
+                  {manage("image_templates", "Edit image templates")}
+                </div>
+              </section>
+              <section className="settings-part" aria-labelledby="settings-motion">
+                <h4 id="settings-motion">{t("Motion clips")}</h4>
+                <p className="small-muted">{t(subscription
+                  ? "Designed by your own Claude Code on your Claude subscription, then rendered by Studio. The agent provider below is not used now."
+                  : "Designed by Claude Code with HyperFrames, then rendered by Studio.")}</p>
+                <div className="form-grid">
+                  {field(
+                    "step4",
+                    "hyperframes_style_preset",
+                    t("Animation style"),
+                    libraryChoices(bootstrap.library, "motion_styles"),
+                  )}
+                  {field("step4", "llm_server", t("Motion agent provider"), languageModelChoices, subscription)}
+                  {field("step4", "llm_model", t("Motion agent model"), undefined, subscription)}
+                </div>
+                <div className="settings-manage-row">
+                  {manage("motion_styles", "Edit motion styles")}
+                </div>
+              </section>
+              {step(5, "Assembly")}
+              <p className="small-muted settings-note">{t("Music, export size, subtitles, narration speed and the 3:4 copy are set on the Assembly page.")}</p>
               <div className="form-grid">
-                {field("step4", "image_size", t("Image dimensions"))}
-                {field(
-                  "step4",
-                  "image_server",
-                  t("Image provider"),
-                  imageServiceChoices,
-                )}
-                {field("step4", "image_model", t("Image model"))}
-                {field("step4", "image_style_preset", t("Image style"), libraryChoices(bootstrap.library, "image_styles"))}
-                {field("hyperframes_opening", "ip_name", t("Opening masthead"))}
-                {field("step4", "image_prompt_template", t("Image prompt"), libraryChoices(bootstrap.library, "image_templates"))}
-                {field(
-                  "step4",
-                  "hyperframes_style_preset",
-                  t("Animation style"),
-                  libraryChoices(bootstrap.library, "motion_styles"),
-                )}
-                {field("step4", "llm_server", t("Motion agent provider"), languageModelChoices)}
-                {field("step4", "llm_model", t("Motion agent model"))}
-                {field("step2", "llm_server", t("Visual direction provider"), languageModelChoices)}
-                {field("step2", "llm_model", t("Visual direction model"))}
+                {field("step5", "video_codec", t("Codec"), ["h264", "hevc"], false,
+                  "H.264 plays everywhere; HEVC makes smaller files.")}
               </div>
-              {modelWarning("step4", "image_server", "image_model")}
-              <div className="settings-manage-row">
-                {manage("summary", "Edit visual direction instructions")}
-                {manage("image_styles", "Edit image styles")}
-                {manage("image_templates", "Edit image templates")}
-                {manage("motion_styles", "Edit motion styles")}
-              </div>
-              <h3>{t("Assembly")}</h3>
+              {step(6, "Covers")}
               <div className="form-grid">
-                {field("step5", "video_size", t("Export dimensions"))}
-                {field("step5", "video_codec", t("Codec"), ["h264", "hevc"])}
-                {field("step5", "bgm_filename", t("Background music"), [
-                  "",
-                  ...bootstrap.music,
-                ])}
-                {field("step5", "bgm_default_volume", t("Music volume"))}
-                {field(
-                  "step5",
-                  "narration_speed_factor",
-                  t("Narration playback speed"),
-                )}
-              </div>
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.step5?.enable_subtitles)}
-                  onChange={(e) =>
-                    set("step5", "enable_subtitles", e.target.checked)
-                  }
-                />{" "}
-                {t("Burn subtitles into exports")}
-              </label>
-              <h3>{t("Covers")}</h3>
-              <div className="form-grid">
-                {field(
-                  "step6",
-                  "default_cover_image_size_key",
-                  t("Cover aspect ratio"),
-                  ["16:9", "9:16", "4:3", "3:4", "1:1"],
-                )}
-                {field("step6", "cover_image_style", t("Cover style"), libraryChoices(bootstrap.library, "cover_styles"))}
-                {field("step6", "cover_image_count", t("Cover candidates"))}
                 {field(
                   "step6",
                   "cover_image_server",
                   t("Cover provider"),
                   imageServiceChoices,
                 )}
-                {field("step6", "cover_image_model", t("Cover model"))}
+                {field("step6", "cover_image_model", t("Cover model ID"))}
               </div>
               {modelWarning("step6", "cover_image_server", "cover_image_model")}
-              {manage("cover_styles", "Edit cover styles")}
               <p className="small-muted">
                 {t(
                   "Manage provider credentials in the API keys tab. Each job uses a saved copy of these production settings.",

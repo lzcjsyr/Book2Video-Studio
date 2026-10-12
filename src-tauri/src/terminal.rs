@@ -96,7 +96,9 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
     let mode = crate::claude_code::mode(&app);
     let program = match mode {
         crate::claude_code::Mode::ApiKey => installation.claude.clone(),
-        crate::claude_code::Mode::Subscription => crate::claude_code::local_program(&app, &installation)?,
+        crate::claude_code::Mode::Subscription => {
+            crate::claude_code::local_program(&app, &installation)?
+        }
     };
     let mut command = CommandBuilder::new(&program);
     command.args(&trusted.args);
@@ -117,8 +119,13 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
         apply_provider(&mut command, &installation, &project_root, &trusted.step)?;
     }
     let child = pair.slave.spawn_command(command).map_err(|e| match mode {
-        crate::claude_code::Mode::ApiKey => format!("Cannot launch Claude Code: {e}. Reinstall Book2Video Studio."),
-        crate::claude_code::Mode::Subscription => format!("Cannot launch your Claude Code ({}): {e}. Check it in Settings → API keys.", program.display()),
+        crate::claude_code::Mode::ApiKey => {
+            format!("Cannot launch Claude Code: {e}. Reinstall Book2Video Studio.")
+        }
+        crate::claude_code::Mode::Subscription => format!(
+            "Cannot launch your Claude Code ({}): {e}. Check it in Settings → API keys.",
+            program.display()
+        ),
     })?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;

@@ -1,7 +1,7 @@
 import { useI18n } from "../i18n";
 import { useEffect, useRef } from "react";
-import { Images, Music2, ChevronLeft, ChevronRight, Quote, Clapperboard } from "lucide-react";
-import type { Detail, Segment } from "../types";
+import { Images, Music2, ChevronLeft, ChevronRight, Quote, Clapperboard, Layers } from "lucide-react";
+import type { Detail, Take } from "../types";
 import { media } from "../api";
 export const formatTime = (seconds: number) =>
   `${Math.floor(seconds / 60)
@@ -16,10 +16,13 @@ export default function Timeline({
   version,
   openingEnabled,
   focus,
+  onPick,
 }: {
   detail: Detail;
   selected: number;
   onSelect: (n: number) => void;
+  /** Visuals: a thumbnail also opens the list of the part's images and clips. */
+  onPick?: (index: number, rect: DOMRect) => void;
   version: number;
   openingEnabled: boolean;
   /** The track the current step works on; it carries the selection highlight. */
@@ -40,18 +43,17 @@ export default function Timeline({
     elapsed += s.duration ?? s.estimated_duration;
     return start;
   });
-  function thumb(s: Segment) {
-    // Motion segments show a keyframe (or their earlier still) and a badge: amber until rendered.
-    const picture = s.poster ?? (s.visual && !/\.(mp4|mov|webm)$/i.test(s.visual) ? s.visual : null);
-    const motion = s.visualizer === "hf";
-    const rendered = Boolean(s.motion?.video && s.motion.video_current);
+  // The sequence shows only the take each part uses: a still, or a motion clip's keyframe.
+  function thumb(part: { poster: string | null; takes: Take[]; motion: Detail["segments"][number]["motion"] }, opening = false) {
+    const motion = part.motion;
+    const rendered = Boolean(motion?.video && motion.video_current);
     return (
       <>
-        {picture ? (
-          <img loading="lazy" src={media(detail.id, picture, version)} alt="" />
+        {part.poster ? (
+          <img loading="lazy" src={media(detail.id, part.poster, version)} alt="" />
         ) : (
           <span className="timeline-visual-placeholder">
-            {motion ? t("Motion") : t("No visual")}
+            {opening ? <Quote size={16} /> : motion ? t("Motion") : t("No visual")}
           </span>
         )}
         {motion && (
@@ -60,9 +62,18 @@ export default function Timeline({
             <Clapperboard size={10} />
           </span>
         )}
+        {onPick && part.takes.length > 1 && (
+          <span className="clip-takes" title={t("{count} versions kept", { count: part.takes.length })}>
+            <Layers size={9} /> {part.takes.length}
+          </span>
+        )}
       </>
     );
   }
+  const pick = (index: number, e: React.MouseEvent<HTMLButtonElement>) => {
+    onSelect(index);
+    onPick?.(index, (e.currentTarget.querySelector(".timeline-thumb") || e.currentTarget).getBoundingClientRect());
+  };
   return (
     <section className={`timeline focus-${focus}`}>
       <div className="timeline-heading">
@@ -109,22 +120,12 @@ export default function Timeline({
             <button
               ref={selected === 0 ? active : undefined}
               className={`timeline-item ${selected === 0 ? "selected" : ""}`}
-              onClick={() => onSelect(0)}
+              onClick={(e) => pick(0, e)}
               aria-label={t("Select opening")}
             >
               <span className="timeline-ruler">00:00</span>
               <span className="timeline-thumb">
-                {detail.opening.visual &&
-                !/\.(mp4|mov|webm)$/i.test(detail.opening.visual) ? (
-                  <img
-                    src={media(detail.id, detail.opening.visual, version)}
-                    alt={t("Opening visual")}
-                  />
-                ) : (
-                  <span className="timeline-visual-placeholder">
-                    <Quote size={16} />
-                  </span>
-                )}
+                {thumb({ ...detail.opening, motion: null }, true)}
                 <span className="clip-number">{t("Opening")}</span>
               </span>
               <span
@@ -146,7 +147,7 @@ export default function Timeline({
               key={s.index}
               ref={s.index === selected ? active : undefined}
               className={`timeline-item ${s.index === selected ? "selected" : ""}`}
-              onClick={() => onSelect(s.index)}
+              onClick={(e) => pick(s.index, e)}
               aria-label={t("Select segment {index}", { index: s.index })}
             >
               <span className="timeline-ruler">{formatTime(offsets[i])}</span>

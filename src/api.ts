@@ -30,3 +30,7 @@ export function projectRoute(id: string) {
 export function media(id: string, path: string, version = 0) {
   return `${origin}/api/media?project=${encodeURIComponent(id)}&path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}&v=${version}`;
 }
+/** A background music track, bundled or added by the user, for the in-app preview. */
+export function musicUrl(name: string) {
+  return `${origin}/api/music?name=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
+}

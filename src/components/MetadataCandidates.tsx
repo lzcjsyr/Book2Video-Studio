@@ -23,8 +23,8 @@ export default function MetadataCandidates({
   onChange,
   fields = groups.map((g) => g.field),
   showHeading = true,
-  active = true,
   hideLegend = false,
+  className = "",
 }: {
   value: TextData;
   selections: MetadataSelections;
@@ -32,8 +32,8 @@ export default function MetadataCandidates({
   onChange: (value: TextData, selections: MetadataSelections) => void;
   fields?: MetadataField[];
   showHeading?: boolean;
-  active?: boolean;
   hideLegend?: boolean;
+  className?: string;
 }) {
   const { t } = useI18n();
 
@@ -54,7 +54,7 @@ export default function MetadataCandidates({
   }
 
   return (
-    <section className="metadata-workspace" aria-label={t("Generation choices")}>
+    <section className={`metadata-workspace ${className}`.trim()} aria-label={t("Generation choices")}>
       {showHeading && <div className="metadata-heading">
         <span>{t("Generation choices")}</span>
         <p>{t("Select one per group. Save your choices before generating.")}</p>
@@ -85,9 +85,8 @@ export default function MetadataCandidates({
                           }
                         />
                         <span>{t("Candidate {number}", params)}</span>
-                        <span className="metadata-choice-status">
-                          {selected ? t(active ? "Selected for generation" : "Saved choice · opening disabled") : t("Use this")}
-                        </span>
+                        {/* The highlight marks the chosen candidate; the others offer to be used. */}
+                        {!selected && <span className="metadata-choice-status">{t("Use this")}</span>}
                       </label>
                       <button
                         className="metadata-remove icon-button"
