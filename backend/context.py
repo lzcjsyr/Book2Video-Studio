@@ -39,6 +39,7 @@ def prepare(studio, project, body):
         opening_enabled = settings.get("global", {}).get("opening_quote", True)
         prompt += "\nOpening quote playback is " + ("enabled" if opening_enabled else "disabled") + ". Store any opening quote candidates separately in golden_quotes; do not prepend them to content. When enabled, the app plays the selected quote before the body. When disabled, the app starts with the body and may retain unused candidates. The GUI controls this project setting.\n"
     else:
+        from core.infra.hyperframes.runtime import HYPERFRAMES_CLI_VERSION
         from core.infra.hyperframes.skill_loader import build_step4_hyperframes_skill_path_context
         import core.prompts as production_prompts
         # The service survives library edits; each new agent must get current styles.
@@ -71,8 +72,8 @@ def prepare(studio, project, body):
             # Studio reads this segment's work from one folder: the composition and the keyframes it previews.
             part += (f"\n\n### Studio 工作目录（段落 {segment['index']}）\n\n"
                      f"- 本段所有文件只放在 `{work}` 内：`index.html`、`snapshots/`，以及你需要的辅助文件。\n"
-                     f"- 每条 hyperframes 命令（validate、inspect、snapshot）都必须在该目录内运行：先 `cd \"{work}\"`。"
-                     f"这样 `snapshot` 的关键帧会写入 `{work / 'snapshots'}`，Studio 会把它们显示为本段的预览。\n"
+                     f"- 每条 hyperframes 命令（check、snapshot）都必须在该目录内运行：先 `cd \"{work}\"`。"
+                     f"这样 `check --snapshots` 和 `snapshot` 的关键帧会写入 `{work / 'snapshots'}`，Studio 会把它们显示为本段的预览。\n"
                      "- 不要运行 `hyperframes render`，不要在 `images/` 下写入或删除 `segment_*.png` / `segment_*.mp4`，"
                      "也不要改动 `images/takes/` 下本段的其他图片和动态片段（它们是用户保留的其他版本）："
                      "会话结束后，Studio 会按录音实际时长把 `index.html` 渲染为本段视频。\n")
@@ -95,7 +96,7 @@ def prepare(studio, project, body):
                    "in their language, that the composition is saved and that they can click **Finish & render** in Studio's Visuals panel "
                    "(or type /exit here). Studio then renders each saved index.html to the segment's video and shows it in the preview. "
                    "If the user asks for changes, revise index.html and repeat the checks and snapshots before saying it is ready again.")
-        prompt += "\n\nThis application bundles the pinned HyperFrames CLI (0.7.10) as the `hyperframes` command, with its Chrome and FFmpeg. Wherever these instructions or skills say `npx hyperframes ...` or `npx --yes hyperframes@0.7.10 ...`, run `hyperframes ...` instead.\n"
+        prompt += f"\n\nThis application bundles the pinned HyperFrames CLI ({HYPERFRAMES_CLI_VERSION}) as the `hyperframes` command, with its Chrome and FFmpeg. Wherever these instructions or skills say `npx hyperframes ...` or `npx --yes hyperframes@{HYPERFRAMES_CLI_VERSION} ...`, run `hyperframes ...` instead.\n"
         # One segment: work inside its folder. Several: start beside all of them; each section names its folder.
         cwd = targets[0].parent if len(chosen) == 1 else project / "images/takes"
         scope = f"Visuals · {len(chosen)} selected segment(s)"

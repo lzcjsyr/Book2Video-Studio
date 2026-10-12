@@ -7,7 +7,7 @@ A standalone Tauri 2 desktop app that turns books and manuscripts into narrated 
 
 - the production engine from AIGC_Video_CLI: code, prompts, skills, background music and default settings;
 - Python 3.13 with the engine's packages, including the Claude Code CLI bundled by `claude-agent-sdk`;
-- Node.js 22, the pinned HyperFrames 0.7.10 CLI and the Chrome Headless Shell build it renders with;
+- Node.js 22, the pinned HyperFrames 0.8.150 CLI and the Chrome Headless Shell build it renders with;
 - static FFmpeg and FFprobe builds.
 
 The release build is `src-tauri/target/release/bundle/macos/Book2Video Studio.app`. **System check / 系统检查** at the bottom of the sidebar lists every bundled component and opens the projects and library folders.
@@ -118,7 +118,7 @@ The opt-in native credential-store test uses a disposable random account and rem
 
 - **Platforms:** `npm run stage` packages macOS on Apple silicon. Intel Macs and Windows need their entries in `PLATFORMS` (Python, Node.js and FFmpeg builds) and a `.cmd` HyperFrames launcher; the host code is platform-neutral but untested there.
 - **Signing:** sign every bundled executable and library (Python extensions, Node.js, Chrome, FFmpeg, Claude Code) with a Developer ID and hardened runtime, then notarize. Node.js and Chrome need the JIT entitlement.
-- **Licenses:** `runtime/THIRD_PARTY_NOTICES.md` lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source; HyperFrames 0.7.10 declares no license, so confirm redistribution rights with HeyGen.
+- **Licenses:** `runtime/THIRD_PARTY_NOTICES.md` lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source; HyperFrames 0.8.150 is Apache-2.0, and the libvips that its image library sharp bundles is LGPL-3.0-or-later.
 
 HEVC playback varies by system; H.264 is the compatibility choice in project settings.
 

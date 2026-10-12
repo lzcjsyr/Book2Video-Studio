@@ -328,3 +328,19 @@ class BundledLibraryTests(unittest.TestCase):
         (self.root / "prompts/step2_summary.md").write_text("v2"); install_bundled(self.bundled, self.root)
         self.write("prompts/step2_summary.md", "v3"); install_bundled(self.bundled, self.root)
         self.assertEqual(self.read("prompts/step2_summary.md"), "v3")
+
+    def test_update_drops_files_the_bundle_no_longer_ships_unless_edited(self):
+        self.write("skills/step4/old/SKILL.md", "v1 old"); self.write("skills/step4/old/references/a.md", "v1 a")
+        self.write("skills/step4/kept/SKILL.md", "v1 kept"); self.write("skills/step4/kept/stale.md", "v1 stale")
+        install_bundled(self.bundled, self.root)
+        (self.root / "skills/step4/kept/stale.md").write_text("my notes")
+        shutil.rmtree(self.bundled / "skills/step4/old"); (self.bundled / "skills/step4/kept/stale.md").unlink()
+        install_bundled(self.bundled, self.root)
+        self.assertFalse((self.root / "skills/step4/old").exists())
+        self.assertTrue((self.root / "skills/step4").is_dir())
+        self.assertEqual(self.read("skills/step4/kept/stale.md"), "my notes")
+        record = json.loads((self.root / ".bundled.json").read_text())
+        self.assertNotIn("skills/step4/kept/stale.md", record)
+        # Restoring an upstream package later installs it fresh.
+        self.write("skills/step4/old/SKILL.md", "v2 old"); install_bundled(self.bundled, self.root)
+        self.assertEqual(self.read("skills/step4/old/SKILL.md"), "v2 old")

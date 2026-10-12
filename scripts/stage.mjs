@@ -153,10 +153,17 @@ async function stageRuntime() {
   if (fs.existsSync(lock)) fs.copyFileSync(lock, path.join(hyperframes, "package-lock.json"));
   run(node, [npm, fs.existsSync(lock) ? "ci" : "install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: hyperframes, env: nodeEnv });
   if (!fs.existsSync(lock)) fs.copyFileSync(path.join(hyperframes, "package-lock.json"), lock);
-  const cli = path.join(hyperframes, "node_modules/hyperframes/dist/cli.js");
-  const chromeVersion = fs.readFileSync(cli, "utf8").match(/CHROME_VERSION = "([\d.]+)"/)?.[1];
+  const dist = path.join(hyperframes, "node_modules/hyperframes/dist");
+  const cli = path.join(dist, "cli.js");
+  // Newer CLIs code-split the constant into a chunk; \b skips MACOS_12_CHROME_VERSION.
+  const chromeVersion = fs.readdirSync(dist).filter((f) => f.endsWith(".js"))
+    .map((f) => fs.readFileSync(path.join(dist, f), "utf8").match(/\bCHROME_VERSION = "([\d.]+)"/)?.[1])
+    .find(Boolean);
   if (!chromeVersion) throw new Error("Cannot find the Chrome version HyperFrames expects.");
-  const browsers = path.join(hyperframes, "node_modules/@puppeteer/browsers/lib/esm/main.js");
+  // v2 exposes an ESM build under exports; v3 is ESM-only at main.
+  const browsersDir = path.join(hyperframes, "node_modules/@puppeteer/browsers");
+  const browsersPkg = JSON.parse(fs.readFileSync(path.join(browsersDir, "package.json"), "utf8"));
+  const browsers = path.join(browsersDir, browsersPkg.exports?.["."]?.import ?? browsersPkg.main);
   const chrome = execFileSync(node, ["--input-type=module", "-e", `
     const { install, detectBrowserPlatform, Browser } = await import(${JSON.stringify(browsers)});
     const result = await install({ cacheDir: ${JSON.stringify(path.join(work, "chrome"))},

@@ -24,7 +24,7 @@ The packaged app needs nothing installed on the computer. It ships:
 
 - the production engine (code, prompts, skills, background music, default settings);
 - Python 3.13 with the engine's packages, and the Claude Code CLI bundled by `claude-agent-sdk`;
-- Node.js 22, the pinned HyperFrames 0.7.10 CLI and the Chrome Headless Shell it renders with;
+- Node.js 22, the pinned HyperFrames 0.8.150 CLI and the Chrome Headless Shell it renders with;
 - static FFmpeg and FFprobe.
 
 **System check** (bottom of the sidebar) lists every bundled component. You only need your own API keys, in **Settings → API keys**, grouped by what they do:
@@ -93,7 +93,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 - **Platforms:** only macOS on Apple silicon is packaged. Intel Macs and Windows need their entries in `PLATFORMS` in `scripts/stage.mjs` and a `.cmd` HyperFrames launcher; the host code is platform-neutral but untested there.
 - **Signing:** sign every bundled executable (Python extensions, Node.js, Chrome, FFmpeg, Claude Code) with a Developer ID and hardened runtime, then notarize. Unsigned builds are a new app to macOS after every rebuild, so the folder-access question returns.
-- **Licenses:** [runtime/THIRD_PARTY_NOTICES.md](runtime/THIRD_PARTY_NOTICES.md) lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source; HyperFrames 0.7.10 declares no license, so confirm redistribution rights with HeyGen. This repository does not yet contain a license for its own code.
+- **Licenses:** [runtime/THIRD_PARTY_NOTICES.md](runtime/THIRD_PARTY_NOTICES.md) lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source; HyperFrames 0.8.150 is Apache-2.0, and the libvips that its image library sharp bundles is LGPL-3.0-or-later. This repository does not yet contain a license for its own code.
 
 ---
 
@@ -125,7 +125,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 - 制作引擎（代码、提示词、Skills、背景音乐、默认设置）；
 - Python 3.13 及引擎所需的软件包，以及 `claude-agent-sdk` 自带的 Claude Code CLI；
-- Node.js 22、固定版本的 HyperFrames 0.7.10 CLI，以及它渲染所用的 Chrome Headless Shell；
+- Node.js 22、固定版本的 HyperFrames 0.8.150 CLI，以及它渲染所用的 Chrome Headless Shell；
 - 静态编译的 FFmpeg 和 FFprobe。
 
 侧边栏底部的 **系统检查** 会列出所有内置组件。你只需要在 **设置 → API 密钥** 中准备自己的密钥，它们按用途分组：
@@ -194,4 +194,4 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 - **平台：** 目前只打包 Apple 芯片的 macOS。Intel Mac 和 Windows 需要在 `scripts/stage.mjs` 的 `PLATFORMS` 中添加对应条目，并提供 `.cmd` 形式的 HyperFrames 启动器；宿主代码与平台无关，但尚未在这些平台上测试。
 - **签名：** 需要用 Developer ID 和 Hardened Runtime 对所有内置可执行文件（Python 扩展、Node.js、Chrome、FFmpeg、Claude Code）签名并公证。未签名的构建每次重新编译后在 macOS 眼中都是新应用，文件夹访问权限的询问会再次出现。
-- **许可证：** [runtime/THIRD_PARTY_NOTICES.md](runtime/THIRD_PARTY_NOTICES.md) 列出了内置组件。FFmpeg（GPL-3.0）和 PyMuPDF（AGPL-3.0）要求提供其源代码；HyperFrames 0.7.10 未声明许可证，请向 HeyGen 确认再分发的权利。本仓库目前还没有为自身代码添加许可证。
+- **许可证：** [runtime/THIRD_PARTY_NOTICES.md](runtime/THIRD_PARTY_NOTICES.md) 列出了内置组件。FFmpeg（GPL-3.0）和 PyMuPDF（AGPL-3.0）要求提供其源代码；HyperFrames 0.8.150 采用 Apache-2.0 许可证，其图像库 sharp 附带的 libvips 采用 LGPL-3.0-or-later。本仓库目前还没有为自身代码添加许可证。

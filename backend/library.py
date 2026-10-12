@@ -109,6 +109,16 @@ def install_bundled(bundled: Path, root: Path):
                 shutil.copy2(source, temporary)
                 temporary.replace(target)
             installed[key] = new
+    # A file the bundle no longer ships goes too, unless the person edited it; then it is theirs.
+    for key in [k for k in installed if not (bundled / k).is_file()]:
+        target = root / key
+        if target.is_file() and digest(target) == installed[key]:
+            target.unlink()
+            parent = target.parent
+            while parent != root and parent.parent != root and not any(parent.iterdir()):
+                parent.rmdir()
+                parent = parent.parent
+        del installed[key]
     write_bytes(record_path, json.dumps(installed, ensure_ascii=False, indent=1).encode())
 
 
