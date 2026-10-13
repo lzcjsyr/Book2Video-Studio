@@ -1,4 +1,22 @@
-import type { LibraryCatalog } from "./types";
+import type { LibraryCatalog, LibraryGroup } from "./types";
+
+const librarySteps: Record<string, number> = {
+  writing_skills: 1, summary: 4, image_styles: 4, image_templates: 4,
+  motion_styles: 4, motion_skills: 4, assembly_skills: 5, cover_styles: 6,
+};
+const templateLabels: Record<number, string> = {
+  1: "Writing templates", 2: "Segmentation templates", 4: "Visual templates", 6: "Cover templates",
+};
+const templateStep = (id: string) => id.startsWith("step1_5_") ? 2 : Number(id.match(/^step(\d)/)?.[1]);
+
+/** Presentation only: template IDs, files and save/history routes stay the same. */
+export function orderedLibraryGroups(catalog: LibraryCatalog): (LibraryGroup & { step: number })[] {
+  return catalog.groups.flatMap((group) => group.id === "templates"
+    ? Object.entries(templateLabels).map(([step, label]) => ({ ...group, step: Number(step), label,
+        items: group.items.filter((item) => templateStep(item.id) === Number(step)) })).filter((group) => group.items.length)
+    : [{ ...group, step: librarySteps[group.id] || 0 }])
+    .sort((a, b) => a.step - b.step);
+}
 
 export const librarySettings: Record<string, [string, string]> = {
   writing_skills: ["step1", "agent_skill"],

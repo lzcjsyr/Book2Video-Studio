@@ -4,7 +4,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { useI18n } from "../i18n";
-import { librarySettings } from "../library";
+import { librarySettings, orderedLibraryGroups } from "../library";
 import type { LibraryCatalog, LibraryItem, LibraryRevision } from "../types";
 
 type Value = LibraryItem["value"];
@@ -24,6 +24,7 @@ export default function LibraryPanel({
   const { t, locale } = useI18n();
   const [catalog, setCatalog] = useState<LibraryCatalog>({ groups: [] });
   const [groupId, setGroupId] = useState(initialGroup);
+  const [templateStep, setTemplateStep] = useState(1);
   const [resource, setResource] = useState<LibraryItem | null>(null);
   const [draft, setDraft] = useState<Value>("");
   const [dirty, setDirty] = useState(false);
@@ -35,7 +36,9 @@ export default function LibraryPanel({
   const [source, setSource] = useState("");
   const [history, setHistory] = useState<LibraryRevision[] | null>(null);
   const [lastRevision, setLastRevision] = useState("");
-  const group = catalog.groups.find((g) => g.id === groupId);
+  const groups = orderedLibraryGroups(catalog);
+  const group = groups.find((g) => g.id === groupId && (g.id !== "templates" || g.step === templateStep));
+  const groupLabel = (g: typeof group) => g ? `${g.step} · ${t(g.label)}` : t("Library");
 
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
@@ -45,9 +48,12 @@ export default function LibraryPanel({
         const list = await api<LibraryCatalog>("/library");
         if (cancelled) return;
         setCatalog(list);
-        const chosen = list.groups.find((g) => g.id === initialGroup) || list.groups[0];
+        const ordered = orderedLibraryGroups(list);
+        const chosen = ordered.find((g) => g.id === initialGroup && g.items.some((item) => item.id === initialId))
+          || ordered.find((g) => g.id === initialGroup) || ordered[0];
         if (!chosen) return;
         setGroupId(chosen.id);
+        if (chosen.id === "templates") setTemplateStep(chosen.step);
         const id = chosen.items.find((i) => i.id === initialId)?.id || chosen.items[0]?.id || (chosen.error ? "__source__" : "");
         if (id) {
           const item = await readItem(chosen.id, id);
@@ -80,6 +86,7 @@ export default function LibraryPanel({
     if (!guard()) return;
     await perform(async () => {
       setGroupId(nextGroup); setHistory(null);
+      if (nextGroup === "templates") setTemplateStep(groups.find((g) => g.id === nextGroup && g.items.some((item) => item.id === id))?.step || templateStep);
       accept(id ? await readItem(nextGroup, id, file) : null);
     });
   }
@@ -193,11 +200,11 @@ export default function LibraryPanel({
     </div>}
     <div className="library-layout">
       <nav className="library-groups" aria-label={t("Library groups")}>
-        {catalog.groups.map((g) => <button key={g.id} className={groupId === g.id ? "active" : ""} disabled={busy}
-          onClick={() => choose(g.id, g.items[0]?.id || (g.error ? "__source__" : undefined))}><span>{t(g.label)}</span><span className="mono">{g.items.length}</span></button>)}
+        {groups.map((g) => <button key={`${g.step}-${g.id}`} className={group === g ? "active" : ""} disabled={busy}
+          onClick={() => choose(g.id, g.items[0]?.id || (g.error ? "__source__" : undefined))}><span>{groupLabel(g)}</span><span className="mono">{g.items.length}</span></button>)}
       </nav>
       <div className="library-items">
-        <div className="library-list-heading"><span>{t(group?.label || "Library")}</span>
+        <div className="library-list-heading"><span>{groupLabel(group)}</span>
           {group && !["prompt", "skill"].includes(group.kind) && <button className="icon-button" aria-label={t("Add style or template")} disabled={busy || Boolean(group.error)} onClick={() => startCreate(false)}><Plus size={15} /></button>}
           {kind === "skill" && <button className="icon-button" aria-label={t("Import skill")} disabled={busy} onClick={() => startCreate(true)}><Upload size={15} /></button>}
         </div>
@@ -216,7 +223,8 @@ export default function LibraryPanel({
           <p className="small-muted">{t("Restore newer revisions first to preserve later edits.")}</p>
           {!history.length && <p className="small-muted">{t("No library revisions yet.")}</p>}
           {history.map((event) => <div key={event.id} className="library-history-row">
-            <div><strong>{event.item}</strong><span>{t(catalog.groups.find((g) => g.id === event.group)?.label || event.group)}</span>
+            <div><strong>{event.item}</strong><span>{groupLabel(groups.find((g) => g.id === event.group && g.items.some((item) => item.id === event.item))
+              || groups.find((g) => g.id === event.group))}</span>
               <small>{new Date(event.time).toLocaleString(locale)}</small></div>
             <button className="button small" disabled={busy || !event.can_restore} onClick={() => restore(event.id)}>{t("Restore")}</button>
           </div>)}
