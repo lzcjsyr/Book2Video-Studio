@@ -93,6 +93,7 @@ export interface Detail {
     duration: number | null;
   };
   covers: string[];
+  cover_design?: { folder: string; entries: { html: string; width: number; height: number }[]; files: string[]; previews: string[]; complete: boolean; current: boolean } | null;
   exports: string[];
   state: {
     selected_cover?: string;

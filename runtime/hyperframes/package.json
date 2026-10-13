@@ -3,6 +3,7 @@
   "private": true,
   "description": "The pinned HyperFrames CLI bundled with Book2Video Studio.",
   "dependencies": {
-    "hyperframes": "0.8.150"
+    "hyperframes": "0.8.150",
+    "three": "0.160.0"
   }
 }

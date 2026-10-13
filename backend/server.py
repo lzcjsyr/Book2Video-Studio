@@ -23,6 +23,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 from library import Library, LibraryConflict, install_bundled
 import takes
+import covers as cover_designs
 
 STAGES = ["1", "2", "3", "4", "5", "6"]
 # The CLI engine numbers Segments 1.5 and keeps the content summary (part of step 4 here) as its
@@ -32,7 +33,7 @@ DESKTOP_SECTIONS = {engine: desktop for desktop, engine in ENGINE_SECTIONS.items
 SETTINGS_SECTIONS = {"global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "hyperframes_opening"}
 STATE_LAYOUT = 2
 # Which service or model makes the next output. Changing one leaves finished work current.
-PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model"}
+PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method"}
 LINKS_FILE = "projects.json"
 HIDDEN_FILE = "hidden-projects.json"
 GOOGLE_CHECK_FILE = "google-adc-check.json"
@@ -42,14 +43,16 @@ MEDIA = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".mp4", ".mov", ".web
 MUSIC = {".mp3", ".wav", ".m4a", ".aac", ".flac"}
 # The still the Assembly page shows for the 3:4 copy's panels.
 PANEL_PREVIEW = ".studio/preview_3x4.png"
-STILL_EXTENSIONS = [".png", ".jpg", ".jpeg"]
 RENDER_REASON = "Render the revised motion compositions to review the new visuals"
 # Outdated-visual reasons that only concern a segment's previous visual type.
 TYPE_REASONS = {"Visual type changed", RENDER_REASON}
 TEXT_FILES = {"raw": "raw.json", "script": "script.json", "summary": "mini_summary.json"}
 METADATA_FIELDS = ("video_titles", "cover_titles", "cover_subtitles", "golden_quotes")
 # Settings the desktop keeps for itself; the engine's configuration rejects unknown keys.
-DESKTOP_SETTINGS = {"step1": {"writing_mode"}}
+DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step6": {"cover_method"}}
+# Covers are drawn by an image service from the text alone and write only cover files, so a cover job
+# runs beside the jobs that leave the text as it is: recordings, visuals and assembly.
+BESIDE_COVERS = {"3", "4", "5"}
 PROVIDER_KEYS = {"OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "MIMO_API_KEY", "KIMI_API_KEY", "SILICONFLOW_KEY", "VOLCENGINE_API_KEY", "GOOGLE_CLOUD_API_KEY", "BYTEDANCE_TTS_API_KEY"}
 
 
@@ -76,6 +79,31 @@ def segment_of(relative: str) -> int | None:
     if match := re.search(r"(?:^|/)(?:voice|segment)_(\d+)(?=[./]|$)", relative):
         return int(match.group(1))
     return 0 if re.search(r"(?:^|/)(?:voice/opening|images/(?:segment_)?opening)", relative) else None
+
+
+def first_text(value) -> str:
+    """The candidate the engine uses: the first nonblank text of a metadata list."""
+    items = value if isinstance(value, list) else [value]
+    return next((v.strip() for v in items if isinstance(v, str) and v.strip()), "")
+
+
+def cover_copy(data: dict) -> tuple:
+    """The text a cover shows (engine step 6): the cover title and subtitle; the video title only stands in for a missing one."""
+    title = first_text(data.get("video_titles")) or "未命名视频"
+    return first_text(data.get("cover_titles")) or title, first_text(data.get("cover_subtitles")) or title
+
+
+def panel_copy(data: dict, panel: dict) -> tuple:
+    """The text the 3:4 copy's panels show (engine select_panel_copy), after the panel's own choices."""
+    title = panel.get("title_text") or first_text(data.get("cover_titles")) or first_text(data.get("video_titles")) or first_text(data.get("source_name"))
+    subtitle = panel.get("subtitle_text") or first_text(data.get("cover_subtitles"))
+    top = panel.get("top_content", "title_subtitle")
+    if top == "none":
+        title = subtitle = ""
+    elif top == "title":
+        subtitle = ""
+    bottom = first_text(data.get("golden_quotes")) if panel.get("bottom_content") == "quote" else ""
+    return title, subtitle, bottom
 
 
 def editable(value: dict) -> dict:
@@ -325,21 +353,63 @@ class Studio:
     def persist(self, p: Path, state):
         atomic_json(p / ".studio/state.json", state)
 
-    def invalidate(self, state, stage, indices=None):
+    def invalidate(self, state, stage, indices=None, project=None):
         if stage == "1":
-            # The content summary is written from the manuscript.
+            # The content summary is written from the manuscript. Recordings and visuals follow it only
+            # through new segments, which then outdate just the segments whose text changed.
             state["summary_stale"] = True
+            self.mark_stale(state, "2", "Step 1 changed")
+            state["reviewed"].pop(stage, None)
+            return
         for s in STAGES[STAGES.index(stage) + 1:]:
-            # Covers consume text metadata, not voice or visuals.
-            if s == "6" and stage in {"3", "4", "5"}:
+            # Covers consume text metadata, not voice or visuals. Recordings and visuals are independent:
+            # both are made from the segment text, and assembly fits each visual to its recording.
+            if (s == "6" and stage in {"3", "4", "5"}) or (stage == "3" and s == "4"):
                 continue
+            scoped = indices
             previous = state["stale"].get(s)
-            scope = sorted(set(indices) | set(previous["segments"])) if indices and previous and previous["segments"] else indices or []
+            scope = sorted(set(scoped) | set(previous["segments"])) if scoped and previous and previous["segments"] else scoped or []
             if previous and not previous["segments"]:
                 scope = []
             state["stale"][s] = {"reason": f"Step {stage} changed", "segments": scope}
             state["reviewed"].pop(s, None)
         state["reviewed"].pop(stage, None)
+
+    @staticmethod
+    def mark_stale(state, stage, reason, indices=None):
+        """Flag one step outdated: for these segments, or the whole step when none are named."""
+        previous = state["stale"].get(stage)
+        whole = not indices or (previous is not None and not previous["segments"])
+        scope = [] if whole else sorted(set(indices) | set(previous["segments"] if previous else []))
+        state["stale"][stage] = {"reason": reason, "segments": scope}
+        state["reviewed"].pop(stage, None)
+
+    def resegmented(self, state, before, after):
+        """Later steps are outdated only where what they show or say changed: a segment whose text is
+        unchanged keeps its recording and visual, and covers and the 3:4 panels follow only the text they print."""
+        before, after = before or {}, after or {}
+        old = {s.get("index"): s for s in before.get("segments", [])}
+        new = after.get("segments", [])
+        spoken = {s["index"] for s in new if (old.get(s["index"]) or {}).get("content") != s.get("content")}
+        shown = spoken | {s["index"] for s in new if s["index"] in old and old[s["index"]].get("visualizer", "image") != s.get("visualizer", "image")}
+        opening = {**self.defaults().get("global", {}), **state.get("settings", {}).get("global", {})}.get("opening_quote", True)
+        quote = opening and first_text(before.get("golden_quotes")) != first_text(after.get("golden_quotes"))
+        if quote:
+            # The opening (0) speaks and shows the chosen golden quote.
+            self.mark_stale(state, "3", "Opening quote changed", [0])
+            self.mark_stale(state, "4", "Opening quote changed", [0])
+        if spoken:
+            self.mark_stale(state, "3", "Segment text changed", sorted(spoken))
+        if shown:
+            self.mark_stale(state, "4", "Segment text changed", sorted(shown))
+        if spoken or shown or quote or len(new) != len(old):
+            self.mark_stale(state, "5", "Segments changed")
+        if cover_copy(before) != cover_copy(after):
+            self.mark_stale(state, "6", "Cover text changed")
+        panel = {**self.defaults().get("three_by_four", {}), **state.get("settings", {}).get("three_by_four", {})}
+        if panel_copy(before, panel) != panel_copy(after, panel):
+            state["three_by_four_stale"] = True
+        state["reviewed"].pop("2", None)
 
     def direction_changed(self, state):
         """Every visual follows the shared direction, so a new one supersedes them."""
@@ -348,8 +418,9 @@ class Studio:
 
     @staticmethod
     def needs_summary(p: Path, state) -> bool:
-        """Visuals create their shared direction first when it is missing or outdated."""
-        return bool(state.get("summary_stale")) or not str(read_json(p / "text/mini_summary.json", {}).get("summary", "")).strip()
+        """Visuals create their shared direction first when it is missing. An outdated one stays
+        until it is regenerated on purpose, since a new direction outdates every visual."""
+        return not str(read_json(p / "text/mini_summary.json", {}).get("summary", "")).strip()
 
     def snapshot(self, p: Path, paths, label: str):
         revision = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -384,6 +455,8 @@ class Studio:
         import yaml
         data = yaml.safe_load((self.engine / "config.yaml" if (self.engine / "config.yaml").exists() else self.engine / "config.example.yaml").read_text())
         sections = {DESKTOP_SECTIONS.get(k, k): v for k, v in data.items() if isinstance(v, dict)}
+        if "step6" in sections:
+            sections["step6"].setdefault("cover_method", "api")
         return {k: v for k, v in sections.items() if k in SETTINGS_SECTIONS}
 
     def google_adc_status(self):
@@ -667,7 +740,7 @@ class Studio:
                     # files such as voice/字幕.srt belong to no segment.
                     indices = sorted({i for k in changes if k.startswith(prefix) and (i := segment_of(k)) is not None})
                     if indices:
-                        self.invalidate(state, stage, indices)
+                        self.invalidate(state, stage, indices, project=p)
             state["assets"] = assets
             opening_audio = self.asset(p, "voice", "opening", [".wav", ".mp3"])
             covers = [str(f.relative_to(p)) for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA]
@@ -678,11 +751,25 @@ class Studio:
                 ready["4"] = ready["4"] and bool(parts[0]["visual"])
             self.persist(p, state)
             # New takes, keyframes and compositions refresh the app without outdating later steps.
-            revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale")], sort_keys=True).encode()).hexdigest()
-            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio)}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
+            settings = self.defaults()
+            for section, fields in state.get("settings", {}).items():
+                settings.setdefault(section, {}).update(fields)
+            cover_design = cover_designs.detail(p, state.get("cover_design"), settings, cover_copy(raw if raw.get("content") else script))
+            revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design], sort_keys=True).encode()).hexdigest()
+            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio)}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
 
-    def busy(self, project_id):
-        return any(j["project"] == project_id and j["status"] in {"running", "cancelling"} for j in self.jobs.values()) or bool(self.state(self.project(project_id)).get("agent_active"))
+    @staticmethod
+    def beside(a, b):
+        """Work on these two steps does not wait for each other: covers, and recordings, visuals or assembly."""
+        return (a == "6" and b in BESIDE_COVERS) or (b == "6" and a in BESIDE_COVERS)
+
+    def running(self, project_id, step=None):
+        """A job is running that work on this step (or, without one, on anything in the project) waits for."""
+        return any(j["project"] == project_id and j["status"] in {"running", "cancelling"} and not (step and self.beside(step, j["step"]))
+                   for j in self.jobs.values())
+
+    def busy(self, project_id, step=None):
+        return self.running(project_id, step) or bool(self.state(self.project(project_id)).get("agent_active"))
 
     def save(self, project_id, body):
         p = self.project(project_id)
@@ -732,8 +819,16 @@ class Studio:
             if editable(value) == editable(previous):
                 # Nothing changed (for example a switch flipped and flipped back): later steps stay current.
                 return self.detail(project_id)
-            self.snapshot(p, [path], f"Before editing {kind}")
+            script_path = p / "text/script.json"
+            script = read_json(script_path) if kind == "raw" else None
+            # Titles, cover text and quotes reach the segments right away; only new manuscript text needs segmenting again.
+            synced = {**script, **{k: value[k] for k in METADATA_FIELDS}} if isinstance(script, dict) else None
+            if synced == script:
+                synced = None
+            self.snapshot(p, [path, script_path] if synced else [path], f"Before editing {kind}")
             atomic_json(path, value)
+            if synced:
+                atomic_json(script_path, synced)
             state = self.state(p)
             if kind == "summary":
                 state.pop("summary_stale", None)
@@ -745,11 +840,19 @@ class Studio:
                     kinds = {s.get("index"): s.get("visualizer", "image") for s in before}
                     switched = {s["index"]: self.use_visual_files(p, state, s["index"], s.get("visualizer", "image"))
                                 for s in value["segments"] if s["index"] in kinds and kinds[s["index"]] != s.get("visualizer", "image")}
-                self.invalidate(state, "4" if visual_only else stage, body.get("segments"))
                 if visual_only:
+                    self.invalidate(state, "4", body.get("segments"))
                     # A segment that already has the other kind of visual (a set-aside still, a current render) is ready.
                     self.mark_visual_switch(state, switched)
+                elif kind == "script":
+                    self.resegmented(state, previous, value)
+                    state["stale"].pop(stage, None)
                 else:
+                    if synced:
+                        self.resegmented(state, script, synced)
+                        state.setdefault("hashes", {})["script"] = fingerprint(script_path)
+                    if value.get("content") != previous.get("content"):
+                        self.invalidate(state, stage)
                     state["stale"].pop(stage, None)
             state.setdefault("hashes", {})[kind] = fingerprint(path)
             self.persist(p, state)
@@ -777,7 +880,7 @@ class Studio:
         if type(index) is not int or not isinstance(take, str):
             raise ValueError("Choose a segment and one of its images or motion clips.")
         with self.lock:
-            if any(j["project"] == project_id and j["status"] in {"running", "cancelling"} for j in self.jobs.values()):
+            if self.running(project_id):
                 raise Conflict("Wait for the running job to finish before changing a segment's visual.")
             state = self.state(p)
             active = state.get("agent_active")
@@ -811,7 +914,7 @@ class Studio:
         if type(index) is not int or not isinstance(take, str):
             raise ValueError("Choose a segment and one of its images or motion clips.")
         with self.lock:
-            if any(j["project"] == project_id and j["status"] in {"running", "cancelling"} for j in self.jobs.values()):
+            if self.running(project_id):
                 raise Conflict("Wait for the running job to finish before deleting a version.")
             state = self.state(p)
             active = state.get("agent_active")
@@ -838,7 +941,7 @@ class Studio:
         """Remove any cover, choosing a remaining candidate; Revision history keeps a copy."""
         p = self.project(project_id)
         with self.lock:
-            if any(j["project"] == project_id and j["status"] in {"running", "cancelling"} for j in self.jobs.values()):
+            if self.running(project_id, "6"):
                 raise Conflict("Wait for the running job to finish before deleting a cover.")
             covers = self.detail(project_id)["covers"]
             path = body.get("path")
@@ -979,6 +1082,7 @@ class Studio:
             event = next(e for e in self.state(p)["events"] if e["id"] == body["revision"])
             files = event["files"]
             self.snapshot(p, [p / f for f in files], "Before restoring revision")
+            script_before = read_json(p / "text/script.json", {})
             for f in files:
                 source = p / ".studio/history" / event["id"] / f
                 if not source.resolve().is_relative_to((p / ".studio/history").resolve()):
@@ -993,9 +1097,15 @@ class Studio:
             if changed == "5" and "text/mini_summary.json" in files:
                 # Only the content summary came back; visuals made from another one are outdated.
                 self.direction_changed(state)
-            else:
-                self.invalidate(state, changed)
+            elif changed == "2":
+                self.resegmented(state, script_before, read_json(p / "text/script.json", {}))
                 state["stale"].pop(changed, None)
+            else:
+                self.invalidate(state, changed, project=p)
+                state["stale"].pop(changed, None)
+                if changed == "1" and "text/script.json" in files:
+                    # The segments came back with the manuscript.
+                    self.resegmented(state, script_before, read_json(p / "text/script.json", {}))
             self.persist(p, state)
         return self.detail(project_id)
 
@@ -1036,6 +1146,8 @@ class Studio:
             revised = [f for index, work in folders.items() if index not in created for f in work.rglob("*")]
             self.snapshot(p, list((p / "text").glob("*")) if body["step"] == "1" else revised + [p / "text/script.json"], f"Before Claude Code · step {body['step']}")
             state = self.state(p)
+            if body["step"] == "6":
+                state["cover_design"] = launch["cover_design"]
             for index, work in folders.items():
                 previous[str(index)] = state.get("takes", {}).get(str(index))
                 self.select(p, state, index, work.name)
@@ -1070,11 +1182,17 @@ class Studio:
                         raw["total_length"] = len(raw["content"])
                         atomic_json(target, raw)
                 state.pop("agent_active", None)
-                if active["step"] != "1" or active.get("raw_before") != fingerprint(p / "text/raw.json"):
+                if active["step"] == "6":
+                    info = cover_designs.detail(p, state.get("cover_design"))
+                    warning = None if info and info["complete"] else "Save every cover HTML design with Claude Code before rendering."
+                if active["step"] == "6":
+                    state["stale"]["6"] = {"reason": warning or "Render the saved HTML designs to review the new covers.", "segments": []}
+                    state["reviewed"].pop("6", None)
+                elif active["step"] != "1" or active.get("raw_before") != fingerprint(p / "text/raw.json"):
                     self.invalidate(state, active["step"], active["indices"])
                 if warning:
                     state["stale"][active["step"]] = {"reason": warning, "segments": []}
-                else:
+                elif active["step"] != "6":
                     state["stale"].pop(active["step"], None)
                 if active["step"] == "4":
                     indices = active["indices"] or list(map(int, active.get("takes", {})))
@@ -1107,26 +1225,36 @@ class Studio:
     def run_job(self, project_id, body):
         p = self.project(project_id)
         with self.lock:
-            if self.busy(project_id):
-                raise Conflict("Finish the active project job or agent first.")
             step = str(body["step"])
+            if self.busy(project_id, step):
+                raise Conflict("Finish the active project job or agent first.")
             if step not in STAGES or step == "1":
                 raise ValueError("Step 1 runs interactively through Activate Claude Code.")
             if step == "4" and body.get("mode") not in {"static", "render", "opening", "opening_render", "summary"}:
                 raise ValueError("Animated generation runs through the interactive Claude Code terminal.")
             if step == "5" and body.get("mode") not in {None, "three_by_four"}:
                 raise ValueError("Unknown assembly action.")
+            if step == "6":
+                if body.get("mode") not in {None, "cover_render"}:
+                    raise ValueError("Unknown cover action.")
+                if body.get("mode") == "cover_render":
+                    info = self.detail(project_id).get("cover_design")
+                    if not info or not info["complete"]:
+                        raise ValueError("Save every cover HTML design with Claude Code before rendering.")
+                    if not info["current"]:
+                        raise ValueError("Cover copy or setup changed. Revise the HTML design before rendering.")
+                elif self.state(p).get("settings", {}).get("step6", {}).get("cover_method", "api") == "agent":
+                    raise ValueError("Design covers through the interactive Claude Code terminal.")
+            # Earlier steps need their outputs; an outdated output still lets later steps run.
             if step == "5" and body.get("mode") == "three_by_four":
-                # The 3:4 copy is drawn around the landscape master, so the master must be current.
+                # The 3:4 copy is drawn around the landscape master.
                 detail = self.detail(project_id)
-                if not detail["ready"]["5"] or "5" in detail["state"]["stale"]:
+                if not detail["ready"]["5"]:
                     raise Conflict("Assemble the video first. The 3:4 copy is made from the current landscape video.")
             elif step == "5":
                 detail = self.detail(project_id)
-                if any(not detail["ready"][s] or s in detail["state"]["stale"] for s in ["2", "3", "4"]):
-                    raise Conflict("Generate the outdated script, recordings, and visuals before assembling this production.")
-            if step == "6" and (p / "text/script.json").exists() and "2" in self.state(p)["stale"]:
-                raise Conflict("Generate segmentation to apply the current title and cover metadata first.")
+                if any(not detail["ready"][s] for s in ["2", "3", "4"]):
+                    raise Conflict("Generate the segments, recordings and visuals before assembling this production.")
             if step == "4" and body.get("mode") == "opening_render":
                 # Render a new opening clip over one of the kept backgrounds; nothing is generated.
                 background = takes.find(p, 0, str(body.get("take", "")))
@@ -1137,8 +1265,8 @@ class Studio:
                 if body["batch"] not in {"all", "missing"}:
                     raise ValueError("Choose all images or missing images.")
                 detail = self.detail(project_id)
-                if not detail["ready"]["2"] or "2" in detail["state"]["stale"]:
-                    raise Conflict("Generate current segments before generating all images.")
+                if not detail["ready"]["2"]:
+                    raise Conflict("Generate segments before generating all images.")
                 candidates = [s for s in detail["segments"] if s.get("visualizer", "image") == "image"]
                 indices = [s["index"] for s in candidates if body["batch"] == "all" or not self.asset(p, "images", f"segment_{s['index']}", [".png", ".jpg", ".jpeg", ".webp"])]
                 global_settings = {**self.defaults().get("global", {}), **detail["state"].get("settings", {}).get("global", {})}
@@ -1151,7 +1279,7 @@ class Studio:
                 settings = self.defaults()
                 for section, fields in self.state(p).get("settings", {}).items():
                     settings.setdefault(section, {}).update(fields)
-                required = [("cover_styles", "step6", "cover_image_style")] if step == "6" else [
+                required = ([] if body.get("mode") == "cover_render" else [("cover_styles", "step6", "cover_image_style")]) if step == "6" else [
                     ("image_styles", "step4", "image_style_preset"),
                     ("image_templates", "step4", "image_prompt_template"),
                 ] if body.get("mode") not in {"render", "opening_render", "summary"} else []
@@ -1177,6 +1305,8 @@ class Studio:
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
                        "music_dir": str(self.music_root)}
+            if step == "6" and body.get("mode") == "cover_render":
+                request["cover_design"] = self.state(p)["cover_design"]
             if step == "4" and body.get("mode") == "render":
                 # Each segment renders its selected motion clip, or the one clip asked for.
                 state = self.state(p)
@@ -1188,6 +1318,9 @@ class Studio:
                 request["folders"] = {str(i): str(w) for i in chosen if (w := self.motion_folder(p, state, i, one))}
             job = {"id": job_id, "project": project_id, "step": step, "status": "running", "log": [], "started": time.time(), "result": None, "scope": body.get("indices"), "mode": body.get("mode"), "opening": body.get("opening", False),
                    "summary": summary, "summary_before": fingerprint(p / "text/mini_summary.json")}
+            if step == "2":
+                # New segments outdate recordings and visuals only where their text changed.
+                job["_script_before"] = read_json(p / "text/script.json", {})
             self.jobs[job_id] = job
             environment = {**os.environ, **self.credentials, LIBRARY_ENV: str(self.library_root)}
             job["_secrets"] = [environment[k] for k in PROVIDER_KEYS if environment.get(k)]
@@ -1245,8 +1378,11 @@ class Studio:
             scope = job.get("scope")
             if scope is not None:
                 scope = sorted(set(scope) | ({0} if job.get("opening") else set()))
-            if scope is None or scope:
-                self.invalidate(state, job["step"], scope)
+            before = job.pop("_script_before", None)
+            if job["step"] == "2" and before is not None:
+                self.resegmented(state, before, read_json(p / "text/script.json", {}))
+            elif scope is None or scope:
+                self.invalidate(state, job["step"], scope, project=p)
             if job["step"] == "4":
                 # New images become their segments' visuals before the step's progress is counted.
                 self.sync_takes(p, state)
@@ -1410,7 +1546,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json(studio.set_opening(project_id, body))
                     if action == "settings":
                         with studio.lock:
-                            if studio.busy(project_id):
+                            # Cover settings change beside a running recording, visual or assembly job.
+                            if studio.busy(project_id, "6" if set(body["settings"]) == {"step6"} and "source" not in body else None):
                                 raise Conflict("Stop production before changing its settings.")
                             state = studio.state(p)
                             old = state.get("settings", {})
@@ -1430,23 +1567,38 @@ class Handler(BaseHTTPRequestHandler):
                             # The 3:4 copy is redrawn around the landscape master, so its panels outdate only that copy.
                             if "three_by_four" in body["settings"] and differs("three_by_four"):
                                 state["three_by_four_stale"] = True
-                            changed = [mapping[k] for k in sections]
                             if "step4_summary" in sections:
+                                # Visuals follow a new summary once it is regenerated.
                                 state["summary_stale"] = True
-                            if changed:
-                                earliest = min(changed, key=STAGES.index)
-                                studio.invalidate(state, earliest)
-                                for s in changed:
-                                    state["stale"][s] = {"reason": "Production settings changed", "segments": []}
+                            # Settings outdate only their own step; later steps follow once it is regenerated
+                            # and only where its outputs actually changed.
+                            for s in sorted({mapping[k] for k in sections if k != "step4_summary"}, key=STAGES.index):
+                                studio.mark_stale(state, s, "Production settings changed")
                             state["settings"] = settings
                             if "source" in body:
                                 state["source"] = body["source"]
                             studio.persist(p, state)
                         return self.json(studio.detail(project_id))
+                    if action == "keep-current":
+                        # The user keeps a step's outputs as they are: it no longer needs a rebuild.
+                        with studio.lock:
+                            step = str(body.get("step"))
+                            if studio.busy(project_id, step):
+                                raise Conflict("Wait for the running job to finish first.")
+                            state = studio.state(p)
+                            if step not in STAGES:
+                                raise ValueError("Unknown step.")
+                            state["stale"].pop(step, None)
+                            if step == "4" and body.get("summary"):
+                                state.pop("summary_stale", None)
+                            if step == "5" and body.get("three_by_four"):
+                                state.pop("three_by_four_stale", None)
+                            studio.persist(p, state)
+                        return self.json(studio.detail(project_id))
                     if action == "review":
                         with studio.lock:
                             state = studio.state(p)
-                            if studio.busy(project_id) or not studio.detail(project_id)["ready"].get(body["step"]) or body["step"] in state["stale"]:
+                            if studio.busy(project_id, str(body["step"])) or not studio.detail(project_id)["ready"].get(body["step"]) or body["step"] in state["stale"]:
                                 raise Conflict("Generate current outputs and finish production before marking them reviewed.")
                             state["reviewed"][body["step"]] = datetime.now().isoformat()
                             studio.persist(p, state)

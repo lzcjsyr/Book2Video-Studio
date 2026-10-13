@@ -63,3 +63,10 @@ test("with a Claude subscription the writing and motion agents need no key; othe
   assert.deepEqual(unmet(needs, saved).map((n) => n.id), ["direction", "images"]);
   assert.equal(needs.find((n) => n.id === "covers").login, "Google Cloud login (no key)");
 });
+
+test("HTML cover agents use Writing's provider or Claude subscription and omit cover ADC checks", () => {
+  const agent = { ...settings, step6: { cover_method: "agent", cover_image_server: "google_adc", cover_image_model: "gemini-3-pro-image" } };
+  assert.equal(keyNeeds(agent).find((n) => n.id === "covers").key, "DEEPSEEK_API_KEY");
+  assert.equal(keyNeeds(agent, { subscription: true }).find((n) => n.id === "covers").key, null);
+  assert.deepEqual(adcModels(agent), []);
+});

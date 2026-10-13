@@ -78,6 +78,9 @@ def panel_preview(project, params, output):
 def run(request):
     engine = Path(request["engine"])
     project = Path(request["project"])
+    if request["step"] == "6" and request.get("mode") == "cover_render":
+        from covers import render
+        return render(project, request["cover_design"])
     sys.path.insert(0, str(engine))
     # The engine may be read-only; anything written relative to the working folder stays in the project.
     os.chdir(project)
@@ -88,8 +91,9 @@ def run(request):
     from server import engine_settings
     for section, fields in engine_settings(request.get("settings", {})).items():
         merged.setdefault(section, {}).update(fields)
-    # A layout preview may be drawn while a job runs; each keeps its own configuration.
-    runtime = project / (".studio/preview-config.yaml" if request.get("mode") == "preview" else ".studio/job-config.yaml")
+    # A layout preview or a cover job may run beside another job; each keeps its own configuration.
+    runtime = project / (".studio/preview-config.yaml" if request.get("mode") == "preview" else
+                         ".studio/cover-config.yaml" if request["step"] == "6" else ".studio/job-config.yaml")
     runtime.write_text(yaml.safe_dump(merged, allow_unicode=True), encoding="utf-8")
     apply_yaml_config(runtime)
     params = get_generation_params(runtime)
@@ -159,7 +163,7 @@ def run(request):
     if step == "4" and request.get("mode") == "opening_render":
         # The engine draws the opening quote over its current background; that background is now the chosen one.
         import shutil
-        from core.infra.hyperframes import render_opening_video
+        from core.infra.hyperframes.opening_renderer import render_opening_video
         background = project / "images/opening_bg.png"
         if Path(request["background"]).resolve() != background.resolve():
             shutil.copy2(request["background"], background)
@@ -191,9 +195,13 @@ def run(request):
         if track and Path(track).name == track and not (engine / "music" / track).is_file() and added.is_file():
             values["bgm_filename"] = str(added)
     if step == "6":
+        # One run makes every chosen size, each with its own candidates.
         cover = merged.get("step6", {})
-        cover_size = cover.get("cover_image_size_presets", {}).get(cover.get("default_cover_image_size_key", ""))
-        values.update(cover_image_size=cover_size or params["image_size"],
+        # Earlier settings named one size; the cover panel reads them the same way.
+        presets = cover.get("cover_image_size_presets", {})
+        keys = cover.get("cover_image_size_keys") or [cover.get("default_cover_image_size_key")]
+        cover_sizes = [presets[key] for key in keys if key in presets]
+        values.update(cover_image_size=cover_sizes or params["image_size"],
                       cover_image_server=params.get("cover_image_server") or params["image_server"])
         if params.get("cover_image_model"):
             check_image_model(values["cover_image_server"], params["cover_image_model"])

@@ -48,7 +48,6 @@ import type {
   Job,
   Launch,
   Project,
-  Segment,
   Settings,
   Stage,
   Take,
@@ -112,6 +111,8 @@ const stages: {
   { id: "6", number: "6", name: "Covers", description: "The final impression", icon: Image },
 ];
 const order = stages.map((s) => s.id);
+// Recordings, visuals and assembly leave the text as it is, so covers are made beside them.
+const besideCovers: Stage[] = ["3", "4", "5"];
 const stageNumber = (id: Stage) => stages.find((s) => s.id === id)?.number || id;
 const clone = <T,>(data: T): T => structuredClone(data);
 // The cover in use: the saved choice, else the first candidate.
@@ -211,11 +212,15 @@ export default function App() {
     setSettingsTab(tab);
     setModal("settings");
   }
-  const activeJob = jobs.find(
+  const runningJobs = jobs.filter(
     (j) =>
       j.project === detail?.id &&
       (j.status === "running" || j.status === "cancelling"),
   );
+  // The job this page waits for. Covers are drawn from the text alone, so a recording,
+  // visual or assembly job leaves the Covers page free (and the reverse, in the service).
+  const activeJob = runningJobs.find((j) => step !== "6" ||
+    (detail?.state.settings.step6?.cover_method ?? bootstrap?.defaults.step6?.cover_method) === "agent" || !besideCovers.includes(j.step));
   const activeAgent = Boolean(detail?.state.agent_active);
   const savedWriting = detail ? writingOptions(detail, bootstrap) : null;
   const writing = writingDraft && writingDraft.project === detail?.id ? writingDraft.options : savedWriting;
@@ -315,6 +320,8 @@ export default function App() {
             if (j.project === projectRef.current && j.started >= openedAt.current) {
               const d = await load(j.project);
               notice(j.result?.message || `Step ${stageNumber(j.step)} ${j.status}`);
+              // Covers, the last step, can run beside a rebuild without moving it along.
+              if (j.step === "6") continue;
               if (
                 j.status === "succeeded" &&
                 queue.current.length &&
@@ -430,8 +437,9 @@ export default function App() {
   const keySettings: Settings = { ...bootstrap?.defaults };
   Object.entries(detail?.state.settings || {}).forEach(([k, v]) => (keySettings[k] = { ...keySettings[k], ...v }));
   if (writing) keySettings.step1 = { ...keySettings.step1, llm_server: writing.llm_server };
-  // Only Writing and Visuals work with Claude Code. The pane stays mounted elsewhere so a running session survives.
-  const agentStep = step === "1" || step === "4";
+  const coverAgent = keySettings.step6?.cover_method === "agent";
+  // The pane stays mounted elsewhere so a running session survives navigation.
+  const agentStep = step === "1" || step === "4" || (step === "6" && coverAgent);
   const agentShown = agentStep && agentVisible;
   const hasMotion = Boolean(detail?.segments.some((s) => s.visualizer === "hf"));
   const missingKeys = detail ? unmet(keyNeeds(keySettings, { motion: true, subscription: claudeMode === "subscription" }), keyStatus?.saved) : [];
@@ -447,9 +455,9 @@ export default function App() {
     openSettings(gap.key ? "keys" : "production");
     return false;
   }
-  // Static images also write their shared direction first when it is missing or outdated.
+  // Static images also write their shared direction first when it is missing.
   const visualNeeds = (): NeedId[] =>
-    detail && (detail.state.summary_stale || !String(detail.summary.summary || "").trim())
+    detail && !String(detail.summary.summary || "").trim()
       ? ["direction", "images"] : ["images"];
   const openingEnabled = Boolean(
     detail?.state.settings.global?.opening_quote ??
@@ -507,8 +515,8 @@ export default function App() {
     return "";
   };
   const coverCopy = {
-    title: firstText(detail?.script.cover_titles, detail?.raw.cover_titles, detail?.script.video_titles, detail?.raw.video_titles),
-    subtitle: firstText(detail?.script.cover_subtitles, detail?.raw.cover_subtitles),
+    title: firstText(detail?.raw.cover_titles, detail?.script.cover_titles, detail?.raw.video_titles, detail?.script.video_titles),
+    subtitle: firstText(detail?.raw.cover_subtitles, detail?.script.cover_subtitles),
     quote: firstText(detail?.script.golden_quotes, detail?.raw.golden_quotes),
   };
   // Redraw the layout preview when the panels, the export size or the project's outputs change.
@@ -536,22 +544,25 @@ export default function App() {
       : detail?.ready[step]
         ? "ready"
         : "empty";
-  const status = t(
-    {
-      "needs-rebuild": "Needs rebuild",
-      reviewed: "Reviewed",
-      ready: "Ready to review",
-      empty: "Not generated",
-    }[statusKind],
-  );
+  const outdatedCount = detail?.state.stale[step]?.segments.length ?? 0;
+  const status = statusKind === "needs-rebuild" && outdatedCount
+    ? t(outdatedCount === 1 ? "1 segment needs rebuild" : "{count} segments need rebuild", { count: outdatedCount })
+    : t(
+        {
+          "needs-rebuild": "Needs rebuild",
+          reviewed: "Reviewed",
+          ready: "Ready to review",
+          empty: "Not generated",
+        }[statusKind],
+      );
 
   /** Activate Claude Code; Visuals can name the motion clip to revise, or "new" for a new clip. */
-  async function activateFor(indices?: number[], take?: string) {
+  async function activateFor(indices?: number[], take?: string, revise = false) {
     if (!detail || unsaved) {
       notice("Save changes before activating the agent.");
       return;
     }
-    if (!keysReady([step === "1" ? "writing" : "motion_agent"])) return;
+    if (!keysReady([step === "1" ? "writing" : step === "6" ? "covers" : "motion_agent"])) return;
     if (step === "4" && indices?.includes(0)) {
       notice(
         "Generate the opening through Visuals; the motion agent works on narration segments.",
@@ -568,6 +579,7 @@ export default function App() {
         step,
         indices,
         take,
+        revise,
       });
       setLaunch(prepared);
       setAgentVisible(true);
@@ -602,6 +614,13 @@ export default function App() {
                   : `Rendering ${composed.length} segments from Claude Code's compositions…`);
               })
               .catch((e) => notice(String(e)));
+          if (d.finished?.step === "6" && !d.warning && d.cover_design?.complete)
+            api<Job>(projectRoute(d.id) + "/job", { step: "6", mode: "cover_render" })
+              .then((job) => {
+                setJobs((jobs) => [...jobs, job]);
+                notice("Rendering covers from Claude Code's HTML designs…");
+              })
+              .catch((e) => notice(String(e)));
           if (
             !d.warning &&
             queue.current.length &&
@@ -626,7 +645,7 @@ export default function App() {
         queue.current = order
           .slice(order.indexOf(step) + 1)
           .filter((s) => !(s === "6" && ["3", "4", "5"].includes(step)));
-      if (step === "1") {
+      if (step === "1" || (step === "6" && coverAgent)) {
         setModal(null);
         await activate();
         return;
@@ -638,9 +657,12 @@ export default function App() {
             ? detail.segments
                 .filter((s) => (step === "3" ? !s.audio : !s.visual))
                 .map((s) => s.index)
-            : undefined;
+            : scope === "outdated"
+              ? detail.state.stale[step]?.segments.filter((i) => i !== 0) ?? []
+              : undefined;
       let mode = step === "4" ? visualAction : undefined;
-      const opening = openingEnabled && (withOpening || (selected === 0 && scope === "selected"));
+      const opening = openingEnabled && (withOpening || (selected === 0 && scope === "selected") ||
+        (scope === "outdated" && Boolean(detail.state.stale[step]?.segments.includes(0))));
       if (selected === 0 && scope === "selected") {
         indices = [];
         if (step === "4") mode = "opening";
@@ -712,7 +734,7 @@ export default function App() {
     });
     return saved;
   }
-  const saveCoverSetting = (key: string, value: string | number) => saveSettings("step6", { [key]: value });
+  const saveCoverSetting = (key: string, value: string | number | string[]) => saveSettings("step6", { [key]: value });
   /** Redraw only the 3:4 copy around the current 16:9 video (Generate makes both). */
   async function buildPortrait() {
     if (!detail) return;
@@ -1009,10 +1031,10 @@ export default function App() {
               : segment?.visual;
   const previewMedia =
     selectedMedia && detail ? media(detail.id, selectedMedia, showingLayout && currentLayout ? currentLayout.stamp : version) : null;
-  // The selected segment's place in Visuals work: why it is outdated, and what is running on it.
-  const visualStale = detail?.state.stale["4"];
+  // The selected segment's place in Voice or Visuals work: why it is outdated, and what is running on it.
+  const stepStale = ["3", "4"].includes(step) ? detail?.state.stale[step] : undefined;
   const selectedStale =
-    visualStale && (!visualStale.segments.length || visualStale.segments.includes(selected)) ? visualStale.reason : null;
+    stepStale && (!stepStale.segments.length || stepStale.segments.includes(selected)) ? stepStale.reason : null;
   const agentSegments = detail?.state.agent_active?.step === "4" ? detail.state.agent_active.indices || [] : [];
   const jobCovers = (mode: string) =>
     Boolean(
@@ -1044,7 +1066,7 @@ export default function App() {
             <span className="status-dot" />
             {t("Unsaved changes")}
           </span>
-        ) : activeJob ? (
+        ) : runningJobs.length ? (
           <span className="header-save-state running">
             <Loader2 size={12} className="spin" />
             {t("Production running")}
@@ -1165,7 +1187,7 @@ export default function App() {
               return (
                 <button
                   key={s.id}
-                  className={`stage-item${step === s.id ? " active" : ""}${stale ? " stale" : ready ? " done" : ""}`}
+                  className={`stage-item${step === s.id ? " active" : ""}${stale ? " stale" : ""}${ready ? " done" : ""}`}
                   aria-current={step === s.id ? "step" : undefined}
                   title={stale ? t(stale.reason) : undefined}
                   onClick={() => changeStage(s.id)}
@@ -1175,11 +1197,11 @@ export default function App() {
                     <strong>{t(s.name)}</strong>
                     <small>{t(s.description)}</small>
                   </span>
-                  {stale ? (
-                    <span className="stale-dot" title={t(stale.reason)} />
-                  ) : ready ? (
+                  {/* The check means the step has what the next one needs; outdated is shown beside it. */}
+                  {stale && <span className="stale-dot" title={t(stale.reason)} />}
+                  {ready ? (
                     <Check size={13} className="stage-check" />
-                  ) : (
+                  ) : !stale && (
                     <span className="stage-empty-dot" />
                   )}
                 </button>
@@ -1240,6 +1262,21 @@ export default function App() {
                     <span className="status-dot" />
                     {status}
                   </span>
+                  {(detail.state.stale[step] || (step === "4" && detail.state.summary_stale) || (step === "5" && detail.state.three_by_four_stale)) && (
+                    <button
+                      className="button small"
+                      disabled={busy || Boolean(activeJob) || activeAgent}
+                      title={t("Keep these outputs as they are. Nothing is regenerated.")}
+                      onClick={() =>
+                        action(async () => {
+                          setDetail(await api<Detail>(projectRoute(detail.id) + "/keep-current", { step, summary: true, three_by_four: true }));
+                          notice("Kept the current outputs. This step no longer needs a rebuild.");
+                        })
+                      }
+                    >
+                      <CheckCircle2 size={13} /> {t("Keep current")}
+                    </button>
+                  )}
                 </div>
                 <div className="production-actions">
                   {["1", "4", "6"].includes(step) && <button className="icon-button"
@@ -1276,7 +1313,12 @@ export default function App() {
                     className="button small"
                     disabled={busy || Boolean(activeJob) || activeAgent}
                     onClick={() => {
-                      setScope(["3", "4"].includes(step) ? "selected" : "all");
+                      if (step === "6" && coverAgent) {
+                        activate();
+                        return;
+                      }
+                      // Outdated segments are the usual next work when there are some.
+                      setScope(!["3", "4"].includes(step) ? "all" : detail.state.stale[step]?.segments.length ? "outdated" : "selected");
                       setRebuild(false);
                       setWithOpening(selected === 0);
                       setVisualAction(
@@ -1285,7 +1327,7 @@ export default function App() {
                       setModal("generate");
                     }}
                   >
-                    <RefreshCw size={13} /> {t("Generate")}
+                    <RefreshCw size={13} /> {t(step === "6" && coverAgent ? "New cover design" : "Generate")}
                   </button>
                 </div>
               </div>
@@ -1388,7 +1430,40 @@ export default function App() {
                     onEdit={(index, key, value) => editSegment(key, value, index)}
                   />
                 ) : (
-                  <div className={`media-workspace${step === "4" ? " visuals-workspace" : ""}`}>
+                  <div className={`media-workspace${step === "4" ? " visuals-workspace" : step === "6" ? " covers-workspace" : ""}`}>
+                    {step === "6" && <>
+                      <CoverSetup key={detail.id} settings={keySettings.step6 || {}} library={bootstrap?.library}
+                        disabled={busy || activeAgent || Boolean(activeJob)} copy={coverCopy}
+                        agentMode={claudeMode === "subscription" ? "Your Claude Code · subscription" : "Built-in Claude Code · API key"}
+                        onChange={saveCoverSetting} onEditStyles={() => openLibrary("cover_styles")} />
+                      {coverAgent && <section className="cover-design-actions" aria-label={t("HTML cover design")}>
+                        <div><strong>{t("HTML cover design")}</strong>
+                          <p className="small-muted">{t(activeAgent && detail.state.agent_active?.step === "6"
+                            ? "Claude Code is designing covers in the right pane. Review its snapshots below, then finish to render candidates."
+                            : "Design, review snapshots, then render. Your existing cover candidates stay available.")}</p></div>
+                        <div className="cover-design-buttons">
+                          {activeAgent && detail.state.agent_active?.step === "6" ? <button className="button small primary"
+                            disabled={busy || !detail.cover_design?.complete} onClick={() => agentHandle.current?.stop()}>
+                            <Play size={13} />{t("Finish & render covers")}</button> : <>
+                            <button className="button small primary" disabled={busy || unsaved || activeAgent || Boolean(activeJob)} onClick={activate}>
+                              <TerminalSquare size={13} />{t("New cover design")}</button>
+                            <button className="button small" disabled={busy || unsaved || activeAgent || Boolean(activeJob) || !detail.cover_design?.files.length}
+                              onClick={() => activateFor(undefined, undefined, true)}>{t("Revise HTML design")}</button>
+                            <button className="button small" disabled={busy || unsaved || activeAgent || Boolean(activeJob) || !detail.cover_design?.complete || !detail.cover_design.current}
+                              onClick={() => action(async () => {
+                                const job = await api<Job>(projectRoute(detail.id) + "/job", { step: "6", mode: "cover_render" });
+                                setJobs((jobs) => [...jobs, job]);
+                                notice("Rendering covers from Claude Code's HTML designs…");
+                              })}>{t("Render saved HTML")}</button>
+                          </>}
+                        </div>
+                        {detail.cover_design && !detail.cover_design.current && <p className="small-muted">{t("Cover copy or setup changed. Revise the HTML design before rendering.")}</p>}
+                        {!!detail.cover_design?.previews.length && <div className="cover-design-previews">
+                          {detail.cover_design.previews.map((file) => <img key={file} src={media(detail.id, file, version)}
+                            alt={t("HTML cover snapshot")} loading="lazy" />)}
+                        </div>}
+                      </section>}
+                    </>}
                     {step === "4" && <>
                       <VisualDirection key={detail.id} summary={String(detail.summary.summary || "")}
                         hash={detail.hashes.summary} outdated={Boolean(detail.state.summary_stale)}
@@ -1474,7 +1549,7 @@ export default function App() {
                                   ? t("Recording")
                                   : visualLabel}
                         </span>
-                        {step === "4" && selectedStale && (
+                        {selectedStale && (
                           <span className="toolbar-flag" title={t(selectedStale)}>{t("Out of date")}</span>
                         )}
                       </div>
@@ -1834,17 +1909,17 @@ export default function App() {
                   } : undefined}
                 />
               )}
-              {activeJob && (
-                <div className="job-strip">
+              {runningJobs.map((job) => (
+                <div className="job-strip" key={job.id}>
                   <Loader2 size={14} className="spin" />
                   <span>
-                    {t("Step")} {stageNumber(activeJob.step)} ·{" "}
-                    {t(activeJob.log.at(-1) || "Starting production…")}
+                    {t("Step")} {stageNumber(job.step)} ·{" "}
+                    {t(job.log.at(-1) || "Starting production…")}
                   </span>
                   <button
-                    disabled={activeJob.status === "cancelling"}
+                    disabled={job.status === "cancelling"}
                     onClick={() =>
-                      api("/jobs/" + activeJob.id + "/cancel", {}).catch((e) =>
+                      api("/jobs/" + job.id + "/cancel", {}).catch((e) =>
                         notice(String(e)),
                       )
                     }
@@ -1852,7 +1927,7 @@ export default function App() {
                     {t("Stop job")}
                   </button>
                 </div>
-              )}
+              ))}
             </>
           )}
         </main>
@@ -1861,12 +1936,6 @@ export default function App() {
             music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []} copy={coverCopy}
             disabled={Boolean(activeJob) || activeAgent} musicUrl={musicUrl}
             onChange={saveSettings} onAddMusic={addMusic} />
-        </aside>}
-        {detail && step === "6" && <aside className="cover-inspector" aria-label={t("Cover setup")}>
-          <CoverSetup key={detail.id}
-            settings={{ ...(bootstrap?.defaults.step6 || {}), ...(detail.state.settings.step6 || {}) }}
-            library={bootstrap?.library} disabled={busy || activeAgent || Boolean(activeJob)}
-            onChange={saveCoverSetting} onEditStyles={() => openLibrary("cover_styles")} />
         </aside>}
         {detail && (
           <>
@@ -2135,6 +2204,11 @@ export default function App() {
                               })}
                         </option>
                         <option value="missing">{t("Missing segments")}</option>
+                        {Boolean(detail?.state.stale[step]?.segments.length) && (
+                          <option value="outdated">
+                            {t("Outdated segments · {count}", { count: detail!.state.stale[step].segments.length })}
+                          </option>
+                        )}
                         <option value="all">{t("Entire step")}</option>
                       </select>
                     </label>

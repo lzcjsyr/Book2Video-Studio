@@ -1,4 +1,4 @@
-import { FileText } from "lucide-react";
+import { FileText, Image, TerminalSquare } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
@@ -7,18 +7,29 @@ import type { LibraryCatalog, Settings } from "../types";
 const defaultSizes = { "16:9": "3200x1800", "9:16": "1800x3200", "4:3": "3000x2250", "3:4": "2250x3000", "1:1": "2500x2500" };
 
 /** The cover's creative choices, saved directly from its production page. */
-export default function CoverSetup({ settings, library, disabled, onChange, onEditStyles }: {
+export default function CoverSetup({ settings, library, disabled, onChange, onEditStyles, copy, agentMode }: {
   settings: Settings[string];
   library?: LibraryCatalog;
   disabled: boolean;
-  onChange: (key: string, value: string | number) => Promise<boolean>;
+  onChange: (key: string, value: string | number | string[]) => Promise<boolean>;
   onEditStyles: () => void;
+  copy: { title: string; subtitle: string };
+  agentMode: string;
 }) {
   const { t } = useI18n();
-  const sizes = settings.cover_image_size_presets;
-  const presets = sizes && typeof sizes === "object" && !Array.isArray(sizes) ? sizes : defaultSizes;
-  const size = String(settings.default_cover_image_size_key ?? "1:1");
+  const sizePresets = settings.cover_image_size_presets;
+  const presets = sizePresets && typeof sizePresets === "object" && !Array.isArray(sizePresets) ? sizePresets : defaultSizes;
+  // One generation makes every chosen size, each with its own candidates.
+  // Earlier settings named one size; generation reads them the same way (backend/runner.py).
+  const saved = settings.cover_image_size_keys;
+  const sizes = (Array.isArray(saved) && saved.length ? saved.map(String) : [String(settings.default_cover_image_size_key ?? "")])
+    .filter((ratio) => Object.hasOwn(presets, ratio));
+  function toggleSize(ratio: string) {
+    // Saved in the list's order, which is the order the covers are made in.
+    onChange("cover_image_size_keys", Object.keys(presets).filter((r) => r === ratio ? !sizes.includes(r) : sizes.includes(r)));
+  }
   const style = String(settings.cover_image_style ?? "");
+  const method = settings.cover_method === "agent" ? "agent" : "api";
   const styles = libraryChoices(library, "cover_styles");
   const count = Number(settings.cover_image_count ?? 1);
   const [countText, setCountText] = useState(String(count));
@@ -30,19 +41,32 @@ export default function CoverSetup({ settings, library, disabled, onChange, onEd
         <FileText size={13} /> {t("Edit cover styles")}
       </button>
     </div>
+    <div className="cover-methods" role="group" aria-label={t("Cover generation method")}>
+      {(["api", "agent"] as const).map((value) => <button type="button" key={value}
+        className={`cover-method${method === value ? " selected" : ""}`} aria-pressed={method === value}
+        disabled={disabled} onClick={() => onChange("cover_method", value)}>
+        {value === "api" ? <Image size={18} /> : <TerminalSquare size={18} />}
+        <span><strong>{t(value === "api" ? "Image API" : "Claude Code + HTML / Three.js")}</strong>
+          <small>{t(value === "api" ? "Generate cover candidates with your image provider." : "Design editable HTML covers with 3D scenes, then render PNGs.")}</small></span>
+      </button>)}
+    </div>
+    <div className="cover-copy"><span>{t("Selected cover copy")}</span><strong>{copy.title || t("Choose a cover title in Writing.")}</strong>
+      {copy.subtitle && <p>{copy.subtitle}</p>}<small>{t("Edit the title and subtitle in Writing.")}</small></div>
+    {method === "agent" && <p className="small-muted">{t("Uses the same Claude Code login and agent provider as Writing.")} {t(agentMode)}</p>}
     <div className="cover-setup-fields">
+      <fieldset className="cover-size-list" disabled={disabled}>
+        <legend>{t("Cover sizes")}</legend>
+        {Object.entries(presets).map(([ratio, dimensions]) => <label key={ratio} className="cover-size-choice">
+          <input type="checkbox" checked={sizes.includes(ratio)} onChange={() => toggleSize(ratio)}
+            disabled={sizes.length === 1 && sizes.includes(ratio)} />
+          <span>{ratio}</span>
+          <span className="cover-size-dimensions">{String(dimensions).replace(/[x×]/g, " × ")}</span>
+        </label>)}
+        {!sizes.length && <p className="small-muted">{t("No cover size is chosen, so covers use the video size.")}</p>}
+      </fieldset>
       <label className="field">
-        <span>{t("Cover size")}</span>
-        <select disabled={disabled} value={size} onChange={(e) => onChange("default_cover_image_size_key", e.target.value)}>
-          {!Object.hasOwn(presets, size) && <option value={size}>{t("Unavailable: {id}", { id: size })}</option>}
-          {Object.entries(presets).map(([ratio, dimensions]) => <option key={ratio} value={ratio}>
-            {ratio} · {String(dimensions).replace(/[x×]/g, " × ")}
-          </option>)}
-        </select>
-      </label>
-      <label className="field">
-        <span>{t("Cover candidates")}</span>
-        <input type="number" min={1} step={1} disabled={disabled} value={countText}
+        <span>{t("Cover candidates per size")}</span>
+        <input type="number" min={1} max={method === "agent" ? 20 : undefined} step={1} disabled={disabled} value={countText}
           onChange={(e) => setCountText(e.target.value)}
           onBlur={async (e) => {
             const next = Number(countText);
@@ -56,6 +80,8 @@ export default function CoverSetup({ settings, library, disabled, onChange, onEd
       </label>
     </div>
     <p className="small-muted">{t("Selections save automatically and apply when you generate covers.")}</p>
+    <details className="cover-styles-disclosure">
+      <summary>{t("Cover style")} · {t(styles.find((choice) => choice.id === style)?.label || style)}</summary>
     <fieldset className="cover-style-list" disabled={disabled}>
       <legend>{t("Cover style")}</legend>
       {!styles.some((choice) => choice.id === style) && <p className="small-muted">{t("Unavailable: {id}", { id: style })}</p>}
@@ -68,5 +94,6 @@ export default function CoverSetup({ settings, library, disabled, onChange, onEd
         </span>
       </label>)}
     </fieldset>
+    </details>
   </section>;
 }

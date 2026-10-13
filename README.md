@@ -37,7 +37,7 @@ The tab lists exactly which keys the open project needs for the whole production
 
 ### Claude Code: API key or subscription
 
-Writing and Visuals (motion segments) work with Claude Code in a terminal on the right; the other steps don't show it. **Settings → API keys → Claude Code** chooses how it runs:
+Writing, Visuals (motion segments), and Covers in HTML / Three.js mode work with Claude Code in a terminal on the right. **Settings → API keys → Claude Code** chooses how it runs:
 
 - **Built-in Claude Code · API key** (default): the copy bundled with Studio, connected to the language-model provider chosen for Writing and Motion.
 - **Your Claude Code · subscription:** the Claude Code installed on this computer, signed in with your Claude account, so your Claude plan covers those sessions and they need no key. Studio finds it (even when opened from the Finder), shows its version and sign-in, and starts it without any provider settings. Agent segmentation and the other background steps still use API keys.
@@ -138,7 +138,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 ### Claude Code：API 密钥或订阅
 
-写作和画面（动画段落）在右侧终端中与 Claude Code 协作，其他步骤不显示该终端。在 **设置 → API 密钥 → Claude Code** 中选择运行方式：
+写作、画面（动画段落），以及 HTML / Three.js 模式下的封面，在右侧终端中与 Claude Code 协作。在 **设置 → API 密钥 → Claude Code** 中选择运行方式：
 
 - **内置 Claude Code · API 密钥**（默认）：使用 Studio 自带的 Claude Code，连接写作和动画所选的语言模型服务商。
 - **你的 Claude Code · 订阅：** 使用本机安装的 Claude Code，并以你的 Claude 账号登录，这些会话由你的 Claude 订阅承担，无需密钥。Studio 会自动找到它（即使从访达打开），显示版本和登录状态，并在不带任何服务商设置的情况下启动它。智能体分段和其他后台步骤仍使用 API 密钥。
@@ -195,3 +195,13 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - **平台：** 目前只打包 Apple 芯片的 macOS。Intel Mac 和 Windows 需要在 `scripts/stage.mjs` 的 `PLATFORMS` 中添加对应条目，并提供 `.cmd` 形式的 HyperFrames 启动器；宿主代码与平台无关，但尚未在这些平台上测试。
 - **签名：** 需要用 Developer ID 和 Hardened Runtime 对所有内置可执行文件（Python 扩展、Node.js、Chrome、FFmpeg、Claude Code）签名并公证。未签名的构建每次重新编译后在 macOS 眼中都是新应用，文件夹访问权限的询问会再次出现。
 - **许可证：** [runtime/THIRD_PARTY_NOTICES.md](runtime/THIRD_PARTY_NOTICES.md) 列出了内置组件。FFmpeg（GPL-3.0）和 PyMuPDF（AGPL-3.0）要求提供其源代码；HyperFrames 0.8.150 采用 Apache-2.0 许可证，其图像库 sharp 附带的 libvips 采用 LGPL-3.0-or-later。本仓库目前还没有为自身代码添加许可证。
+
+### Covers: Image API or Claude Code + HTML / Three.js
+
+Step 6 starts with a method selector, selected cover copy, shared size/candidate controls, and cover styles. Existing projects default to Image API. In Claude Code mode, **New cover design** opens the same agent runtime and login used by Writing (including Writing’s provider/model in API-key mode). The agent composes separate HTML files for each size and candidate using local Three.js 0.160.0, then checks PNG snapshots with bundled Chrome. **Finish & render covers** publishes new PNG candidates to the existing gallery. **Revise HTML design** copies the previous design into a new session; **Render saved HTML** retries rendering without another agent call. Existing candidates and the selected cover are retained.
+
+HTML cover designs live in `.studio/cover-designs/<session>/`, with `studio-payload.json`, source HTML, local assets and `previews/`. Each HTML signals `window.__ready = true` only after its static scene, fonts and assets are ready. Studio screenshots exact requested pixel dimensions with device scale 1; missing assets or script errors fail the render before any final candidates are published. Changes to cover copy, sizes, candidate count or style require revising the design before rendering. Agent sessions run exclusively; API cover jobs can still run beside recordings, visuals or assembly.
+
+### 封面：图像 API 或 Claude Code + HTML / Three.js
+
+步骤 6 顶部可选择生成方式，并查看已选封面文案、尺寸、候选数量和风格。已有项目默认使用图像 API。Claude Code 模式沿用“写作”的智能体运行方式和登录；API 密钥模式也沿用写作的服务商及模型。新建设计后，智能体为各尺寸分别编写 HTML，使用本地 Three.js 和内置 Chrome 检查快照。点击“结束并渲染封面”后，PNG 候选进入原有画廊。“修改 HTML 设计”会复制上次的源码供修改；“渲染已保存的 HTML”可直接重试渲染。已有候选和已选封面都会保留。

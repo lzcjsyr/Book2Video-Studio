@@ -11,9 +11,9 @@ type AdcCheck = { ok?: boolean; checked?: string; project?: string; location?: s
 
 const claudeModes: { id: ClaudeCodeMode; title: string; description: string }[] = [
   { id: "api_key", title: "Built-in Claude Code · API key",
-    description: "Studio's own Claude Code, connected to the language-model provider chosen for Writing and Motion. Uses the keys below." },
+    description: "Studio's own Claude Code, connected to the language-model providers chosen for Writing, Motion and HTML covers. Uses the keys below." },
   { id: "subscription", title: "Your Claude Code · subscription",
-    description: "The Claude Code installed on this computer, signed in with your Claude account. Your Claude plan covers Writing and Motion sessions; they need no key." },
+    description: "The Claude Code installed on this computer, signed in with your Claude account. Your Claude plan covers Writing, Motion and HTML cover sessions; they need no key." },
 ];
 
 /** Which Claude Code runs the Writing and Motion sessions, and whether the installed one is signed in. */
@@ -102,7 +102,7 @@ function GoogleLoginCheck({ settings, needs }: { settings?: Settings | null; nee
   useEffect(() => {
     api<AdcCheck>("/google-adc").then(setLast).catch(() => {});
   }, []);
-  const uses = needs.filter((n) => n.key === null && (n.id === "images" || n.id === "covers")).map((n) => t(n.use));
+  const uses = needs.filter((n) => n.provider === "google_adc").map((n) => t(n.use));
   const models = settings ? adcModels(settings) : [];
   const check = async () => {
     setChecking(true);

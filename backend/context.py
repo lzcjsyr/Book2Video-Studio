@@ -8,8 +8,8 @@ from pathlib import Path
 
 def prepare(studio, project, body):
     step = body["step"]
-    if step not in {"1", "4"}:
-        raise ValueError("Interactive agents are available for Writing and Visuals.")
+    if step not in {"1", "4", "6"}:
+        raise ValueError("Interactive agents are available for Writing, Visuals and Covers.")
     state = studio.state(project)
     settings = studio.defaults()
     for key, value in state.get("settings", {}).items():
@@ -38,6 +38,52 @@ def prepare(studio, project, body):
         prompt += "\nStudio file locations (these override any other path in the skill, its references or scripts): your working directory is the project folder " + str(project) + ". Save every intermediate file (_extract.txt/.md, _coverage_ledger.json, _angle_brief.json, _draft_v1.txt, _draft_final.txt, _revision_audit.json, _title_quote_candidates.json and similar) in " + str(project / "text") + ". Wherever the skill or a reference says output/<project>/text/..., use " + str(project / "text") + "/... instead, and never create an output/ folder. The only place for the final manuscript is " + str(project / "text/raw.json") + ". Use the `python` command for text extraction and for any validation script: it is bundled with PyMuPDF, pdfplumber, ebooklib, mobi, python-docx and PyYAML. Do not install packages or use other Python installations.\n"
         opening_enabled = settings.get("global", {}).get("opening_quote", True)
         prompt += "\nOpening quote playback is " + ("enabled" if opening_enabled else "disabled") + ". Store any opening quote candidates separately in golden_quotes; do not prepend them to content. When enabled, the app plays the selected quote before the body. When disabled, the app starts with the body and may retain unused candidates. The GUI controls this project setting.\n"
+    elif step == "6":
+        import covers
+        from server import cover_copy, read_json
+        if settings.get("step6", {}).get("cover_method", "api") != "agent":
+            raise ValueError("Choose Claude Code + HTML / Three.js in Cover setup first.")
+        raw = read_json(project / "text/raw.json", {})
+        script = read_json(project / "text/script.json", {})
+        # The manuscript is authoritative; segmentation may not exist yet.
+        title, subtitle = cover_copy(raw if raw.get("content") else script)
+        if not title:
+            raise ValueError("Choose a cover title in Writing before designing covers.")
+        style = studio.library.item("cover_styles", settings.get("step6", {}).get("cover_image_style", "cover01"))
+        design = covers.prepare(project, settings, session, state.get("cover_design") if body.get("revise") else None, copy=(title, subtitle))
+        cwd = project / design["folder"]
+        scope = "Covers · HTML / Three.js"
+        payload = {"title": title, "subtitle": subtitle, "source": raw.get("source_name", ""),
+                   "manuscript": raw.get("content", ""), "style": style, "entries": design["entries"]}
+        (cwd / "studio-payload.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        prompt = f"""You design static video covers interactively with the user using HTML, CSS and Three.js.
+Use HTML for crisp editable typography and Three.js for lighting, geometry, depth and procedural imagery when they suit the concept.
+The selected cover title and subtitle are exact copy, not suggestions. Do not invent claims or change the copy unless the user requests it.
+Read studio-payload.json for the manuscript, selected style and all required outputs. The selected style is creative direction; adapt it to HTML/Three.js.
+Create a distinct candidate for every entry below, composing each aspect ratio independently rather than cropping a landscape cover.
+Work only in {cwd}. Existing project covers and all narration/visual/video files must remain untouched.
+
+Required HTML files and final pixel dimensions:
+{json.dumps(design['entries'], ensure_ascii=False, indent=2)}
+
+Each HTML must fill the browser viewport exactly (devicePixelRatio is 1), with no scrolling or overflow.
+Use a static deterministic scene. Set window.__ready = false immediately, await fonts, images, textures and the final Three.js render,
+then set window.__ready = true. Do not set it early. Use preserveDrawingBuffer: true and renderer.setPixelRatio(1).
+Stop all animation loops before readiness; screenshots must be repeatable. Keep large Chinese text readable and away from the edges.
+Three.js 0.160.0 is bundled locally. Use this import map (no CDN or npm install):
+<script type="importmap">{{"imports":{{"three":"./vendor/three/build/three.module.js","three/addons/":"./vendor/three/examples/jsm/"}}}}</script>
+Use installed system fonts, or save any chosen font/image assets in this design folder and reference them relatively.
+The renderer serves the folder over loopback HTTP, supports ES modules and uses bundled Chrome with WebGL.
+
+After saving ALL HTML files run `python render.py`. This saves full-resolution preview PNGs under previews/ using Studio's renderer.
+Inspect every PNG, fix clipping, missing glyphs, blank WebGL canvases and composition problems, then rerender as needed.
+Do not edit design.json or render.py, install packages, generate images via an image API or write PNGs to the project root.
+When ready, tell the user they can click **Finish & render covers** (or type /exit) to produce the final cover candidates.
+Wait interactively for their revisions. Studio handles rendering final PNGs and the cover gallery after the session ends.
+"""
+        if body.get("revise"):
+            prompt += "\nThis session revises a copy of the previous HTML design. Preserve its concept unless the user asks for a new direction. Previously rendered cover candidates remain available.\n"
+        launch_design = design
     else:
         from core.infra.hyperframes.runtime import HYPERFRAMES_CLI_VERSION
         from core.infra.hyperframes.skill_loader import build_step4_hyperframes_skill_path_context
@@ -68,7 +114,7 @@ def prepare(studio, project, body):
             payload = {"segmentIndex": segment["index"], "index": segment["index"], "title": segment.get("title") or f"Segment {segment['index']}", "content": segment["content"], "durationSeconds": seconds, "width": width, "height": height, "stylePreset": style, "descriptionSummary": summary.get("summary", "")}
             (work / "studio-payload.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
             template = (studio.library_root / "prompts/step4_hyperframes_agent.md").read_text()
-            part = template.format(skill_path_context=build_step4_hyperframes_skill_path_context(studio.library_root / "skills/step4/hyperframes"), style_preset=style, style_context=build_step4_hyperframes_style_context(style, skills_root=studio.library_root / "skills/step4"), payload_json=json.dumps(payload, ensure_ascii=False, indent=2), target_index_html_path=str(work / "index.html"))
+            part = template.format(skill_path_context=build_step4_hyperframes_skill_path_context(studio.library_root / "skills/step4/hyperframes-core"), style_preset=style, style_context=build_step4_hyperframes_style_context(style, skills_root=studio.library_root / "skills/step4"), payload_json=json.dumps(payload, ensure_ascii=False, indent=2), target_index_html_path=str(work / "index.html"))
             # Studio reads this segment's work from one folder: the composition and the keyframes it previews.
             part += (f"\n\n### Studio 工作目录（段落 {segment['index']}）\n\n"
                      f"- 本段所有文件只放在 `{work}` 内：`index.html`、`snapshots/`，以及你需要的辅助文件。\n"
@@ -110,6 +156,8 @@ def prepare(studio, project, body):
     # Projects can live anywhere; the launch names the project by its service id.
     launch = {"id": session, "project": studio.project_id(project), "step": step, "cwd": str(cwd), "context": str(prompt_path), "scope": scope,
               "args": ["--session-id", session, "--append-system-prompt-file", str(prompt_path), "--add-dir", *dict.fromkeys(directories)]}
+    if step == "6":
+        launch["cover_design"] = launch_design
     # Keep the prompt in a file for history; no API credentials are written here.
     (context_dir / "launch.json").write_text(json.dumps(launch, ensure_ascii=False, indent=2))
     return launch

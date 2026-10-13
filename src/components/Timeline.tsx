@@ -70,6 +70,20 @@ export default function Timeline({
       </>
     );
   }
+  // Outdated parts are marked on their own track: the visual (step 4) or the recording (step 3).
+  const outdated = (stage: "3" | "4", index: number) => {
+    const stale = detail.state.stale[stage];
+    return stale && (!stale.segments.length || stale.segments.includes(index)) ? stale.reason : null;
+  };
+  const marks = (index: number) => {
+    const visual = outdated("4", index), voice = outdated("3", index);
+    return {
+      thumb: `timeline-thumb${visual ? " outdated" : ""}`,
+      thumbTitle: visual ? t(visual) : undefined,
+      voice: voice ? " outdated" : "",
+      voiceTitle: voice ? t(voice) : undefined,
+    };
+  };
   const pick = (index: number, e: React.MouseEvent<HTMLButtonElement>) => {
     onSelect(index);
     onPick?.(index, (e.currentTarget.querySelector(".timeline-thumb") || e.currentTarget).getBoundingClientRect());
@@ -124,12 +138,13 @@ export default function Timeline({
               aria-label={t("Select opening")}
             >
               <span className="timeline-ruler">00:00</span>
-              <span className="timeline-thumb">
+              <span className={marks(0).thumb} title={marks(0).thumbTitle}>
                 {thumb({ ...detail.opening, motion: null }, true)}
                 <span className="clip-number">{t("Opening")}</span>
               </span>
               <span
-                className={`voice-clip ${detail.opening.audio ? "available" : ""}`}
+                className={`voice-clip ${detail.opening.audio ? "available" : ""}${marks(0).voice}`}
+                title={marks(0).voiceTitle}
               >
                 <Music2 size={13} />
                 <span>
@@ -151,13 +166,13 @@ export default function Timeline({
               aria-label={t("Select segment {index}", { index: s.index })}
             >
               <span className="timeline-ruler">{formatTime(offsets[i])}</span>
-              <span className="timeline-thumb">
+              <span className={marks(s.index).thumb} title={marks(s.index).thumbTitle}>
                 {thumb(s)}
                 <span className="clip-number">
                   {String(s.index).padStart(2, "0")}
                 </span>
               </span>
-              <span className={`voice-clip ${s.audio ? "available" : ""}`}>
+              <span className={`voice-clip ${s.audio ? "available" : ""}${marks(s.index).voice}`} title={marks(s.index).voiceTitle}>
                 <Music2 size={13} />
                 <span>
                   {s.duration

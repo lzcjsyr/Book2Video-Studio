@@ -90,7 +90,9 @@ export function keyNeeds(settings: Settings, { motion = false, subscription = fa
     model("direction", "Content summary", "step4_summary"),
     ...(motion ? [agent("motion_agent", "Motion agent (Claude Code)", "step4")] : []),
     image("images", "Segment and opening images", imageServer),
-    image("covers", "Covers", value("step6", "cover_image_server") || imageServer),
+    value("step6", "cover_method") === "agent"
+      ? agent("covers", "Cover agent (Claude Code)", "step1")
+      : image("covers", "Covers", value("step6", "cover_image_server") || imageServer),
   ];
 }
 
@@ -108,7 +110,7 @@ export function adcModels(settings: Settings): string[] {
   const imageServer = value("step4", "image_server");
   const models = [
     imageServer === "google_adc" ? value("step4", "image_model") : "",
-    (value("step6", "cover_image_server") || imageServer) === "google_adc" ? value("step6", "cover_image_model") : "",
+    value("step6", "cover_method") !== "agent" && (value("step6", "cover_image_server") || imageServer) === "google_adc" ? value("step6", "cover_image_model") : "",
   ];
   return [...new Set(models.filter(Boolean))];
 }

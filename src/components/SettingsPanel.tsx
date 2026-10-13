@@ -295,6 +295,8 @@ export default function SettingsPanel({
                     imageServiceChoices,
                   )}
                   {field("step4", "image_model", t("Image model"))}
+                  {settings.step4?.image_server === "doubao" &&
+                    field("step4", "seedream_max_concurrent_image_generation", t("Seedream images at once"), undefined, false, "Only for Volcengine Seedream. Raise it within your account's rate limit.")}
                   {field("step4", "image_style_preset", t("Image style"), libraryChoices(bootstrap.library, "image_styles"))}
                   {field("step4", "image_prompt_template", t("Image prompt"), libraryChoices(bootstrap.library, "image_templates"))}
                   {field("hyperframes_opening", "ip_name", t("Opening masthead"))}
@@ -331,6 +333,8 @@ export default function SettingsPanel({
                   "H.264 plays everywhere; HEVC makes smaller files.")}
               </div>
               {step(6, "Covers")}
+              <p className="small-muted settings-note">{t("Choose Image API or Claude Code + HTML / Three.js on the Covers page. The cover agent uses Writing's provider and the same Claude Code login.")}</p>
+              {settings.step6?.cover_method !== "agent" && <>
               <div className="form-grid">
                 {field(
                   "step6",
@@ -341,6 +345,7 @@ export default function SettingsPanel({
                 {field("step6", "cover_image_model", t("Cover model ID"))}
               </div>
               {modelWarning("step6", "cover_image_server", "cover_image_model")}
+              </>}
               <p className="small-muted">
                 {t(
                   "Manage provider credentials in the API keys tab. Each job uses a saved copy of these production settings.",
