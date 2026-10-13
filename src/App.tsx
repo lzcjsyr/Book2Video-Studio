@@ -69,6 +69,7 @@ import BrandMark from "./components/BrandMark";
 import WritingSetup from "./components/WritingSetup";
 import VisualDirection from "./components/VisualDirection";
 import CoverSetup from "./components/CoverSetup";
+import AssemblyEditing from "./components/AssemblyEditing";
 import AssemblySetup from "./components/AssemblySetup";
 import SegmentEditor from "./components/SegmentEditor";
 import { writingOptions, sameWriting, type WritingOptions } from "./writing";
@@ -439,7 +440,8 @@ export default function App() {
   if (writing) keySettings.step1 = { ...keySettings.step1, llm_server: writing.llm_server };
   const coverAgent = keySettings.step6?.cover_method === "agent";
   // The pane stays mounted elsewhere so a running session survives navigation.
-  const agentStep = step === "1" || step === "4" || (step === "6" && coverAgent);
+  const assemblyAgent = keySettings.step5?.assembly_method === "agent";
+  const agentStep = (step === "5" && assemblyAgent) || step === "1" || step === "4" || (step === "6" && coverAgent);
   const agentShown = agentStep && agentVisible;
   const hasMotion = Boolean(detail?.segments.some((s) => s.visualizer === "hf"));
   const missingKeys = detail ? unmet(keyNeeds(keySettings, { motion: true, subscription: claudeMode === "subscription" }), keyStatus?.saved) : [];
@@ -562,7 +564,7 @@ export default function App() {
       notice("Save changes before activating the agent.");
       return;
     }
-    if (!keysReady([step === "1" ? "writing" : step === "6" ? "covers" : "motion_agent"])) return;
+    if (!keysReady([step === "1" ? "writing" : step === "6" ? "covers" : step === "5" ? "assembly_agent" : "motion_agent"])) return;
     if (step === "4" && indices?.includes(0)) {
       notice(
         "Generate the opening through Visuals; the motion agent works on narration segments.",
@@ -614,6 +616,10 @@ export default function App() {
                   : `Rendering ${composed.length} segments from Claude Code's compositions…`);
               })
               .catch((e) => notice(String(e)));
+          if (d.finished?.step === "5" && !d.warning && d.assembly_edit?.valid && d.assembly_edit.changed)
+            api<Job>(projectRoute(d.id) + "/job", { step: "5", mode: "edit_render" })
+              .then((job) => { setJobs((jobs) => [...jobs, job]); notice("Rendering the polished video from the saved edit…"); })
+              .catch((e) => notice(String(e)));
           if (d.finished?.step === "6" && !d.warning && d.cover_design?.complete)
             api<Job>(projectRoute(d.id) + "/job", { step: "6", mode: "cover_render" })
               .then((job) => {
@@ -645,7 +651,7 @@ export default function App() {
         queue.current = order
           .slice(order.indexOf(step) + 1)
           .filter((s) => !(s === "6" && ["3", "4", "5"].includes(step)));
-      if (step === "1" || (step === "6" && coverAgent)) {
+      if (step === "1" || (step === "6" && coverAgent) || (step === "5" && assemblyAgent)) {
         setModal(null);
         await activate();
         return;
@@ -735,7 +741,15 @@ export default function App() {
     return saved;
   }
   const saveCoverSetting = (key: string, value: string | number | string[]) => saveSettings("step6", { [key]: value });
-  /** Redraw only the 3:4 copy around the current 16:9 video (Generate makes both). */
+  async function startEditingJob(mode: "edit_render" | "edit_preview") {
+    if (!detail) return;
+    await action(async () => {
+      const job = await api<Job>(projectRoute(detail.id) + "/job", { step: "5", mode });
+      setJobs((jobs) => [...jobs, job]);
+      notice(mode === "edit_preview" ? "Rendering an editing preview…" : "Rendering the polished video from the saved edit…");
+    });
+  }
+  /** Redraw only the 3:4 copy around the current 16:9 video. */
   async function buildPortrait() {
     if (!detail) return;
     await action(async () => {
@@ -1313,7 +1327,7 @@ export default function App() {
                     className="button small"
                     disabled={busy || Boolean(activeJob) || activeAgent}
                     onClick={() => {
-                      if (step === "6" && coverAgent) {
+                      if ((step === "6" && coverAgent) || (step === "5" && assemblyAgent)) {
                         activate();
                         return;
                       }
@@ -1327,7 +1341,7 @@ export default function App() {
                       setModal("generate");
                     }}
                   >
-                    <RefreshCw size={13} /> {t(step === "6" && coverAgent ? "New cover design" : "Generate")}
+                    <RefreshCw size={13} /> {t(step === "6" && coverAgent ? "New cover design" : step === "5" && assemblyAgent ? "New video edit" : "Generate")}
                   </button>
                 </div>
               </div>
@@ -1431,6 +1445,12 @@ export default function App() {
                   />
                 ) : (
                   <div className={`media-workspace${step === "4" ? " visuals-workspace" : step === "6" ? " covers-workspace" : ""}`}>
+                    {step === "5" && <AssemblyEditing settings={step5Settings} edit={detail.assembly_edit} library={bootstrap?.library}
+                      active={detail.state.agent_active?.step === "5"} locked={busy || unsaved || Boolean(activeJob) || (activeAgent && detail.state.agent_active?.step !== "5")}
+                      onChange={(patch) => saveSettings("step5", patch)} onDesign={(revise) => activateFor(undefined, undefined, revise)}
+                      onFinish={() => agentHandle.current?.stop()} onLibrary={() => openLibrary("assembly_skills")}
+                      mediaUrl={(path) => media(detail.id, path, version)}
+                      onPreview={() => startEditingJob("edit_preview")} onRender={() => startEditingJob("edit_render")} />}
                     {step === "6" && <>
                       <CoverSetup key={detail.id} settings={keySettings.step6 || {}} library={bootstrap?.library}
                         disabled={busy || activeAgent || Boolean(activeJob)} copy={coverCopy}
@@ -1797,6 +1817,10 @@ export default function App() {
                               : t("Estimated")}
                       </span>
                     </div>
+                        {step === "5" && assemblyAgent && <details className="agent-assembly-settings"><summary>{t("Assembly setup")}</summary>
+                      <AssemblySetup key={detail.id} step5={step5Settings} panels={panelSettings} music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []}
+                        copy={coverCopy} disabled={Boolean(activeJob) || activeAgent} musicUrl={musicUrl} onChange={saveSettings} onAddMusic={addMusic} />
+                    </details>}
                     {["3", "4"].includes(step) && (
                       <div className="narration-inspector">
                         <div className="narration-heading">
@@ -1931,7 +1955,7 @@ export default function App() {
             </>
           )}
         </main>
-        {detail && step === "5" && <aside className="cover-inspector" aria-label={t("Assembly setup")}>
+        {detail && step === "5" && !assemblyAgent && <aside className="cover-inspector" aria-label={t("Assembly setup")}>
           <AssemblySetup key={detail.id} step5={step5Settings} panels={panelSettings}
             music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []} copy={coverCopy}
             disabled={Boolean(activeJob) || activeAgent} musicUrl={musicUrl}

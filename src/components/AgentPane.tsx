@@ -175,7 +175,7 @@ export default function AgentPane({
           <span className={running ? "status-dot live" : "status-dot"} />
           <span>{running ? t("Interactive session") : t("Step agent")}</span>
           <span className="muted">
-            {(launch?.scope && t(launch.scope)) || (step === "1" ? t("Writing") : step === "6" ? t("Covers") : target || t("Visuals"))}
+            {(launch?.scope && t(launch.scope)) || (step === "1" ? t("Writing") : step === "6" ? t("Covers") : step === "5" ? t("Assembly") : target || t("Visuals"))}
           </span>
         </div>
         <p className="small-muted agent-mode">
@@ -199,7 +199,9 @@ export default function AgentPane({
             </h3>
             <p>
               {t(
-                step === "6"
+                step === "5"
+                  ? "Your recordings, visuals and editing skill are prepared. Direct Claude Code to polish the video here."
+                  : step === "6"
                   ? "Your cover copy, sizes and style are prepared. Direct Claude Code to design covers in HTML and Three.js here."
                   : directWriting
                   ? "Your writing skill is prepared. Give Claude Code your topic and requirements here; no source document is needed."

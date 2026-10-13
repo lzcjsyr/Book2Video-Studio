@@ -55,7 +55,7 @@ export const imageModelFor = (server: string, model: string) =>
   imageModelFits(server, model) ? model : imageServiceChoices.find((c) => c.id === server)!.model;
 export const providerName = (key: string) => keyProviders.find((p) => p.key === key)?.name || key;
 
-export type NeedId = "writing" | "segments" | "voice" | "direction" | "motion_agent" | "images" | "covers";
+export type NeedId = "writing" | "segments" | "voice" | "direction" | "motion_agent" | "images" | "covers" | "assembly_agent";
 export interface KeyNeed {
   id: NeedId;
   use: string;
@@ -89,6 +89,7 @@ export function keyNeeds(settings: Settings, { motion = false, subscription = fa
     { id: "voice", use: "Voice", provider: "bytedance", key: "BYTEDANCE_TTS_API_KEY" },
     model("direction", "Content summary", "step4_summary"),
     ...(motion ? [agent("motion_agent", "Motion agent (Claude Code)", "step4")] : []),
+    ...(value("step5", "assembly_method") === "agent" ? [agent("assembly_agent", "Assembly agent (Claude Code)", "step1")] : []),
     image("images", "Segment and opening images", imageServer),
     value("step6", "cover_method") === "agent"
       ? agent("covers", "Cover agent (Claude Code)", "step1")

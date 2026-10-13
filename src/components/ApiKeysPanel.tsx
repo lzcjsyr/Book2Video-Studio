@@ -11,9 +11,9 @@ type AdcCheck = { ok?: boolean; checked?: string; project?: string; location?: s
 
 const claudeModes: { id: ClaudeCodeMode; title: string; description: string }[] = [
   { id: "api_key", title: "Built-in Claude Code · API key",
-    description: "Studio's own Claude Code, connected to the language-model providers chosen for Writing, Motion and HTML covers. Uses the keys below." },
+    description: "Studio's own Claude Code, connected to the language-model providers chosen for Writing, Motion, Assembly and HTML covers. Uses the keys below." },
   { id: "subscription", title: "Your Claude Code · subscription",
-    description: "The Claude Code installed on this computer, signed in with your Claude account. Your Claude plan covers Writing, Motion and HTML cover sessions; they need no key." },
+    description: "The Claude Code installed on this computer, signed in with your Claude account. Your Claude plan covers Writing, Motion, Assembly and HTML cover sessions; they need no key." },
 ];
 
 /** Which Claude Code runs the Writing and Motion sessions, and whether the installed one is signed in. */
@@ -49,7 +49,7 @@ function ClaudeCodeSection({ mode, onMode }: { mode: ClaudeCodeMode; onMode?: (m
   return (
     <section className="credential-group claude-code-modes" aria-labelledby="claude-code-title">
       <h4 id="claude-code-title"><TerminalSquare size={15} /> {t("Claude Code")}</h4>
-      <p className="small-muted">{t("Runs the interactive Writing and Motion sessions.")}</p>
+      <p className="small-muted">{t("Runs the interactive Writing, Motion, Assembly and HTML cover sessions.")}</p>
       <div className="mode-options" role="radiogroup" aria-labelledby="claude-code-title">
         {claudeModes.map((option) => (
           <label key={option.id} className={`mode-option ${mode === option.id ? "selected" : ""}`}>

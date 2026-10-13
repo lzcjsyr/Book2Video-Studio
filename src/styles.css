@@ -4228,3 +4228,14 @@ code {
   .cover-methods { grid-template-columns: minmax(0, 1fr); }
   .covers-workspace .cover-setup-fields { grid-template-columns: minmax(0, 1fr); }
 }
+
+.assembly-editing { padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+.editing-skill-row { display: flex; align-items: flex-end; gap: 12px; }
+.editing-skill-row .field { flex: 1; max-width: 320px; margin: 0; }
+.assembly-editing > p { line-height: 1.6; margin: 12px 0; }
+.editing-preview { margin-top: 16px; }
+.editing-preview > summary, .agent-assembly-settings > summary { cursor: pointer; font-size: var(--fs-s); color: var(--text-2); }
+.editing-preview video { display: block; width: 100%; max-height: 400px; margin-top: 12px; background: #000; }
+.editing-preview img { display: block; max-width: 100%; margin-top: 10px; }
+.agent-assembly-settings { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.agent-assembly-settings .assembly-setup { padding-left: 0; padding-right: 0; }

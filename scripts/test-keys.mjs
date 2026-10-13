@@ -70,3 +70,11 @@ test("HTML cover agents use Writing's provider or Claude subscription and omit c
   assert.equal(keyNeeds(agent, { subscription: true }).find((n) => n.id === "covers").key, null);
   assert.deepEqual(adcModels(agent), []);
 });
+
+
+test("Assembly editing uses Writing's model key or the Claude subscription", () => {
+  const edit = { ...settings, step5: { assembly_method: "agent" } };
+  assert.equal(keyNeeds(edit).find((n) => n.id === "assembly_agent").key, "DEEPSEEK_API_KEY");
+  assert.equal(keyNeeds(edit, { subscription: true }).find((n) => n.id === "assembly_agent").key, null);
+  assert.equal(keyNeeds({ ...settings, step5: { assembly_method: "standard" } }).some((n) => n.id === "assembly_agent"), false);
+});

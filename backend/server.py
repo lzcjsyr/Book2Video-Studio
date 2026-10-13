@@ -24,6 +24,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 from library import Library, LibraryConflict, install_bundled
 import takes
 import covers as cover_designs
+import editing
+import exports
 
 STAGES = ["1", "2", "3", "4", "5", "6"]
 # The CLI engine numbers Segments 1.5 and keeps the content summary (part of step 4 here) as its
@@ -33,7 +35,7 @@ DESKTOP_SECTIONS = {engine: desktop for desktop, engine in ENGINE_SECTIONS.items
 SETTINGS_SECTIONS = {"global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "hyperframes_opening"}
 STATE_LAYOUT = 2
 # Which service or model makes the next output. Changing one leaves finished work current.
-PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method"}
+PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill"}
 LINKS_FILE = "projects.json"
 HIDDEN_FILE = "hidden-projects.json"
 GOOGLE_CHECK_FILE = "google-adc-check.json"
@@ -49,7 +51,7 @@ TYPE_REASONS = {"Visual type changed", RENDER_REASON}
 TEXT_FILES = {"raw": "raw.json", "script": "script.json", "summary": "mini_summary.json"}
 METADATA_FIELDS = ("video_titles", "cover_titles", "cover_subtitles", "golden_quotes")
 # Settings the desktop keeps for itself; the engine's configuration rejects unknown keys.
-DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step6": {"cover_method"}}
+DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step6": {"cover_method"}, "step5": {"assembly_method", "agent_skill"}}
 # Covers are drawn by an image service from the text alone and write only cover files, so a cover job
 # runs beside the jobs that leave the text as it is: recordings, visuals and assembly.
 BESIDE_COVERS = {"3", "4", "5"}
@@ -222,10 +224,18 @@ class Studio:
         self.credentials = {}
         # A terminal lease belongs to this service instance; recover after an app crash.
         for path in (root / ".studio/state.json" for root in self.roots()):
+            recovery_error = False
+            try:
+                exports.recover(path.parents[1])
+            except (OSError, ValueError, KeyError, TypeError):
+                recovery_error = True
             try:
                 state = read_json(path, {})
             except OSError:
                 continue  # Unreadable (for example, folder access was not granted); listed as such.
+            if recovery_error:
+                state.setdefault("stale", {})["5"] = {"reason": "Export recovery needs review. Previous backups are retained.", "segments": []}
+                atomic_json(path, state)
             active = state.get("agent_active")
             if active:
                 try:
@@ -455,6 +465,9 @@ class Studio:
         import yaml
         data = yaml.safe_load((self.engine / "config.yaml" if (self.engine / "config.yaml").exists() else self.engine / "config.example.yaml").read_text())
         sections = {DESKTOP_SECTIONS.get(k, k): v for k, v in data.items() if isinstance(v, dict)}
+        if "step5" in sections:
+            sections["step5"].setdefault("assembly_method", "standard")
+            sections["step5"].setdefault("agent_skill", editing.STYLES[0])
         if "step6" in sections:
             sections["step6"].setdefault("cover_method", "api")
         return {k: v for k, v in sections.items() if k in SETTINGS_SECTIONS}
@@ -755,8 +768,15 @@ class Studio:
             for section, fields in state.get("settings", {}).items():
                 settings.setdefault(section, {}).update(fields)
             cover_design = cover_designs.detail(p, state.get("cover_design"), settings, cover_copy(raw if raw.get("content") else script))
-            revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design], sort_keys=True).encode()).hexdigest()
-            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio)}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
+            assembly_edit = None
+            if state.get("assembly_edit"):
+                try:
+                    edit_source = editing.source(self, p, settings)
+                except (ValueError, OSError, KeyError):
+                    edit_source = {}
+                assembly_edit = editing.detail(p, state["assembly_edit"], edit_source)
+            revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design, assembly_edit], sort_keys=True).encode()).hexdigest()
+            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio)}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
 
     @staticmethod
     def beside(a, b):
@@ -1146,6 +1166,8 @@ class Studio:
             revised = [f for index, work in folders.items() if index not in created for f in work.rglob("*")]
             self.snapshot(p, list((p / "text").glob("*")) if body["step"] == "1" else revised + [p / "text/script.json"], f"Before Claude Code · step {body['step']}")
             state = self.state(p)
+            if body["step"] == "5":
+                state["assembly_edit"] = launch["assembly_edit"]
             if body["step"] == "6":
                 state["cover_design"] = launch["cover_design"]
             for index, work in folders.items():
@@ -1182,17 +1204,23 @@ class Studio:
                         raw["total_length"] = len(raw["content"])
                         atomic_json(target, raw)
                 state.pop("agent_active", None)
+                if active["step"] == "5":
+                    info = editing.detail(p, state.get("assembly_edit"))
+                    warning = info.get("problem") if info else "Save an editing plan before rendering."
                 if active["step"] == "6":
                     info = cover_designs.detail(p, state.get("cover_design"))
                     warning = None if info and info["complete"] else "Save every cover HTML design with Claude Code before rendering."
-                if active["step"] == "6":
+                if active["step"] == "5" and info and info["changed"]:
+                    state["stale"]["5"] = {"reason": warning or "Render the saved edit to review the polished video.", "segments": []}
+                    state["reviewed"].pop("5", None)
+                elif active["step"] == "6":
                     state["stale"]["6"] = {"reason": warning or "Render the saved HTML designs to review the new covers.", "segments": []}
                     state["reviewed"].pop("6", None)
-                elif active["step"] != "1" or active.get("raw_before") != fingerprint(p / "text/raw.json"):
+                elif active["step"] != "5" and (active["step"] != "1" or active.get("raw_before") != fingerprint(p / "text/raw.json")):
                     self.invalidate(state, active["step"], active["indices"])
                 if warning:
                     state["stale"][active["step"]] = {"reason": warning, "segments": []}
-                elif active["step"] != "6":
+                elif active["step"] not in {"5", "6"}:
                     state["stale"].pop(active["step"], None)
                 if active["step"] == "4":
                     indices = active["indices"] or list(map(int, active.get("takes", {})))
@@ -1232,8 +1260,16 @@ class Studio:
                 raise ValueError("Step 1 runs interactively through Activate Claude Code.")
             if step == "4" and body.get("mode") not in {"static", "render", "opening", "opening_render", "summary"}:
                 raise ValueError("Animated generation runs through the interactive Claude Code terminal.")
-            if step == "5" and body.get("mode") not in {None, "three_by_four"}:
+            if step == "5" and body.get("mode") not in {None, "three_by_four", "edit_render", "edit_preview"}:
                 raise ValueError("Unknown assembly action.")
+            if step == "5" and body.get("mode") in {"edit_render", "edit_preview"}:
+                info = self.detail(project_id).get("assembly_edit")
+                if not info or not info["valid"]:
+                    raise ValueError(info.get("problem") if info else "Save an editing plan before rendering.")
+                if not info["current"]:
+                    raise ValueError("Assembly sources or settings changed. Revise the edit before rendering.")
+            if step == "5" and body.get("mode") is None and self.state(p).get("settings", {}).get("step5", {}).get("assembly_method") == "agent":
+                raise ValueError("Edit the video through the interactive Claude Code terminal.")
             if step == "6":
                 if body.get("mode") not in {None, "cover_render"}:
                     raise ValueError("Unknown cover action.")
@@ -1299,12 +1335,18 @@ class Studio:
                 paths += [p / "text/mini_summary.json", p / "text/raw.docx"]
             if step == "5":
                 paths = [p / "final_video_3x4.mp4"] if body.get("mode") == "three_by_four" else list(p.glob("final_video*.mp4"))
+                if body.get("mode") == "edit_render":
+                    paths += [p / "final_video.srt", p / "final_video.qa.json"]
                 paths = [f for f in paths if f.is_file()]
             if step == "6":
                 paths = list(p.glob("cover_*"))
+            if step == "5" and body.get("mode") == "edit_preview":
+                paths = []
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
                        "music_dir": str(self.music_root)}
+            if step == "5" and body.get("mode") in {"edit_render", "edit_preview"}:
+                request["assembly_edit"] = self.state(p)["assembly_edit"]
             if step == "6" and body.get("mode") == "cover_render":
                 request["cover_design"] = self.state(p)["cover_design"]
             if step == "4" and body.get("mode") == "render":
@@ -1360,6 +1402,9 @@ class Studio:
             if job.get("mode") == "summary":
                 if direction:
                     self.direction_changed(state)
+                self.persist(p, state)
+                return
+            if job.get("mode") == "edit_preview":
                 self.persist(p, state)
                 return
             if job["status"] != "succeeded":

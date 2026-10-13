@@ -8,8 +8,8 @@ from pathlib import Path
 
 def prepare(studio, project, body):
     step = body["step"]
-    if step not in {"1", "4", "6"}:
-        raise ValueError("Interactive agents are available for Writing, Visuals and Covers.")
+    if step not in {"1", "4", "5", "6"}:
+        raise ValueError("Interactive agents are available for Writing, Visuals, Assembly and Covers.")
     state = studio.state(project)
     settings = studio.defaults()
     for key, value in state.get("settings", {}).items():
@@ -38,6 +38,12 @@ def prepare(studio, project, body):
         prompt += "\nStudio file locations (these override any other path in the skill, its references or scripts): your working directory is the project folder " + str(project) + ". Save every intermediate file (_extract.txt/.md, _coverage_ledger.json, _angle_brief.json, _draft_v1.txt, _draft_final.txt, _revision_audit.json, _title_quote_candidates.json and similar) in " + str(project / "text") + ". Wherever the skill or a reference says output/<project>/text/..., use " + str(project / "text") + "/... instead, and never create an output/ folder. The only place for the final manuscript is " + str(project / "text/raw.json") + ". Use the `python` command for text extraction and for any validation script: it is bundled with PyMuPDF, pdfplumber, ebooklib, mobi, python-docx and PyYAML. Do not install packages or use other Python installations.\n"
         opening_enabled = settings.get("global", {}).get("opening_quote", True)
         prompt += "\nOpening quote playback is " + ("enabled" if opening_enabled else "disabled") + ". Store any opening quote candidates separately in golden_quotes; do not prepend them to content. When enabled, the app plays the selected quote before the body. When disabled, the app starts with the body and may retain unused candidates. The GUI controls this project setting.\n"
+    elif step == "5":
+        import editing
+        if settings.get("step5", {}).get("assembly_method", "standard") != "agent":
+            raise ValueError("Choose Claude Code editing in Assembly first.")
+        assembly_edit, cwd, prompt = editing.prepare(studio, project, settings, session, revise=body.get("revise", False))
+        scope = "Assembly · edit and render"
     elif step == "6":
         import covers
         from server import cover_copy, read_json
@@ -156,6 +162,8 @@ Wait interactively for their revisions. Studio handles rendering final PNGs and 
     # Projects can live anywhere; the launch names the project by its service id.
     launch = {"id": session, "project": studio.project_id(project), "step": step, "cwd": str(cwd), "context": str(prompt_path), "scope": scope,
               "args": ["--session-id", session, "--append-system-prompt-file", str(prompt_path), "--add-dir", *dict.fromkeys(directories)]}
+    if step == "5":
+        launch["assembly_edit"] = assembly_edit
     if step == "6":
         launch["cover_design"] = launch_design
     # Keep the prompt in a file for history; no API credentials are written here.

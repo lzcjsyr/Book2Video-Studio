@@ -149,6 +149,28 @@ def run(request):
             finally:
                 rendered.unlink(missing_ok=True)
         return {"success": True, "message": f"Rendered {len(selected)} saved composition(s)."}
+    if step == "5" and request.get("mode") in {"edit_render", "edit_preview"}:
+        import editing
+        from edit_render import render
+        work = editing.folder(project, request["assembly_edit"])
+        preview = request["mode"] == "edit_preview"
+        candidate, report = render(work, preview=preview, start=float(request.get("start", 0)), seconds=float(request.get("seconds", 8)))
+        if preview:
+            return {"success": True, "message": "Editing preview rendered.", "qa": report}
+        outputs = {project / "final_video.mp4": candidate,
+                   project / "final_video.srt": work / "build/captions.srt",
+                   project / "final_video.qa.json": candidate.with_suffix(".qa.json")}
+        if getattr(config, "THREE_BY_FOUR_ENABLED", True):
+            from core.domain.composer import VideoComposer
+            VideoComposer().export_three_by_four(str(candidate), read_script(project))
+            portrait = candidate.with_name(candidate.stem + "_3x4.mp4")
+            if not portrait.is_file():
+                raise ValueError("The polished video's 3:4 copy was not produced.")
+            outputs[project / "final_video_3x4.mp4"] = portrait
+        import exports
+        editing.verify_inputs(editing.read(work / "studio-payload.json"), editing.read(work / "plan.json"))
+        exports.publish(project, outputs, remove=[] if getattr(config, "THREE_BY_FOUR_ENABLED", True) else [project / "final_video_3x4.mp4"])
+        return {"success": True, "message": "Polished video rendered and verified.", "qa": report}
     if step == "5" and request.get("mode") == "three_by_four":
         from core.domain.composer import VideoComposer
         master = project / "final_video.mp4"

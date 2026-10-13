@@ -93,6 +93,7 @@ export interface Detail {
     duration: number | null;
   };
   covers: string[];
+  assembly_edit?: { folder: string; skill: string; style: string; changed: boolean; valid: boolean; problem: string | null; current: boolean; duration: number | null; warnings: string[]; preview: string | null; contact_sheet: string | null } | null;
   cover_design?: { folder: string; entries: { html: string; width: number; height: number }[]; files: string[]; previews: string[]; complete: boolean; current: boolean } | null;
   exports: string[];
   state: {

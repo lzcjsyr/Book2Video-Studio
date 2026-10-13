@@ -37,7 +37,7 @@ The tab lists exactly which keys the open project needs for the whole production
 
 ### Claude Code: API key or subscription
 
-Writing, Visuals (motion segments), and Covers in HTML / Three.js mode work with Claude Code in a terminal on the right. **Settings → API keys → Claude Code** chooses how it runs:
+Writing, Visuals (motion segments), Assembly in Claude Code editing mode, and Covers in HTML / Three.js mode work with Claude Code in a terminal on the right. **Settings → API keys → Claude Code** chooses how it runs:
 
 - **Built-in Claude Code · API key** (default): the copy bundled with Studio, connected to the language-model provider chosen for Writing and Motion.
 - **Your Claude Code · subscription:** the Claude Code installed on this computer, signed in with your Claude account, so your Claude plan covers those sessions and they need no key. Studio finds it (even when opened from the Finder), shows its version and sign-in, and starts it without any provider settings. Agent segmentation and the other background steps still use API keys.
@@ -138,7 +138,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 ### Claude Code：API 密钥或订阅
 
-写作、画面（动画段落），以及 HTML / Three.js 模式下的封面，在右侧终端中与 Claude Code 协作。在 **设置 → API 密钥 → Claude Code** 中选择运行方式：
+写作、画面（动画段落）、Claude Code 剪辑模式下的合成，以及 HTML / Three.js 模式下的封面，在右侧终端中与 Claude Code 协作。在 **设置 → API 密钥 → Claude Code** 中选择运行方式：
 
 - **内置 Claude Code · API 密钥**（默认）：使用 Studio 自带的 Claude Code，连接写作和动画所选的语言模型服务商。
 - **你的 Claude Code · 订阅：** 使用本机安装的 Claude Code，并以你的 Claude 账号登录，这些会话由你的 Claude 订阅承担，无需密钥。Studio 会自动找到它（即使从访达打开），显示版本和登录状态，并在不带任何服务商设置的情况下启动它。智能体分段和其他后台步骤仍使用 API 密钥。
@@ -205,3 +205,19 @@ HTML cover designs live in `.studio/cover-designs/<session>/`, with `studio-payl
 ### 封面：图像 API 或 Claude Code + HTML / Three.js
 
 步骤 6 顶部可选择生成方式，并查看已选封面文案、尺寸、候选数量和风格。已有项目默认使用图像 API。Claude Code 模式沿用“写作”的智能体运行方式和登录；API 密钥模式也沿用写作的服务商及模型。新建设计后，智能体为各尺寸分别编写 HTML，使用本地 Three.js 和内置 Chrome 检查快照。点击“结束并渲染封面”后，PNG 候选进入原有画廊。“修改 HTML 设计”会复制上次的源码供修改；“渲染已保存的 HTML”可直接重试渲染。已有候选和已选封面都会保留。
+
+### Step 5: Claude Code editing
+
+Choose **Standard assembly** or **Claude Code editing** on the Assembly page. The existing assembler remains the default. The editing agent uses the same Claude Code login, provider and model as Writing. Choose one of three editable skills: **Editorial explainer**, **Cinematic essay**, or **Kinetic social**. **Edit editing skills** opens the shared library; custom skills can be imported there.
+
+**New video edit** prepares the current selected visuals, recordings, narration, export settings and music catalog in `.studio/edits/<session>/`. Claude Code edits `plan.json` with keyword/quote/comparison/chart emphasis, chapter cards, pacing, captions, music and sound cues. Custom scene HTML permits richer motion. **Revise saved edit** copies a prior design, including invalid plans that need repair, while retaining its original files. The plan keeps every narration segment in order. The common compiler and renderer are shared by all three skills.
+
+Review a short **editing preview** and its contact sheet before **Finish & render video**. Ending an unchanged session preserves the current video without starting a full render. **Render saved edit** renders without another agent call. Source media and canonical manuscripts are never rewritten by the renderer. Long videos render in bounded two-minute HTML chunks, followed by one audio mix and frame-exact assembly. Music volume, normalization and ducking, narration speed, transitions, subtitles, zoom, export size and codec remain available. The final master is `final_video.mp4`, with `final_video.srt` and `final_video.qa.json`; the optional 3:4 copy uses the existing panel settings. A failed/cancelled job keeps the previous exports. Publication has rollback and a recovery journal for forced shutdowns.
+
+Caption timings begin as **estimated**. The agent can run `python studio_edit.py align` using a local `whisper-cli` and Whisper small model (default `~/.cache/hyperframes/whisper/models/ggml-small.bin`, or `STUDIO_WHISPER_MODEL`). It aligns canonical words to ASR timestamps and records transcript similarity; poor matches require review. Without local Whisper, the agent can review cue times manually. Estimated captions are labelled and reported rather than presented as speech-aligned.
+
+### 步骤 5：Claude Code 剪辑
+
+“合成”页面可选择标准合成或 Claude Code 剪辑。剪辑沿用写作的 Claude Code 登录、服务商和模型，并提供编辑式讲解、电影感随笔、活力社交视频三种可编辑技能。智能体基于当前录音和已选画面编辑 `plan.json`，添加章节、重点动效、比较和图表、字幕、音乐及音效；也可制作自定义场景 HTML。先检查短预览和帧合集，再点击“结束并渲染视频”。修改已有剪辑会复制原设计；结束未改动的会话不会自动开始完整渲染。渲染失败或取消会保留先前的导出，强制退出后的发布恢复也有日志保护。
+
+字幕时间初始为估算，界面与 QA 报告会明确标记。可使用本地 Whisper 对齐，也可由智能体对照录音人工检查；所有字幕保持原文内容。

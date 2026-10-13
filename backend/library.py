@@ -32,6 +32,7 @@ GROUPS = {
     "image_templates": ("Image templates", "image_template", "prompts/step4_image_templates.yaml"),
     "motion_styles": ("Motion styles", "motion_style", "prompts/step4_hyperframes_styles.yaml"),
     "motion_skills": ("Motion skills", "skill", "skills/step4"),
+    "assembly_skills": ("Assembly skills", "skill", "skills/step5"),
     "cover_styles": ("Cover styles", "style", "prompts/step6_styles.yaml"),
     "templates": ("Production templates", "prompt", "prompts"),
 }
