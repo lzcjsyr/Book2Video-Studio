@@ -43,10 +43,23 @@ PROMPTS = {
     "step4_opening_bg.md": ("Opening image template", True, {"summary", "style_block"}),
     "step4_safety.md": ("Image prompt refinement", True, {"prompt"}),
     "step6_cover.md": ("Cover image template", True, {"cover_title", "cover_subtitle", "style_block"}),
+    "step6_cover_agent.md": ("Claude Code cover template", True, {"design_dir", "entries_json"}),
+    "step1_studio.md": ("Writing Studio instructions", True, {"project_dir", "text_dir", "output_json", "opening_quote_state"}),
+    "step4_studio.md": ("Visuals Studio instructions", True, {"agent_prompt", "segment_index", "work_dir", "snapshots_dir", "segment_count", "task_number", "target_path", "tasks", "segments", "hyperframes_version"}),
+    "step4_skill_context.md": ("Motion reference instructions", True, {"skills_root", "hyperframes_version", "reference_limit", "recipe_paths", "reference_paths", "skill_entries"}),
+    "step4_style_context.md": ("Motion style instructions", True, {"style_id", "label", "official_style", "palette", "best_for", "style_definition", "palette_definition", "references"}),
+    "step5_editing_agent.md": ("Claude Code assembly template", True, {"skill_path", "work_dir", "contract_path", "motion_skills_dir"}),
+    "step5_editing_contract.md": ("Assembly editing contract", None, set()),
     "step1_subagents/title-quote-writer.md": ("Title and quote writing template", None, set()),
     "step1_subagents/fact-style-reviewer.md": ("Writing review template", None, set()),
 }
 TEXT_EXTENSIONS = {".md", ".txt", ".yaml", ".yml", ".json", ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".toml"}
+TEMPLATE_SECTIONS = {
+    "step1_studio.md": {"direct", "shared"},
+    "step4_studio.md": {"segment", "new", "single", "multi", "target", "task", "finish"},
+    "step5_editing_agent.md": {"main", "invalid"},
+    "step6_cover_agent.md": {"main", "revise"},
+}
 MAX_TEXT = 2_000_000
 MAX_PACKAGE = 128_000_000
 
@@ -253,6 +266,22 @@ class Library:
                 "package_hash": digest(package) if kind == "skill" else None,
                 "files": files, "file": file, "variables": variables, "removable": kind not in {"prompt", "source"}}
 
+    def prompt(self, name, section=None, **values):
+        """Read current user instructions; sections select mode-specific text."""
+        text = self.item("templates", name)["value"]
+        self.validate("templates", name, text)
+        if section:
+            pieces = re.split(r"(?m)^<!-- section: ([a-z_]+) -->\s*\n", text)
+            sections = dict(zip(pieces[1::2], pieces[2::2]))
+            if section not in sections:
+                raise ValueError(f"Template {name} is missing its {section} section.")
+            text = sections[section]
+        if PROMPTS[name][1]:
+            return text.format(**values)
+        for key, value in values.items():
+            text = text.replace("{" + key + "}", str(value))
+        return text
+
     def read_text(self, path):
         if not path.is_file() or path.stat().st_size > MAX_TEXT:
             raise ValueError("Choose an existing text file smaller than 2 MB.")
@@ -282,6 +311,10 @@ class Library:
             if not isinstance(value, str) or not value.strip() or len(value.encode("utf-8")) > MAX_TEXT:
                 raise ValueError("Library text cannot be empty and must be smaller than 2 MB.")
             if group == "templates":
+                if item_id in TEMPLATE_SECTIONS:
+                    sections = re.findall(r"(?m)^<!-- section: ([a-z_]+) -->\s*$", value)
+                    if set(sections) != TEMPLATE_SECTIONS[item_id] or len(sections) != len(set(sections)):
+                        raise ValueError("Keep all named template sections.")
                 _, formatted, fields = PROMPTS[item_id]
                 if formatted:
                     self.format_fields(value, fields)

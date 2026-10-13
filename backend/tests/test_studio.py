@@ -139,6 +139,7 @@ class ProjectTests(unittest.TestCase):
         self.assertIsNotNone(self.studio.finish_agent(self.p.name,{})['warning'])
     def test_writing_agent_is_told_where_to_save_everything(self):
         (self.engine/'prompts').mkdir();(self.engine/'prompts/step1_agent.md').write_text('任务：{output_json} {text_dir} {skill_path}',encoding='utf-8')
+        (self.engine/'prompts/step1_studio.md').write_text((DESKTOP/'prompts/step1_studio.md').read_text(),encoding='utf-8')
         skill=self.engine/'skills/step1/sample_writer';skill.mkdir(parents=True);(skill/'SKILL.md').write_text('---\nname: sample_writer\ndescription: 测试\n---\n正文',encoding='utf-8')
         studio=self.open();launch=studio.prepare_agent(self.p.name,{'step':'1'})
         prompt=Path(launch['context']).read_text(encoding='utf-8')

@@ -51,7 +51,21 @@ Open **Settings → Skills & templates / 设置 → Skills 与模板** to edit t
 
 Edit Step 4's visual direction instructions, add/edit/remove image styles, image templates and motion styles, or manage Step 6 cover styles. New entries immediately appear in the production-setting options. **Use in this project** selects the current entry; when using the editor inside Settings, save the production settings afterward. The template groups include agent, segmentation, opening, image refinement and cover prompt files. Required template variables are shown and checked before saving. Advanced **Edit source file** allows YAML editing and repairing externally malformed source files.
 
-The library is ordered by production step, with visible numbers on categories and headings. Writing templates appear in Step 1, segmentation templates in Step 2, content summary and visual templates in Step 4, assembly skills in Step 5, and cover styles/templates in Step 6. Step 3 has no editable library items. This arrangement preserves existing files, saved selections and revision history. Verified on 2026-10-13 with 19 JavaScript checks and browser checks for all 12 categories, template save/undo/refresh, English/Chinese labels and a 1000 × 720 window.
+The library is ordered by production step, with visible numbers on categories and headings. Writing templates appear in Step 1, segmentation templates in Step 2, content summary and visual templates in Step 4, assembly skills and templates in Step 5, and cover styles/templates in Step 6. Step 3 has no editable library items. This arrangement preserves existing files, saved selections and revision history. Verified on 2026-10-13 with 185 Python tests, 19 JavaScript checks, and browser checks for all 13 categories and seven new instruction templates. Coverage includes saving/undo, new and revised sessions consuming saved instructions, English/Chinese labels and a 1000 × 720 window.
+
+Every instruction supplied to Studio's Claude Code sessions is editable in **Settings → Skills & templates**, under the numbered template group for its step:
+
+| Step | Editable instructions |
+|---|---|
+| 1 · Writing | Writing agent template, direct-writing guidance, output/file-location contracts and Studio session guidance |
+| 2 · Segments | Existing segmentation template |
+| 4 · Visuals | Motion agent template, per-segment/new/single/multiple-task guidance, finish/render instructions, motion-reference and style guidance |
+| 5 · Assembly | Claude Code assembly template and the complete editing contract copied to the session's `EDITING.md` |
+| 6 · Covers | Claude Code cover template for new/revised HTML designs; separate Cover image template for Image API generation |
+
+Saved instructions apply when a new or revised session starts, without restarting the service. Sessions already open retain their context. Skills and their text references remain editable in the skill groups. Step 3 uses the voice provider API and has no Claude Code instructions.
+
+Keep the required variables shown by the editor. In formatted templates, double literal braces as `{{` and `}}`. Some Studio templates use `<!-- section: name -->` headings to select direct/document writing, single/multiple visual tasks, new/revised covers or invalid-plan repair. Edit the text inside these sections; required section names and variables are validated when saving. Templates retain conflict detection, revision history and undo.
 
 These files are shared across projects. Saved edits apply to new jobs and newly activated agent sessions; existing completed media remain available until you choose to generate. Editing a named YAML entry preserves other entries and their order, but rewrites YAML formatting/comments. Use the source editor to keep intentional source formatting. The **Open source folder** button uses Finder on Mac or Explorer on Windows; after external edits, click **Refresh library**. External changes are checked before saving so they cannot silently overwrite an editor draft.
 

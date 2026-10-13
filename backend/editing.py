@@ -118,27 +118,16 @@ def prepare(studio, project, settings, session, revise=False):
     write(work / 'studio-payload.json', payload)
     if not invalid_copy:
         write(work / 'plan.json', plan)
-    shared = studio.library_root / 'skills/step5/EDITING.md'
-    shutil.copy2(shared, work / 'EDITING.md')
+    (work / 'EDITING.md').write_text(studio.library.prompt('step5_editing_contract.md'), encoding='utf-8')
     tool = (f'import sys\nfrom pathlib import Path\nsys.path[:0] = {[str(Path(__file__).parent), str(studio.engine)]!r}\n'
             f'from edit_render import main\nmain(Path({str(work)!r}))\n')
     (work / 'studio_edit.py').write_text(tool, encoding='utf-8')
     edit = {'folder': str(work.relative_to(project)), 'source': signature(payload), 'skill': style, 'initial_plan': None if invalid_copy else signature(plan),
             'initial_html': {str(p.relative_to(work)): stamp(p) for p in work.rglob('*.html') if 'build' not in p.relative_to(work).parts}}
-    prompt = (f'You are the Assembly editing agent. Read the selected skill at {skill["path"]}, then {work / "EDITING.md"}. '
-              f'Your working folder is {work}. studio-payload.json contains the selected recordings, visuals, narration, export settings and available music. '
-              'Polish this complete narrated video interactively with the user. Edit plan.json: chapter cards, keyword/quote/comparison/chart emphasis, pacing, speech-aligned captions, music cues and sound effects. '
-              'Keep every narration segment and its order. Never rewrite the manuscript, recordings, selected visuals, covers or existing exports. '
-              'Timings in the plan are ORIGINAL recording seconds; Studio applies narration speed consistently to visuals, captions and audio. '
-              'The initial plan has estimated caption timings, not ASR alignment. Run `python studio_edit.py align` if local Whisper is available; inspect its transcript match and timing before relying on it. '
-              'If alignment is unavailable, review and correct cue timings from the audio and state the limitation honestly. Do not claim an estimate is speech-aligned. '
-              'Run `python studio_edit.py check`, then `python studio_edit.py preview` for a short real render. Inspect preview.mp4 and contact-sheet.png, fix failures and repeat. '
-              'For custom visual treatments you may add a scene-local HTML file and set that scene’s html field; follow the contract and pinned HyperFrames skills under ' + str(studio.library_root / 'skills/step4') + '. '
-              'Use the bundled `hyperframes`, `python`, `ffmpeg`, `ffprobe` commands. Do not install packages or hardcode paths from another project. '
-              'When the edit is ready, tell the user to click **Finish & render video** or type /exit; Studio performs chunked rendering, audio mixing, verification and the optional 3:4 export. '
-              'If the user requests revisions, update the saved plan and preview again. Studio manages publication and recovery.')
+    prompt = studio.library.prompt('step5_editing_agent.md', 'main', skill_path=skill['path'],
+        work_dir=str(work), contract_path=str(work / 'EDITING.md'), motion_skills_dir=str(studio.library_root / 'skills/step4'))
     if invalid_copy:
-        prompt += ' The copied plan.json is invalid. Preserve its intended edits and repair that file before running checks or previews; do not silently discard the existing design.'
+        prompt += studio.library.prompt('step5_editing_agent.md', 'invalid')
     return edit, work, prompt
 
 

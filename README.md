@@ -37,7 +37,7 @@ The tab lists exactly which keys the open project needs for the whole production
 
 ### Claude Code: API key or subscription
 
-Writing, Visuals (motion segments), Assembly in Claude Code editing mode, and Covers in HTML / Three.js mode work with Claude Code in a terminal on the right. **Settings → API keys → Claude Code** chooses how it runs:
+Writing, Visuals (motion segments), Assembly in Claude Code editing mode, and Covers in HTML / Three.js mode work with Claude Code in a terminal on the right. Edit every agent's instructions in **Settings → Skills & templates**, under the numbered Writing, Visual, Assembly or Cover templates. This includes Studio session guidance, motion-reference/style guidance and the Assembly editing contract. Saved edits apply to new and revised sessions. The existing segmentation template remains in Step 2. **Settings → API keys → Claude Code** chooses how it runs:
 
 - **Built-in Claude Code · API key** (default): the copy bundled with Studio, connected to the language-model provider chosen for Writing and Motion.
 - **Your Claude Code · subscription:** the Claude Code installed on this computer, signed in with your Claude account, so your Claude plan covers those sessions and they need no key. Studio finds it (even when opened from the Finder), shows its version and sign-in, and starts it without any provider settings. Agent segmentation and the other background steps still use API keys.

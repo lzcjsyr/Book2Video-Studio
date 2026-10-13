@@ -217,6 +217,7 @@ function stageEngine() {
   copyTree(path.join(engineSource, "core"), path.join(target, "core"), (parts) => skip(parts) || parts[0] === "tests");
   for (const folder of ["prompts", "skills", "music"]) copyTree(path.join(engineSource, folder), path.join(target, folder), skip);
   copyTree(path.join(root, "skills/step5"), path.join(target, "skills/step5"), skip);
+  copyTree(path.join(root, "prompts"), path.join(target, "prompts"), skip);
   fs.copyFileSync(path.join(engineSource, "config.example.yaml"), path.join(target, "config.example.yaml"));
 }
 
