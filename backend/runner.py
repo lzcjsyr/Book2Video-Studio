@@ -114,6 +114,9 @@ def run(request):
             return result
         if request.get("mode") == "summary":
             return {"success": True, "message": "Content summary generated."}
+    if step == "4" and request.get("mode") == "segments":
+        from visual_generation import run as generate_visuals
+        return generate_visuals(request, params, steps, call)
     if step == "4" and request.get("mode") == "render":
         from core.infra.motion.renderer import render_clip
         script = json.loads((project / "text/script.json").read_text())

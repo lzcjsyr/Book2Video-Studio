@@ -271,7 +271,7 @@ class Library:
                     error = str(exception)
                 for name, value in data.items():
                     items.append({"id": name, "label": value.get("label", name) if isinstance(value, dict) else name,
-                                  "description": (value.get("description") or value.get("best_for") or "") if isinstance(value, dict) else str(value) if group == "cover_styles" else str(value)[:100]})
+                                  "description": (value.get("description") or value.get("best_for") or "") if isinstance(value, dict) else str(value) if group in {"cover_styles", "image_styles"} else str(value)[:100]})
             groups.append({"id": group, "label": label, "kind": kind, "items": items,
                            "hash": digest(path) if kind not in {"skill", "prompt"} else "", "path": str(path), "error": error})
         return {"groups": groups}

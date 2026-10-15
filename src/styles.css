@@ -348,6 +348,10 @@ code {
   font-size: var(--fs-xs);
   line-height: 1.5;
 }
+.field > .field-error {
+  color: var(--danger);
+  font-size: var(--fs-xs);
+}
 .field > select,
 .field > input {
   width: 100%;
@@ -1230,6 +1234,112 @@ code {
 }
 
 /* Content summary and batch tools above the Visuals preview. */
+.visual-image-controls {
+  flex: none;
+  margin-bottom: 12px;
+}
+.visual-image-controls-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 8px 16px;
+}
+.visual-image-control,
+.visual-image-control label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.visual-image-control label {
+  flex: 1;
+  color: var(--text-2);
+  font-size: var(--fs-s);
+}
+.visual-image-control label > span {
+  flex: none;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.visual-image-control select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 30px;
+  padding: 4px 26px 4px 8px;
+  font-size: var(--fs-s);
+  text-overflow: ellipsis;
+}
+.visual-image-controls > p {
+  margin: 6px 0 0;
+  font-size: var(--fs-xs);
+}
+.image-style-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--fs-s);
+}
+.image-style-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.image-style-trigger > svg { flex: none; color: var(--text-3); }
+.image-style-trigger:disabled { opacity: 0.42; }
+.modal.image-style-picker {
+  width: 860px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 48px);
+}
+.image-style-picker-help {
+  flex: none;
+  margin: 0;
+  padding: 14px 20px 10px;
+}
+.image-style-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 10px;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 20px 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+.image-style-option {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  text-align: left;
+}
+.image-style-option:hover:not(:disabled) { border-color: var(--line-2); background: var(--bg-3); }
+.image-style-option.selected { border-color: var(--accent); background: var(--accent-soft); }
+.image-style-option-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.image-style-option-heading strong { font-size: var(--fs-s); font-weight: 600; }
+.image-style-selected { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-size: var(--fs-xs); }
+.image-style-description { color: var(--text-2); font-size: var(--fs-s); line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 .direction-panel {
   margin-bottom: 10px;
   padding: 12px 14px;
@@ -1286,6 +1396,17 @@ code {
 .visuals-workspace .preview-canvas {
   flex: 1 1 0;
   min-height: 200px;
+}
+.visuals-workspace .preview-toolbar {
+  flex: none;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.visuals-workspace .preview-toolbar > div:first-child {
+  flex-wrap: wrap;
+}
+.visuals-workspace .preview-toolbar > div:last-child {
+  margin-left: auto;
 }
 .visuals-workspace .preview-caption {
   margin-bottom: 12px;
@@ -2633,7 +2754,32 @@ code {
   background: var(--bg-1);
 }
 .segmentation-controls {
-  margin: 16px 24px 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.segmentation-controls > select {
+  width: 190px;
+  max-width: 100%;
+  height: 30px;
+  padding: 4px 8px;
+  font-size: var(--fs-s);
+}
+.segmentation-controls .field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.segmentation-controls .field > span {
+  white-space: nowrap;
+}
+.segmentation-controls .field > input {
+  width: 64px;
+  height: 30px;
+  padding: 4px 6px;
+  font-size: var(--fs-s);
 }
 .step-controls-fields {
   display: flex;

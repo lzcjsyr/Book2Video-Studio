@@ -35,22 +35,17 @@ export function SegmentationControls({ settings, disabled, onChange }: Props) {
     manual: "Each manuscript line becomes a segment. Lines ending in 【motion】 become motion segments.",
     agent: "An agent groups sentences by meaning and chooses image or motion for each segment.",
   };
-  return <section className="step-controls segmentation-controls" aria-label={t("Segmentation controls")}>
-    <div className="step-controls-fields">
-      <label className="field"><span>{t("Split method")}</span>
-        <select aria-label={t("Split method")} value={mode} disabled={disabled}
-          onChange={(e) => onChange({ split_mode: e.target.value })}>
-          <option value="punctuation">{t("Split by punctuation")}</option>
-          <option value="manual">{t("One segment per line")}</option>
-          <option value="agent">{t("Agent (split by meaning)")}</option>
-        </select>
-      </label>
-      {mode === "agent" && <NumberSetting label={t("Target segments")} value={Number(settings.num_segments ?? 50)} min={1}
-        disabled={disabled} onSave={(num_segments) => onChange({ num_segments })} />}
-    </div>
-    <p className="small-muted">{t(hints[mode] || hints.punctuation)}</p>
-    <p className="small-muted">{t("Saved automatically. Changes apply the next time you generate segments.")}</p>
-  </section>;
+  return <div className="segmentation-controls" role="group" aria-label={t("Segmentation controls")}>
+    <select aria-label={t("Split method")} value={mode} disabled={disabled}
+      title={`${t("Split method")}: ${t(hints[mode] || hints.punctuation)} ${t("Saved automatically. Changes apply the next time you generate segments.")}`}
+      onChange={(e) => onChange({ split_mode: e.target.value })}>
+      <option value="punctuation">{t("Split by punctuation")}</option>
+      <option value="manual">{t("One segment per line")}</option>
+      <option value="agent">{t("Agent (split by meaning)")}</option>
+    </select>
+    {mode === "agent" && <NumberSetting label={t("Target segments")} value={Number(settings.num_segments ?? 50)} min={1}
+      disabled={disabled} onSave={(num_segments) => onChange({ num_segments })} />}
+  </div>;
 }
 
 export function VoiceControls({ settings, disabled, onChange }: Props) {

@@ -68,6 +68,7 @@ import LibraryPanel from "./components/LibraryPanel";
 import BrandMark from "./components/BrandMark";
 import WritingSetup from "./components/WritingSetup";
 import VisualDirection from "./components/VisualDirection";
+import VisualImageControls from "./components/VisualImageControls";
 import CoverSetup from "./components/CoverSetup";
 import AssemblyEditing from "./components/AssemblyEditing";
 import AssemblySetup from "./components/AssemblySetup";
@@ -75,6 +76,7 @@ import SegmentEditor from "./components/SegmentEditor";
 import { SegmentationControls, VoiceControls } from "./components/StepControls";
 import { writingOptions, sameWriting, type WritingOptions } from "./writing";
 import { useCollapsed } from "./collapse";
+import { parseSegmentNumbers } from "./visual-generation";
 import { librarySettings } from "./library";
 import { distinctGaps, keyNeeds, providerName, unmet, type NeedId } from "./keys";
 import type { KeyStatus } from "./components/ApiKeysPanel";
@@ -174,8 +176,8 @@ export default function App() {
     [newName, setNewName] = useState(""),
     [newLocation, setNewLocation] = useState(""),
     [scope, setScope] = useState("selected"),
-    [visualScope, setVisualScope] = useState("selected"),
-    [visualAction, setVisualAction] = useState("static"),
+    [visualScope, setVisualScope] = useState("missing"),
+    [visualNumbers, setVisualNumbers] = useState(""),
     [rebuild, setRebuild] = useState(false),
     [withOpening, setWithOpening] = useState(false),
     [coverIndex, setCoverIndex] = useState(0);
@@ -461,12 +463,20 @@ export default function App() {
   }
   // Static images also write their shared direction first when it is missing.
   const visualNeeds = (): NeedId[] =>
-    detail && !String(detail.summary.summary || "").trim()
+    detail && (!String(detail.summary.summary || "").trim() || detail.state.summary_stale)
       ? ["direction", "images"] : ["images"];
   const openingEnabled = Boolean(
     detail?.state.settings.global?.opening_quote ??
       bootstrap?.defaults.global?.opening_quote ?? true,
   );
+  let visualSelectionError = "";
+  if (step === "4" && visualScope === "selected" && detail) {
+    try {
+      parseSegmentNumbers(visualNumbers, [...(openingEnabled ? [0] : []), ...detail.segments.map((s) => s.index)]);
+    } catch (error) {
+      visualSelectionError = error instanceof Error ? error.message : String(error);
+    }
+  }
   const [openingCollapsed, toggleOpeningPanel] = useCollapsed("opening-quote");
   const openingQuote = String(
     draft.golden_quotes?.[draftSelections.golden_quotes ?? 0] || "",
@@ -631,6 +641,10 @@ export default function App() {
   }, []);
   async function generate() {
     if (!detail) return;
+    if (step === "4") {
+      await generateVisuals();
+      return;
+    }
     await action(async () => {
       if (unsaved) throw new Error(t("Save changes before generating."));
       if (rebuild)
@@ -652,51 +666,16 @@ export default function App() {
             : scope === "outdated"
               ? detail.state.stale[step]?.segments.filter((i) => i !== 0) ?? []
               : undefined;
-      let mode = step === "4" ? visualAction : undefined;
       const opening = openingEnabled && (withOpening || (selected === 0 && scope === "selected") ||
         (scope === "outdated" && Boolean(detail.state.stale[step]?.segments.includes(0))));
       if (selected === 0 && scope === "selected") {
         indices = [];
-        if (step === "4") mode = "opening";
       }
-      if (step === "4" && mode === "agent") {
-        setModal(null);
-        await activateFor(indices);
-        return;
-      }
-      const required: Partial<Record<Stage, NeedId[]>> = { "2": ["segments"], "3": ["voice"], "4": mode === "render" ? [] : visualNeeds(), "6": ["covers"] };
+      const required: Partial<Record<Stage, NeedId[]>> = { "2": ["segments"], "3": ["voice"], "6": ["covers"] };
       if (!keysReady(required[step] || [])) return;
-      if (step === "4" && mode === "render") {
-        const selectedMotion = detail.segments.filter(
-          (s) =>
-            s.visualizer === "hf" && (!indices || indices.includes(s.index)),
-        );
-        if (!selectedMotion.length)
-          throw new Error(t("Select motion segments to render."));
-        indices = selectedMotion.map((s) => s.index);
-        if (selectedMotion.some((s) => !s.composition))
-          throw new Error(
-            t(
-              "Activate Claude Code to create the missing motion compositions first.",
-            ),
-          );
-      }
-      if (step === "4" && mode === "static" && indices) {
-        indices = indices.filter(
-          (n) =>
-            detail.segments.find((s) => s.index === n)?.visualizer !== "hf",
-        );
-        if (!indices.length && !opening)
-          throw new Error(
-            t(
-              "Choose static image segments, or change the action to motion rendering.",
-            ),
-          );
-      }
       const job = await api<Job>(projectRoute(detail.id) + "/job", {
         step,
         indices,
-        mode,
         opening,
       });
       setJobs((j) => [...j, job]);
@@ -771,6 +750,29 @@ export default function App() {
       name = added.name;
     });
     if (name && (await saveSettings("step5", { bgm_filename: name }))) notice("Music added and chosen for this video.");
+  }
+  async function generateVisuals() {
+    if (!detail) return;
+    await action(async () => {
+      if (unsaved) throw new Error(t("Save changes before generating."));
+      const numbers = visualScope === "selected"
+        ? parseSegmentNumbers(visualNumbers, [...(openingEnabled ? [0] : []), ...detail.segments.map((s) => s.index)])
+        : undefined;
+      const targets = detail.segments.filter((s) => numbers ? numbers.includes(s.index) : visualScope === "all" || !s.visual);
+      const opening = openingEnabled && (numbers ? numbers.includes(0) : visualScope === "all" || !detail.opening.visual);
+      const needs: NeedId[] = [];
+      if (opening || targets.some((s) => s.visualizer !== "hf")) needs.push("images");
+      if (targets.some((s) => s.visualizer === "hf")) needs.push("motion_agent");
+      if (!String(detail.summary.summary || "").trim() || detail.state.summary_stale) needs.push("direction");
+      if (!keysReady(needs)) return;
+      const job = await api<Job>(projectRoute(detail.id) + "/job", {
+        step: "4", mode: "segments", batch: visualScope,
+        indices: numbers?.filter((i) => i !== 0), opening,
+      });
+      setJobs((jobs) => [...jobs, job]);
+      setModal(null);
+      notice("Generating segment visuals. You can keep reviewing.");
+    });
   }
   async function startVisualJob(body: { mode: string; batch?: string; indices?: number[]; opening?: boolean; take?: string }, message: string) {
     if (!detail) return;
@@ -1308,32 +1310,21 @@ export default function App() {
                       <Save size={13} /> {t("Save changes")}
                     </button>
                   )}
+                  {step === "2" && <SegmentationControls settings={keySettings.step2 || {}} disabled={busy || activeAgent || Boolean(activeJob)}
+                    onChange={(patch) => saveSettings("step2", patch)} />}
                   {step === "4" && <select className="visual-generation-scope" aria-label={t("Generation scope")}
                     disabled={busy || unsaved || Boolean(activeJob) || activeAgent} value={visualScope}
                     onChange={(e) => setVisualScope(e.target.value)}>
-                    <option value="selected">{selected === 0 ? t("Opening only") : t("Selected segment · {index}", { index: selected })}</option>
-                    <option value="missing">{t("Missing images")}</option>
-                    <option value="all">{t("All images")}</option>
-                    <option value="outdated" disabled={!detail.state.stale["4"]}>{t("Outdated segments")}</option>
-                    <option value="motion">{t("All motion segments")}</option>
-                    <option value="summary">{t("Content summary")}</option>
+                    <option value="missing">{t("Generate missing segments")}</option>
+                    <option value="all">{t("Generate all segments")}</option>
+                    <option value="selected">{t("Generate selected segments")}</option>
                   </select>}
                   <button
                     className="button small"
                     disabled={busy || Boolean(activeJob) || activeAgent || (step === "4" && unsaved)}
                     onClick={() => {
                       if (step === "4") {
-                        if (visualScope === "summary") {
-                          startVisualJob({ mode: "summary" }, "Generating the content summary.");
-                          return;
-                        }
-                        if (visualScope === "missing" || visualScope === "all") {
-                          startVisualJob({ mode: "static", batch: visualScope }, visualScope === "missing" ? "Generating missing static images." : "Generating all static images.");
-                          return;
-                        }
-                        setScope(visualScope === "motion" || (visualScope === "outdated" && !detail.state.stale["4"]?.segments.length) ? "all" : visualScope);
-                        setVisualAction(visualScope === "motion" || (visualScope === "selected" && segment?.visualizer === "hf") ? "render" : "static");
-                        setWithOpening(visualScope !== "motion" && openingEnabled && (selected === 0 || Boolean(visualScope === "outdated" && detail.state.stale["4"]?.segments.includes(0))));
+                        if (!visualNumbers.trim()) setVisualNumbers(String(selected));
                         setRebuild(false);
                         setModal("generate");
                         return;
@@ -1346,9 +1337,6 @@ export default function App() {
                       setScope(!["3", "4"].includes(step) ? "all" : detail.state.stale[step]?.segments.length ? "outdated" : "selected");
                       setRebuild(false);
                       setWithOpening(selected === 0);
-                      setVisualAction(
-                        segment?.visualizer === "hf" ? "render" : "static",
-                      );
                       setModal("generate");
                     }}
                   >
@@ -1445,8 +1433,6 @@ export default function App() {
                   </div>
                 ) : step === "2" ? (
                   <>
-                  <SegmentationControls settings={keySettings.step2 || {}} disabled={busy || activeAgent || Boolean(activeJob)}
-                    onChange={(patch) => saveSettings("step2", patch)} />
                   <SegmentEditor
                     segments={detail.segments}
                     draft={draft.segments || []}
@@ -1504,6 +1490,9 @@ export default function App() {
                         hash={detail.hashes.summary} outdated={Boolean(detail.state.summary_stale)}
                         disabled={busy || activeAgent || Boolean(activeJob)} onSave={saveDirection}
                         onEditInstructions={() => openLibrary("summary")} onDirtyChange={setDirectionDirty} />
+                      <VisualImageControls settings={keySettings.step4 || {}} library={bootstrap?.library}
+                        disabled={busy || activeAgent || Boolean(activeJob)}
+                        onChange={(patch) => saveSettings("step4", patch)} onEdit={openLibrary} />
                     </>}
                     <div className={`preview-toolbar${step === "5" ? " output-toolbar" : ""}`}>
                       {step === "5" ? (
@@ -2197,9 +2186,26 @@ export default function App() {
                       "Keep a revision of the current outputs, then generate new work using your saved project settings.",
                     )}
                   </p>
-                  {step === "4" && <p className="generation-scope-summary">{t("Scope")}: <strong>
-                    {visualScope === "motion" ? t("All motion segments") : visualScope === "outdated" ? t("Outdated segments") : selected === 0 ? t("Opening only") : t("Selected segment · {index}", { index: selected })}
-                  </strong></p>}
+                  {step === "4" && <>
+                    <label className="field">
+                      <span>{t("Generation scope")}</span>
+                      <select aria-label={t("Generation scope")} value={visualScope} onChange={(e) => setVisualScope(e.target.value)}>
+                        <option value="missing">{t("Generate missing segments")}</option>
+                        <option value="all">{t("Generate all segments")}</option>
+                        <option value="selected">{t("Generate selected segments")}</option>
+                      </select>
+                    </label>
+                    {visualScope === "selected" && <label className="field">
+                      <span>{t("Segment numbers")}</span>
+                      <input aria-label={t("Segment numbers")} value={visualNumbers} placeholder="2, 5-8"
+                        onChange={(e) => setVisualNumbers(e.target.value)} />
+                      <span className="field-hint">{t(openingEnabled
+                        ? "Enter numbers or ranges, for example 2, 5-8. Use 0 for the opening."
+                        : "Enter numbers or ranges, for example 2, 5-8.")}</span>
+                      {visualSelectionError && <span role="alert" className="field-error">{t(visualSelectionError)}</span>}
+                    </label>}
+                    <p className="small-muted">{t("Each segment uses its saved image or motion type. Existing versions are kept.")}</p>
+                  </>}
                   {step === "3" && (
                     <label className="field">
                       <span>{t("Scope")}</span>
@@ -2225,27 +2231,7 @@ export default function App() {
                       </select>
                     </label>
                   )}
-                  {step === "4" && selected !== 0 && (
-                    <label className="field">
-                      <span>{t("Production action")}</span>
-                      <select
-                        aria-label={t("Visual generation action")}
-                        value={visualAction}
-                        onChange={(e) => setVisualAction(e.target.value)}
-                      >
-                        <option value="static">
-                          {t("Generate static images")}
-                        </option>
-                        <option value="render">
-                          {t("Render saved motion compositions")}
-                        </option>
-                        <option value="agent">
-                          {t("Revise motion with Claude Code")}
-                        </option>
-                      </select>
-                    </label>
-                  )}
-                  {["3", "4"].includes(step) && openingEnabled && (
+                  {step === "3" && openingEnabled && (
                     <label className="checkbox">
                       <input
                         type="checkbox"
@@ -2255,6 +2241,7 @@ export default function App() {
                       {t("Also generate the opening")}
                     </label>
                   )}
+                  {step !== "4" && <>
                   <label className="checkbox">
                     <input
                       type="checkbox"
@@ -2270,13 +2257,8 @@ export default function App() {
                       )}
                     </p>
                   )}
-                  {step === "4" && segment?.visualizer === "hf" && (
-                    <p className="small-muted">
-                      {t(
-                        "A saved motion composition will be rendered as-is. To revise its design, activate Claude Code in the right pane.",
-                      )}
-                    </p>
-                  )}
+                  </>}
+
                 </>
               )}
               {modal === "history" && (
@@ -2485,7 +2467,7 @@ export default function App() {
               {modal === "generate" && (
                 <button
                   className="button primary"
-                  disabled={busy}
+                  disabled={busy || (step === "4" && Boolean(visualSelectionError))}
                   onClick={generate}
                 >
                   {step === "1" ? t("Activate Claude Code") : t("Generate")}

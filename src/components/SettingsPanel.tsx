@@ -111,6 +111,9 @@ export default function SettingsPanel({
       ) : (
         <input
           disabled={disabled}
+          min={key === "seedream_max_concurrent_image_generation" ? 1 : undefined}
+          max={key === "seedream_max_concurrent_image_generation" ? 5 : undefined}
+          step={key === "seedream_max_concurrent_image_generation" ? 1 : undefined}
           value={String(settings[section]?.[key] ?? "")}
           type={
             typeof settings[section]?.[key] === "number" ? "number" : "text"
@@ -119,7 +122,9 @@ export default function SettingsPanel({
             set(
               section,
               key,
-              e.target.type === "number"
+              key === "seedream_max_concurrent_image_generation"
+                ? Math.min(5, Math.max(1, Math.trunc(Number(e.target.value)) || 1))
+                : e.target.type === "number"
                 ? Number(e.target.value)
                 : e.target.value,
             )
@@ -279,16 +284,10 @@ export default function SettingsPanel({
                   )}
                   {imageModel("step4", "image_server", "image_model", "Image model")}
                   {settings.step4?.image_server === "doubao" &&
-                    field("step4", "seedream_max_concurrent_image_generation", t("Seedream images at once"), undefined, false, "Only for Volcengine Seedream. Raise it within your account's rate limit.")}
-                  {field("step4", "image_style_preset", t("Image style"), libraryChoices(bootstrap.library, "image_styles"))}
-                  {field("step4", "image_prompt_template", t("Image prompt"), libraryChoices(bootstrap.library, "image_templates"))}
+                    field("step4", "seedream_max_concurrent_image_generation", t("Seedream images at once"), undefined, false, "Up to 5 concurrent image requests. Google always uses 1.")}
                   {field("motion_opening", "ip_name", t("Opening masthead"))}
                 </div>
                 {modelWarning("step4", "image_server", "image_model")}
-                <div className="settings-manage-row">
-                  {manage("image_styles", "Edit image styles")}
-                  {manage("image_templates", "Edit image templates")}
-                </div>
               </section>
               <section className="settings-part" aria-labelledby="settings-motion">
                 <h4 id="settings-motion">{t("Motion clips")}</h4>

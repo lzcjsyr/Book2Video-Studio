@@ -1324,7 +1324,7 @@ class Studio:
                 raise Conflict("Finish the active project job or agent first.")
             if step not in STAGES or step == "1":
                 raise ValueError("Step 1 runs interactively through Activate Claude Code.")
-            if step == "4" and body.get("mode") not in {"static", "render", "opening", "opening_render", "summary"}:
+            if step == "4" and body.get("mode") not in {"segments", "static", "render", "opening", "opening_render", "summary"}:
                 raise ValueError("Animated generation runs through the interactive Claude Code terminal.")
             if step == "5" and body.get("mode") not in {None, "three_by_four", "edit_render", "edit_preview"}:
                 raise ValueError("Unknown assembly action.")
@@ -1363,7 +1363,32 @@ class Studio:
                 if not background or background["kind"] != "background":
                     raise ValueError("This background is no longer in the project. Refresh and choose again.")
                 body = {**body, "indices": [], "opening": True, "background": str(background["file"])}
-            if step == "4" and body.get("batch"):
+            if step == "4" and body.get("mode") == "segments":
+                detail = self.detail(project_id)
+                if not detail["ready"]["2"]:
+                    raise Conflict("Generate segments before generating visuals.")
+                batch = body.get("batch")
+                if batch not in {"all", "missing", "selected"}:
+                    raise ValueError("Choose missing, all or selected segments.")
+                candidates = detail["segments"]
+                enabled = {**self.defaults().get("global", {}), **detail["state"].get("settings", {}).get("global", {})}.get("opening_quote", True)
+                if batch == "selected":
+                    indices = body.get("indices")
+                    available = {s["index"] for s in candidates}
+                    if not isinstance(indices, list) or any(type(i) is not int or i not in available for i in indices):
+                        raise ValueError("Choose segment numbers that exist in this project.")
+                    indices = sorted(set(indices))
+                    opening = bool(enabled and body.get("opening"))
+                else:
+                    indices = [s["index"] for s in candidates if batch == "all" or not s["visual"]]
+                    opening = bool(enabled and (batch == "all" or not detail["opening"]["visual"]))
+                if not indices and not opening:
+                    raise ValueError("No segments need generation. Choose all or enter segment numbers.")
+                missing_audio = [s["index"] for s in candidates if s["index"] in indices and s.get("visualizer") == "hf" and not s["audio"]]
+                if missing_audio:
+                    raise ValueError("Generate recordings for motion segments first: " + ", ".join(map(str, missing_audio)))
+                body = {**body, "indices": indices, "opening": opening}
+            elif step == "4" and body.get("batch"):
                 if body["batch"] not in {"all", "missing"}:
                     raise ValueError("Choose all images or missing images.")
                 detail = self.detail(project_id)
@@ -1381,10 +1406,13 @@ class Studio:
                 settings = self.defaults()
                 for section, fields in self.state(p).get("settings", {}).items():
                     settings.setdefault(section, {}).update(fields)
+                image_work = body.get("mode") not in {"render", "opening_render", "summary"}
+                if body.get("mode") == "segments":
+                    image_work = body["opening"] or any(s["index"] in body["indices"] and s.get("visualizer") != "hf" for s in detail["segments"])
                 required = ([] if body.get("mode") == "cover_render" else [("cover_styles", "step6", "cover_image_style")]) if step == "6" else [
                     ("image_styles", "step4", "image_style_preset"),
                     ("image_templates", "step4", "image_prompt_template"),
-                ] if body.get("mode") not in {"render", "opening_render", "summary"} else []
+                ] if image_work else []
                 for group, section, key in required:
                     # A minimal test engine may not install image-generation resources.
                     if self.library.group(group)[2].exists():
@@ -1411,6 +1439,15 @@ class Studio:
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
                        "music_dir": str(self.music_root)}
+            motion_takes = {}
+            if step == "4" and body.get("mode") == "segments":
+                script = read_json(p / "text/script.json", {})
+                for segment in script.get("segments", []):
+                    if segment["index"] in body["indices"] and segment.get("visualizer") == "hf":
+                        motion_takes[str(segment["index"])] = takes.add_motion(p, segment["index"])
+                request.update(motion_folders={i: str(takes.folder(p, int(i)) / take) for i, take in motion_takes.items()},
+                               studio_data=str(self.data), workspace=str(self.workspace),
+                               claude=read_json(self.data / "claude-code.json", {"mode": "api_key"}))
             if step == "5" and body.get("mode") in {"edit_render", "edit_preview"}:
                 request["assembly_edit"] = self.state(p)["assembly_edit"]
             if step == "6" and body.get("mode") == "cover_render":
@@ -1429,10 +1466,18 @@ class Studio:
             if step == "2":
                 # New segments outdate recordings and visuals only where their text changed.
                 job["_script_before"] = read_json(p / "text/script.json", {})
+            if motion_takes:
+                job["_motion_takes"] = motion_takes
             self.jobs[job_id] = job
             environment = {**os.environ, **self.credentials, LIBRARY_ENV: str(self.library_root)}
             job["_secrets"] = [environment[k] for k in PROVIDER_KEYS if environment.get(k)]
-            process = subprocess.Popen([sys.executable, "-u", str(Path(__file__).with_name("runner.py")), json.dumps(request, ensure_ascii=False)], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", start_new_session=os.name != "nt", creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0)
+            try:
+                process = subprocess.Popen([sys.executable, "-u", str(Path(__file__).with_name("runner.py")), json.dumps(request, ensure_ascii=False)], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", start_new_session=os.name != "nt", creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0)
+            except OSError:
+                self.jobs.pop(job_id, None)
+                for index, take in motion_takes.items():
+                    shutil.rmtree(takes.folder(p, int(index)) / take, ignore_errors=True)
+                raise
             job["process"] = process
             threading.Thread(target=self.observe_job, args=(job, process), daemon=True).start()
             return self.public_job(job)
@@ -1465,6 +1510,8 @@ class Studio:
             direction = job.get("summary") and state["hashes"]["summary"] != job["summary_before"]
             if direction:
                 state.pop("summary_stale", None)
+                if job.get("mode") == "segments":
+                    self.direction_changed(state)
             if job.get("mode") == "summary":
                 if direction:
                     self.direction_changed(state)
@@ -1473,7 +1520,18 @@ class Studio:
             if job.get("mode") == "edit_preview":
                 self.persist(p, state)
                 return
-            if job["status"] != "succeeded":
+            generated = None
+            if job.get("mode") == "segments":
+                result = job.get("result") or {}
+                generated = set(result.get("processed_segments", [])) & set(job.get("scope") or [])
+                for index, take in job.get("_motion_takes", {}).items():
+                    if int(index) in generated:
+                        self.select(p, state, int(index), take)
+                    elif not (takes.folder(p, int(index)) / take / "index.html").is_file():
+                        shutil.rmtree(takes.folder(p, int(index)) / take, ignore_errors=True)
+                if result.get("opening_generated"):
+                    generated.add(0)
+            if job["status"] != "succeeded" and not generated:
                 # A failed or cancelled job leaves the step as it was; files it did rewrite are
                 # picked up by the asset comparison in detail(), segment by segment.
                 self.persist(p, state)
@@ -1487,7 +1545,9 @@ class Studio:
                     return
             # Later steps are outdated for what this job made: its segments, plus the opening (0).
             scope = job.get("scope")
-            if scope is not None:
+            if generated is not None:
+                scope = sorted(generated)
+            elif scope is not None:
                 scope = sorted(set(scope) | ({0} if job.get("opening") else set()))
             before = job.pop("_script_before", None)
             if job["step"] == "2" and before is not None:
@@ -1505,11 +1565,11 @@ class Studio:
                 global_settings = {**self.defaults().get("global", {}), **state.get("settings", {}).get("global", {})}
                 if global_settings.get("opening_quote", True):
                     all_indices.add(0)
-                completed = set(job["scope"] if job["scope"] is not None else all_indices - {0})
+                completed = generated if generated is not None else set(job["scope"] if job["scope"] is not None else all_indices - {0})
                 if job["step"] == "4" and job["mode"] in {"static", "render"}:
                     desired = "hf" if job["mode"] == "render" else "image"
                     completed &= {s["index"] for s in segments if s.get("visualizer", "image") == desired}
-                if job["opening"]:
+                if job["opening"] and generated is None:
                     completed.add(0)
                 remaining = set(stale["segments"] or all_indices) - completed
                 if remaining:

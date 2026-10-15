@@ -64,6 +64,13 @@ class LibraryTests(unittest.TestCase):
             self.library.save({"group": "summary", "id": "summary", "value": "Editor draft", "expected_hash": item["hash"]})
         self.assertEqual(Path(item["path"]).read_text(), "External edit")
 
+    def test_image_style_catalog_contains_the_full_description(self):
+        text = "Keep this complete style description available for comparison. " * 5
+        self.create("image_styles", "long_style", text)
+        group = next(group for group in self.library.catalog()["groups"] if group["id"] == "image_styles")
+        choice = next(choice for choice in group["items"] if choice["id"] == "long_style")
+        self.assertEqual(choice["description"], text)
+
     def test_library_http_requires_authentication_and_reports_conflicts(self):
         (self.engine / "core/pipeline").mkdir(parents=True)
         (self.engine / "core/pipeline/steps.py").write_text("")

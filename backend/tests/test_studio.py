@@ -364,6 +364,62 @@ class ProjectTests(unittest.TestCase):
         state['stale']['2'] = {'reason':'Changed manuscript','segments':[]}
         self.studio.persist(self.p,state)
         self.assertEqual(self.batch_request('all')[1]['indices'], [1, 2])
+    def segment_batch_request(self, **body):
+        from unittest.mock import patch
+        with patch('server.subprocess.Popen') as spawn, patch('server.threading.Thread'):
+            result = self.studio.run_job(self.p.name, {'step':'4', 'mode':'segments', **body})
+            request = json.loads(spawn.call_args.args[0][-1])
+        self.studio.jobs.clear()
+        return result, request
+    def test_segment_batches_include_motion_and_use_selected_numbers(self):
+        script = copy.deepcopy(SCRIPT)
+        script['segments'][1]['visualizer'] = 'hf'
+        atomic_json(self.p/'text/script.json', script)
+        (self.p/'images/segment_2.png').unlink()
+        _, request = self.segment_batch_request(batch='missing')
+        self.assertEqual(request['indices'], [2])
+        self.assertEqual(set(request['motion_folders']), {'2'})
+        self.assertFalse(request['opening'])
+        _, request = self.segment_batch_request(batch='all')
+        self.assertEqual(request['indices'], [1,2])
+        _, request = self.segment_batch_request(batch='selected', indices=[2,2])
+        self.assertEqual(request['indices'], [2])
+        self.assertEqual(json.loads((self.p/'text/script.json').read_text())['segments'][1]['visualizer'], 'hf')
+    def test_invalid_segment_selection_never_generates_everything(self):
+        for indices in [None, [], [0], [3], ['1'], [True]]:
+            with self.subTest(indices=indices), self.assertRaises(ValueError):
+                self.segment_batch_request(batch='selected', indices=indices)
+        self.assertFalse(self.studio.jobs)
+    def test_motion_only_selection_does_not_consult_image_templates(self):
+        from unittest.mock import patch
+        script = copy.deepcopy(SCRIPT); script['segments'][1]['visualizer'] = 'hf'
+        atomic_json(self.p/'text/script.json', script)
+        (self.p/'images/segment_2.png').unlink()
+        with patch.object(self.studio.library, 'item', side_effect=AssertionError('Image template consulted')):
+            _, request = self.segment_batch_request(batch='selected', indices=[2])
+        self.assertEqual(request['indices'], [2]); self.assertFalse(request['opening'])
+    def test_selected_opening_and_motion_recording_preflight(self):
+        state = self.studio.state(self.p)
+        state['settings'] = {'global': {'opening_quote': True}}
+        self.studio.persist(self.p, state)
+        _, request = self.segment_batch_request(batch='selected', indices=[], opening=True)
+        self.assertEqual(request['indices'], []); self.assertTrue(request['opening'])
+        script = copy.deepcopy(SCRIPT); script['segments'][1]['visualizer'] = 'hf'
+        detail = self.studio.detail(self.p.name)
+        self.studio.save(self.p.name, {'kind':'script', 'value':script, 'expected_hash':detail['hashes']['script'], 'segments':[2]})
+        (self.p/'voice/voice_2.wav').unlink()
+        with self.assertRaisesRegex(ValueError, 'recordings for motion segments first: 2'):
+            self.segment_batch_request(batch='all')
+    def test_partial_segment_batch_clears_only_successful_segments(self):
+        self.studio.detail(self.p.name)
+        state = self.studio.state(self.p)
+        state['stale']['4'] = {'reason':'Edited style','segments':[]}
+        self.studio.persist(self.p,state)
+        process = subprocess.Popen([sys.executable,'-c','print(\'STUDIO_RESULT:{"success":false,"processed_segments":[1],"failed_segments":[2]}\')'],stdout=subprocess.PIPE,text=True)
+        job = {'id':'partial','project':self.p.name,'step':'4','status':'running','log':[],'result':None,'scope':[1,2],'mode':'segments','opening':False}
+        self.studio.observe_job(job,process)
+        self.assertEqual(job['status'], 'failed')
+        self.assertEqual(self.studio.state(self.p)['stale']['4']['segments'], [2])
     def test_visual_jobs_create_a_missing_direction_first(self):
         self.assertFalse(self.batch_request('all')[1]['summary'])
         # An outdated direction stays until it is regenerated on purpose: a new one outdates every visual.
