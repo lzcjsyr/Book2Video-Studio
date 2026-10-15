@@ -54,10 +54,8 @@ def prepare(project, settings, session, previous=None, copy=("", "")):
             shutil.copytree(source, work, ignore=shutil.ignore_patterns("previews", "__pycache__"))
     work.mkdir(parents=True, exist_ok=True)
     # Use the same pinned Three.js for every design; offline imports need no CDN or npm install.
-    cli = os.environ.get("AIGC_HYPERFRAMES_CLI")
-    three = Path(cli).resolve().parents[2] / "three" if cli else None
-    if not three or not (three / "build/three.module.js").is_file():
-        raise ValueError("The bundled Three.js runtime is unavailable. Reinstall Book2Video Studio.")
+    from core.infra.motion.runtime import modules_dir
+    three = modules_dir() / 'three'
     shutil.copytree(three / "build", work / "vendor/three/build", dirs_exist_ok=True)
     shutil.copytree(three / "examples/jsm", work / "vendor/three/examples/jsm", dirs_exist_ok=True)
     design = {"folder": str(work.relative_to(project)), "entries": entries,
@@ -101,7 +99,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const spec = JSON.parse(process.argv[1]);
-const puppeteer = createRequire(spec.cli)('puppeteer-core');
+const puppeteer = createRequire(path.join(spec.modules,'package.json'))('puppeteer-core');
 (async () => {
   // Serve ES modules on loopback: file:// module imports differ across Chrome platforms.
   const root = fs.realpathSync(spec.work);
@@ -119,8 +117,32 @@ const puppeteer = createRequire(spec.cli)('puppeteer-core');
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
   try {
-    browser = await puppeteer.launch({executablePath: spec.chrome, headless: true,
-      args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--hide-scrollbars']});
+    const hardwareArgs = ['--hide-scrollbars', '--enable-gpu-rasterization'];
+    if (process.platform === 'darwin') hardwareArgs.push('--use-gl=angle', '--use-angle=metal');
+    if (process.platform === 'win32') hardwareArgs.push('--use-gl=angle', '--use-angle=d3d11');
+    try {
+      browser = await puppeteer.launch({executablePath: spec.chrome, headless: true, args: hardwareArgs});
+      const probe = await browser.newPage();
+      try {
+        const renderer = await probe.evaluate(() => {
+          const canvas = document.createElement('canvas');
+          const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+          if (!gl) return null;
+          const debug = gl.getExtension('WEBGL_debug_renderer_info');
+          return String(gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+        });
+        if (!renderer || /swiftshader|llvmpipe|software/i.test(renderer)) {
+          throw new Error('硬件 WebGL 不可用：' + (renderer || '无法创建 WebGL 上下文'));
+        }
+        console.log('封面使用 GPU：' + renderer);
+      } finally { await probe.close(); }
+    } catch (error) {
+      if (browser) await browser.close();
+      browser = undefined;
+      console.warn('封面 GPU 初始化失败，回退软件 WebGL：' + error.message);
+      browser = await puppeteer.launch({executablePath: spec.chrome, headless: true,
+        args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--hide-scrollbars']});
+    }
     for (const entry of spec.entries) {
       const page = await browser.newPage();
       try {
@@ -151,10 +173,11 @@ const puppeteer = createRequire(spec.cli)('puppeteer-core');
 
 def render(project, design, preview=False):
     work = contained(project, design["folder"])
-    cli = os.environ.get("AIGC_HYPERFRAMES_CLI")
-    chrome = os.environ.get("HYPERFRAMES_BROWSER_PATH")
+    from core.infra.motion.runtime import modules_dir, browser_path
+    modules = str(modules_dir())
+    chrome = browser_path()
     node = shutil.which("node")
-    if not cli or not chrome or not node:
+    if not chrome or not node:
         raise ValueError("The bundled cover renderer is unavailable. Reinstall Book2Video Studio.")
     info = detail(project, design)
     if not info["complete"]:
@@ -171,7 +194,7 @@ def render(project, design, preview=False):
         output.parent.mkdir(parents=True, exist_ok=True)
         entries.append({**entry, "output": str(output)})
     try:
-        result = subprocess.run([node, "-e", RENDER_JS, json.dumps({"work": str(work), "cli": cli, "chrome": chrome, "entries": entries})],
+        result = subprocess.run([node, "-e", RENDER_JS, json.dumps({"work": str(work), "modules": modules, "chrome": chrome, "entries": entries})],
                                 capture_output=True, text=True, encoding="utf-8", timeout=150 * len(entries) + 30)
         if result.returncode:
             raise ValueError("Cover rendering failed: " + (result.stderr or result.stdout)[-3000:])

@@ -25,7 +25,7 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
   const skill = skills.find((s) => s.id === value.agent_skill);
   const summary = [
     t(value.mode === "source" ? "Write from a document" : "Write directly with Claude Code"),
-    skill ? t(skill.label) : value.agent_skill,
+    value.agent_skill ? (skill ? t(skill.label) : value.agent_skill) : t("No skill"),
   ].join(" · ");
   return <section className={"writing-setup" + (collapsed ? " collapsed" : "")} aria-label={t("Writing setup")}>
     <div className="writing-setup-heading">
@@ -67,13 +67,15 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
     <div className="writing-skill-row">
       <label className="field">
         <span>{t("Writing skill")}</span>
-        <select value={value.agent_skill} disabled={disabled} onChange={(e) => change("agent_skill", e.target.value)}>
-          {!skills.some((s) => s.id === value.agent_skill) && <option value={value.agent_skill}>{t("Unavailable: {id}", { id: value.agent_skill })}</option>}
+        <select aria-label={t("Writing skill")} value={value.agent_skill} disabled={disabled} onChange={(e) => change("agent_skill", e.target.value)}>
+          <option value="">{t("No skill")}</option>
+          {value.agent_skill && !skills.some((s) => s.id === value.agent_skill) && <option value={value.agent_skill}>{t("Unavailable: {id}", { id: value.agent_skill })}</option>}
           {skills.map((s) => <option key={s.id} value={s.id}>{t(s.label)}</option>)}
         </select>
       </label>
       <button className="button small" disabled={disabled} onClick={onEditSkill}><FileText size={14} />{t("Edit or import writing skills")}</button>
     </div>
+    {!value.agent_skill && <p className="small-muted">{t("Claude Code follows your instructions without a writing skill. The app's output format still applies.")}</p>}
     <details className="writing-agent-settings">
       <summary>{t("Writing agent provider & model")}</summary>
       {subscription && <p className="small-muted">{t("Not used now: Writing runs in your own Claude Code on your Claude subscription. Change this in Settings → API keys.")}</p>}

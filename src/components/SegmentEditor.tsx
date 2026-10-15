@@ -89,7 +89,7 @@ export default function SegmentEditor({
               <button
                 aria-pressed={motion}
                 disabled={locked}
-                title={t("Created by Claude Code with HyperFrames in Step 4")}
+                title={t("Created by Claude Code with HTML / Three.js in Step 4")}
                 onClick={() => onEdit(s.index, "visualizer", "hf")}
               >
                 <Clapperboard size={12} /> {t("Motion")}

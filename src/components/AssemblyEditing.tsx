@@ -1,4 +1,4 @@
-import { FileText, Film, Play, TerminalSquare } from "lucide-react";
+import { Check, FileText, Film, Play, TerminalSquare } from "lucide-react";
 import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
 import type { Detail, LibraryCatalog, Settings } from "../types";
@@ -37,7 +37,7 @@ export default function AssemblyEditing({ settings, edit, library, active, locke
       </div>
       <p className="small-muted">{t("Uses Writing's Claude Code login, provider and model. Published videos stay available while you edit.")}</p>
       {active ? <div className="agent-banner"><span>{t("Claude Code is polishing the video in the right pane.")}</span>
-        <button className="button small primary" disabled={!edit?.valid || !edit.changed} onClick={onFinish}><Play size={13} />{t("Finish & render video")}</button></div>
+        <button className="button small primary" onClick={onFinish}><Check size={13} />{t("Finish session")}</button></div>
         : <div className="cover-design-buttons">
           <button className="button small primary" disabled={locked} onClick={() => onDesign(false)}><TerminalSquare size={13} />{t("New video edit")}</button>
           <button className="button small" disabled={locked || !edit} onClick={() => onDesign(true)}>{t("Revise saved edit")}</button>
@@ -48,6 +48,9 @@ export default function AssemblyEditing({ settings, edit, library, active, locke
       {edit?.problem && <p className="credential-error" role="alert">{edit.problem}</p>}
       {edit && !edit.current && <p className="small-muted">{t("Assembly sources or settings changed. Revise the edit before rendering.")}</p>}
       {!!edit?.warnings.length && <p className="small-muted">{t("Some captions still use estimated timing. Review them with the recordings before delivery.")}</p>}
+      {edit?.verified && edit.candidate && <details className="editing-preview"><summary>{t("Verified final video")}</summary>
+        <video controls preload="metadata" src={mediaUrl(edit.candidate)} aria-label={t("Verified final video")} />
+      </details>}
       {edit?.preview && <details className="editing-preview"><summary>{t("Editing preview · separate from final exports")}</summary>
         <video controls src={mediaUrl(edit.preview)} aria-label={t("Editing preview")} />
         {edit.contact_sheet && <img src={mediaUrl(edit.contact_sheet)} alt={t("Editing preview contact sheet")} />}

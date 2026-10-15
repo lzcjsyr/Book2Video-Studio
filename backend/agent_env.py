@@ -20,8 +20,8 @@ def resolve(engine, project, step):
     for section,values in engine_settings(migrate_state(state).get('settings',{})).items():merged.setdefault(section,{}).update(values)
     with tempfile.TemporaryDirectory() as temporary:
         runtime=Path(temporary)/'agent-config.yaml';runtime.write_text(yaml.safe_dump(merged,allow_unicode=True),encoding='utf-8');apply_yaml_config(runtime)
-    from core.infra.ai.claude_agent import build_step1_agent_env,build_step4_hyperframes_agent_env
-    return build_step1_agent_env() if step in {'1','5','6'} else build_step4_hyperframes_agent_env()
+    from core.infra.ai.claude_agent import build_step1_agent_env,build_step4_motion_agent_env
+    return build_step1_agent_env() if step in {'1','5','6'} else build_step4_motion_agent_env()
 
 if __name__=='__main__':
     try:

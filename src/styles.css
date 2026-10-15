@@ -368,6 +368,27 @@ code {
   grid-template-columns: 1fr 1fr;
   gap: 0 16px;
 }
+.model-select > label {
+  display: grid;
+  gap: 6px;
+}
+.model-select > label > select,
+.model-select > label > input {
+  width: 100%;
+  min-width: 0;
+}
+.model-select > label > span {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.model-select > label + label {
+  margin-top: 8px;
+}
+.voice-save-action {
+  display: flex;
+  align-items: center;
+  padding-top: 14px;
+}
 .checkbox {
   display: flex;
   gap: 9px;
@@ -1001,9 +1022,6 @@ code {
   border: 1px solid var(--line);
   border-radius: var(--radius-l);
 }
-.preview-canvas.audio-preview {
-  flex-basis: clamp(220px, 32vh, 380px);
-}
 .preview-image,
 .preview-canvas video {
   position: absolute;
@@ -1032,46 +1050,67 @@ code {
   flex: none;
   color: var(--text-3);
 }
-.voice-backdrop {
-  position: absolute;
-  inset: -20px;
-  width: calc(100% + 40px);
-  height: calc(100% + 40px);
-  object-fit: cover;
-  filter: blur(18px) brightness(0.32) saturate(0.8);
-  transform: scale(1.05);
+/* Voice is an audio desk, with a compact player and a delivery inspector. */
+.voice-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-rows: auto auto auto auto;
+  gap: 0 24px;
+  align-content: start;
+  min-height: 0;
 }
-.voice-preview {
-  position: relative;
-  width: min(460px, 100%);
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  text-align: center;
-  padding: 24px;
-  color: var(--voice);
+.voice-workspace > .preview-toolbar { grid-column: 1; grid-row: 1; }
+.voice-workspace > .audio-preview { grid-column: 1; grid-row: 2; }
+.voice-workspace > .preview-caption { grid-column: 1; grid-row: 3; }
+.voice-workspace > .narration-inspector { grid-column: 1; grid-row: 4; min-width: 0; }
+.voice-workspace > .voice-controls {
+  grid-column: 2;
+  grid-row: 1 / 5;
+  align-self: start;
+  padding: 20px;
 }
-.voice-preview > svg {
+.voice-controls h3 {
+  margin: 0 0 20px;
+  font-size: var(--fs-m);
+  font-weight: 600;
+}
+.voice-controls .step-controls-fields { flex-direction: column; gap: 18px; }
+.voice-controls .step-controls-fields .field { width: 100%; }
+.voice-controls .small-muted { line-height: 1.6; }
+.voice-controls .step-controls-fields + .small-muted { margin-top: 18px; }
+.voice-workspace .audio-preview {
+  min-height: 0;
+  padding: 20px;
+  background: var(--bg-1);
+  border-radius: var(--radius);
+}
+.voice-preview { width: 100%; min-width: 0; }
+.voice-player-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.voice-player-heading > svg {
   box-sizing: content-box;
-  padding: 14px;
-  border-radius: 50%;
+  flex: none;
+  padding: 10px;
+  border-radius: var(--radius);
+  color: var(--voice);
   background: var(--voice-soft);
 }
-.voice-preview h2 {
-  font-size: var(--fs-xl);
-  font-weight: 600;
-  color: var(--text);
-  margin: 16px 0 6px;
-  letter-spacing: -0.2px;
+.voice-player-heading h2 { margin: 0 0 4px; font-size: var(--fs-m); font-weight: 600; }
+.voice-player-heading p { margin: 0; color: var(--text-3); font-size: var(--fs-xs); }
+.voice-preview audio { display: block; width: 100%; height: 40px; }
+.voice-empty-note { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 12px 0 0; border-top: 1px solid var(--line); font-size: var(--fs-s); }
+.voice-empty-note strong { font-weight: 500; color: var(--text-2); }
+.voice-empty-note span { color: var(--text-3); }
+.voice-workspace .narration-inspector > textarea { height: clamp(150px, 22vh, 280px); min-height: 120px; }
+@media (max-width: 1100px) {
+  .voice-workspace { grid-template-columns: minmax(0, 1fr) 230px; gap: 0 16px; }
+  .voice-workspace > .voice-controls { padding: 16px; }
+  .voice-workspace .audio-preview { padding: 16px; }
 }
-.voice-preview p {
-  font-size: var(--fs-s);
-  color: var(--text-2);
-  margin: 0 0 18px;
-}
-.voice-preview audio {
-  width: 100%;
-  height: 40px;
+@media (max-width: 800px) {
+  .voice-workspace { display: flex; gap: 0; }
+  .voice-workspace > .voice-controls { margin-top: 16px; align-self: stretch; }
+  .voice-controls .step-controls-fields { flex-direction: row; }
+  .voice-controls .step-controls-fields .field { flex: 1 1 160px; }
 }
 .preview-empty {
   text-align: center;
@@ -1254,14 +1293,31 @@ code {
 .visuals-workspace .narration-inspector > textarea {
   height: 72px;
 }
-.direction-tools {
-  display: flex;
+.visual-generation-heading {
+  height: auto;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  row-gap: 8px;
+}
+.visual-generation-heading .production-name { flex: none; }
+.visual-generation-heading .production-actions {
   flex: none;
-  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
   margin-left: auto;
 }
-.direction-status + .direction-tools {
-  margin-left: 0;
+.visual-generation-scope {
+  width: 190px;
+  min-width: 0;
+  height: 32px;
+  font-size: var(--fs-s);
+}
+.generation-scope-summary { color: var(--text-2); font-size: var(--fs-s); }
+.generation-scope-summary strong { color: var(--text); font-weight: 500; }
+@media (max-width: 1120px) {
+  .visual-generation-scope { width: 160px; }
 }
 .toolbar-flag {
   flex: none;
@@ -2570,6 +2626,28 @@ code {
 }
 
 /* ---------- Segments ---------------------------------------------------- */
+.step-controls {
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+}
+.segmentation-controls {
+  margin: 16px 24px 4px;
+}
+.step-controls-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+.step-controls-fields .field {
+  width: 250px;
+  max-width: 100%;
+  margin-bottom: 0;
+}
+.step-controls .small-muted {
+  margin: 8px 0 0;
+}
 .segment-editor-list {
   padding: 0 24px 24px;
 }

@@ -127,9 +127,11 @@ export default function ClipPreview({
           <span className="clip-actions-spacer" />
           {agentHere ? (
             <>
-              <span className="small-muted">{t("Claude Code is working on this clip in the right pane.")}</span>
+              <span className="small-muted">{motion?.progress?.phase === "capture"
+                ? t("Capturing frame {completed} of {total}", { completed: motion.progress.completed, total: motion.progress.total })
+                : t("Claude Code is working on this clip in the right pane.")}</span>
               <button className="button primary" disabled={!motion?.composition} onClick={onFinish}>
-                <Play size={14} /> {t("Finish & render")}
+                <Check size={14} /> {t("Finish session")}
               </button>
             </>
           ) : (

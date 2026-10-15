@@ -6,7 +6,7 @@ const catalog = { groups: [
   ...["writing_skills", "summary", "image_styles", "image_templates", "motion_styles", "motion_skills", "assembly_skills", "cover_styles"]
     .map((id) => ({ id, label: id, kind: "skill", items: [{ id: "example", label: "Example" }] })),
   { id: "templates", label: "Production templates", kind: "prompt", items: [
-    "step1_agent.md", "step1_5_segment.md", "step4_hyperframes_agent.md", "step4_opening_bg.md",
+    "step1_agent.md", "step1_5_segment.md", "step4_motion_agent.md", "step4_opening_bg.md",
     "step4_safety.md", "step6_cover.md", "step6_cover_agent.md", "step1_subagents/title-quote-writer.md", "step1_subagents/fact-style-reviewer.md",
     "step1_studio.md", "step4_studio.md", "step4_skill_context.md", "step4_style_context.md", "step5_editing_agent.md", "step5_editing_contract.md",
   ].map((id) => ({ id, label: id })) },

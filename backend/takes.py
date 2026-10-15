@@ -11,6 +11,7 @@ the opening quote. Every background is kept as background-<id>.<ext>; it is neve
 since the quote is drawn over it: choosing one renders a new opening clip with it.
 """
 from __future__ import annotations
+import json
 
 import filecmp
 import shutil
@@ -83,13 +84,24 @@ def motion(p: Path, work: Path) -> dict:
     composed = html.stat().st_mtime if html.is_file() else None
     frames = sorted((work / "snapshots").glob("frame-*.png")) or sorted((work / "snapshots").glob("*.png"))
     video = video_in(work)
+    verified = None
+    if video and video.with_suffix('.render.json').is_file():
+        try:
+            from core.infra.motion.artifacts import current
+            from core.infra.motion.renderer import verify_sources
+            payload=json.loads((work/'studio-payload.json').read_text())
+            verify_sources(payload)
+            verified=current(work,payload,video,fps=int(payload.get('fps',30)))
+        except (OSError,ValueError,KeyError,TypeError):verified=False
+    try:progress=json.loads((work/'render-status.json').read_text())
+    except (OSError,ValueError):progress=None
     # Keyframes and renders made before the latest composition edit are outdated (1 s for coarse clocks).
-    return {"composition": str(html.relative_to(p)) if composed else None, "composed": composed,
+    return {"progress":progress,"composition": str(html.relative_to(p)) if composed else None, "composed": composed,
             "folder": str(work.relative_to(p)),
             "keyframes": [str(f.relative_to(p)) for f in frames],
             "keyframes_current": bool(frames) and composed is not None and min(f.stat().st_mtime for f in frames) >= composed - 1,
             "video": str(video.relative_to(p)) if video else None,
-            "video_current": bool(video) and (composed is None or video.stat().st_mtime >= composed - 1)}
+            "video_current": verified if verified is not None else bool(video) and (composed is None or video.stat().st_mtime >= composed - 1)}
 
 
 def poster(work: Path, video: Path | None) -> Path | None:
@@ -197,7 +209,9 @@ def migrate(p: Path, index: int, visualizer: str) -> str | None:
         still = add_still(p, index, parked, move=True)
     for current in placed(p, index, STILLS)[:1]:
         still = add_still(p, index, current)
-    work = p / "images/hyperframes" / stem(index)
+    work = p / "images/motion" / stem(index)
+    if not (work / "index.html").is_file():
+        work = p / "images/hyperframes" / stem(index)
     video = next(iter(placed(p, index, VIDEOS)), None)
     if (work / "index.html").is_file() or video:
         motion_take = add_motion(p, index, work if (work / "index.html").is_file() else None, video)

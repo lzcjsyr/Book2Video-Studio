@@ -144,7 +144,7 @@ class ProjectTests(unittest.TestCase):
         studio=self.open();launch=studio.prepare_agent(self.p.name,{'step':'1'})
         prompt=Path(launch['context']).read_text(encoding='utf-8')
         self.assertEqual(launch['cwd'],str(self.p))
-        for expected in [str(self.p/'text/raw.json'),str(self.p/'text'),'never create an output/ folder','`python`']:self.assertIn(expected,prompt)
+        for expected in [str(self.p/'text/raw.json'),str(self.p/'text'),'不要创建 output/ 文件夹','`python`']:self.assertIn(expected,prompt)
         self.assertTrue(Path(launch['context']).resolve().is_relative_to((self.p/'.studio/agent').resolve()))
     def test_dead_agent_lease_recovers_on_restart(self):
         state=self.studio.state(self.p);state['agent_active']={'step':'4','indices':[1]};self.studio.persist(self.p,state)
@@ -500,6 +500,23 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(sorted(state['stale']),['2'])
         state=self.post_settings({'step3':{'speech_rate':10}})
         self.assertEqual(sorted(state['stale']),['2','3'])
+    def test_target_count_outdates_only_agent_segmentation(self):
+        state = self.studio.state(self.p)
+        state['settings'] = {'step2': {'split_mode': 'punctuation', 'num_segments': 50}}
+        state['stale'] = {}; self.studio.persist(self.p, state)
+        self.assertNotIn('2', self.post_settings({'step2': {'num_segments': 2}})['stale'])
+        self.assertIn('2', self.post_settings({'step2': {'split_mode': 'agent'}})['stale'])
+        state = self.studio.state(self.p); state['stale'] = {}; self.studio.persist(self.p, state)
+        self.assertIn('2', self.post_settings({'step2': {'num_segments': 3}})['stale'])
+
+    def test_legacy_split_method_migrates_without_touching_saved_segments(self):
+        state = self.studio.state(self.p)
+        state['settings'] = {'step2': {'split_mode': 'auto', 'num_segments': 17}}
+        self.studio.persist(self.p, state)
+        after = self.studio.detail(self.p.name)
+        self.assertEqual(after['state']['settings']['step2'], {'split_mode': 'punctuation', 'num_segments': 17})
+        self.assertEqual([s['content'] for s in after['segments']], [s['content'] for s in SCRIPT['segments']])
+
     def test_keep_current_clears_needs_rebuild(self):
         state=self.studio.state(self.p);state['stale']={'3':{'reason':'Edit','segments':[1]},'4':{'reason':'Edit','segments':[]}};state['summary_stale']=True;self.studio.persist(self.p,state)
         server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
@@ -648,6 +665,13 @@ class PipelineTests(unittest.TestCase):
         result=subprocess.run([sys.executable,'-u',str(DESKTOP/'backend/runner.py'),json.dumps(request,ensure_ascii=False)],capture_output=True,text=True,timeout=90)
         self.assertEqual(result.returncode,0,result.stdout[-4000:]+result.stderr[-2000:])
         return result
+    def test_worker_punctuation_splits_both_languages_and_ignores_target(self):
+        raw = {**copy.deepcopy(RAW), 'content': '中文。English. Why?真的？Go!好！Next;最后；尾声'}
+        atomic_json(self.p/'text/raw.json', raw)
+        self.run_worker('2', {'step1': {'writing_mode': 'direct'}, 'step2': {'split_mode': 'punctuation', 'num_segments': 1}})
+        script = json.loads((self.p/'text/script.json').read_text())
+        self.assertEqual([s['content'] for s in script['segments']], ['中文。', 'English.', 'Why?', '真的？', 'Go!', '好！', 'Next;', '最后；', '尾声'])
+
     def test_gui_manuscript_overrides_stale_docx_before_segmentation(self):
         sys.path.insert(0,str(ENGINE));from core.domain.docx_transform import export_raw_to_docx
         old=copy.deepcopy(RAW);old['content']='旧的 Word 内容。';export_raw_to_docx(old,str(self.p/'text/raw.docx'))
@@ -754,8 +778,7 @@ class AgentContextTests(unittest.TestCase):
                 atomic_json(self.p/'.studio/state.json', {'settings': {'step1': {'writing_mode': 'direct'}}, 'source': source})
                 launch = prepare(studio, self.p, {'step': '1'})
                 prompt = Path(launch['context']).read_text()
-                self.assertIn('DIRECT WRITING MODE', prompt)
-                self.assertIn('Wait for the user', prompt)
+                self.assertIn(studio.library.prompt('step1_studio.md', 'direct'), prompt)
                 self.assertIn(str(self.p/'text/raw.json'), prompt)
                 self.assertIn(str(ENGINE/'skills/step1'), prompt)
                 for field in RAW:
@@ -774,7 +797,7 @@ class AgentContextTests(unittest.TestCase):
         launch = prepare(studio, self.p, {'step': '1'})
         self.assertIn(str(source), Path(launch['context']).read_text())
         self.assertIn(str(source.parent), launch['args'])
-        self.assertNotIn('DIRECT WRITING MODE', Path(launch['context']).read_text())
+        self.assertNotIn(studio.library.prompt('step1_studio.md', 'direct'), Path(launch['context']).read_text())
 
 class MotionRenderTests(unittest.TestCase):
     setUp=PipelineTests.setUp
@@ -788,18 +811,17 @@ class MotionRenderTests(unittest.TestCase):
         atomic_json(work/'studio-payload.json',{'durationSeconds':99,'content':'Old narration'})
         recording(self.p/'voice/voice_1.wav');(self.p/'images/segment_1.png').write_bytes(b'previous image')
         calls=[]
-        def render(args,**kwargs):
-            calls.append(args);Path(args[args.index('--output')+1]).write_bytes(b'rendered media')
-            return subprocess.CompletedProcess(args,0)
+        def render(work_dir,payload,output,**kwargs):
+            calls.append((work_dir,payload,output,kwargs));Path(output).write_bytes(b'rendered media')
+            return str(output)
         original=Path.cwd()
         try:
-            with patch('runner.subprocess.run',side_effect=render),patch('server.duration',return_value=1.0):
+            with patch('core.infra.motion.renderer.render_clip',side_effect=render),patch('server.duration',return_value=1.0):
                 result=runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'4','mode':'render','indices':[1],'settings':{},'folders':{'1':str(work)}})
         finally:os.chdir(original)
-        from core.infra.hyperframes.runtime import hyperframes_command
         self.assertTrue(result['success']);self.assertEqual((work/'index.html').read_text(),html)
-        self.assertEqual(len(calls),1);self.assertEqual(calls[0][:len(hyperframes_command())+1],[*hyperframes_command(),'render'])
-        payload=json.loads(calls[0][calls[0].index('--variables')+1]);self.assertEqual(payload['durationSeconds'],1.0);self.assertEqual(payload['content'],script['segments'][0]['content'])
+        self.assertEqual(len(calls),1);self.assertEqual(calls[0][0],work)
+        payload=calls[0][1];self.assertEqual(payload['durationSeconds'],1.0);self.assertEqual(payload['content'],script['segments'][0]['content'])
         # The clip keeps its own video; the still in the engine's place is left to Studio.
         self.assertEqual((work/'video.mp4').read_bytes(),b'rendered media');self.assertEqual((self.p/'images/segment_1.png').read_bytes(),b'previous image')
     def test_the_opening_is_rendered_over_the_chosen_background(self):
@@ -814,7 +836,7 @@ class MotionRenderTests(unittest.TestCase):
             calls.update(kwargs);(self.p/'images/opening.mp4').write_bytes(b'opening video');return str(self.p/'images/opening.mp4')
         original=Path.cwd()
         try:
-            with patch('core.infra.hyperframes.opening_renderer.render_opening_video',side_effect=render):
+            with patch('core.infra.motion.opening_renderer.render_opening_video',side_effect=render):
                 result=runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'4','mode':'opening_render','background':str(chosen),'settings':{}})
         finally:os.chdir(original)
         self.assertTrue(result['success']);self.assertEqual(calls['opening_bg_path'],str(self.p/'images/opening_bg.png'))
@@ -933,8 +955,8 @@ class MotionContextTests(unittest.TestCase):
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[1,3]})
         context=Path(launch['context']).read_text()
         for i in (1,3):
-            self.assertIn(f"Segment {i} → `{self.clip(i)/'index.html'}`",context)
-            self.assertIn(f'# Segment {i} (task',context)
+            self.assertIn(f"段落 {i} → `{self.clip(i)/'index.html'}`",context)
+            self.assertIn(f'# 段落 {i}（第',context)
         self.assertNotIn('segment_2/',context)
         self.assertEqual(launch['cwd'],str(self.p/'images/takes'))
         (self.clip(3)/'index.html').write_text('<!DOCTYPE html>')
@@ -947,10 +969,11 @@ class MotionContextTests(unittest.TestCase):
     def test_single_segment_keeps_its_own_instructions(self):
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[2]})
         context=Path(launch['context']).read_text()
-        self.assertTrue(context.startswith('The selected segment is your task.'));self.assertNotIn('task 1 of',context)
+        self.assertTrue(context.startswith('# 本次任务边界'));self.assertIn('当前任务是所选段落。',context);self.assertNotIn('第 1 /',context)
+        task=json.loads(Path(launch['task']).read_text());self.assertEqual(task['facts']['selected_segments'],[2])
         work=self.clip(2)
         self.assertEqual(launch['cwd'],str(work));self.assertIn(f'cd "{work}"',context);self.assertIn(str(work/'snapshots'),context)
-        self.assertIn('Finish & render',context);self.assertIn('新建的动态片段',context)
+        self.assertIn('结束会话不会重新渲染',context);self.assertIn('新建的动态片段',context)
         self.studio.finish_agent(self.id,{})
     def test_revising_a_clip_works_in_its_folder_and_a_new_clip_keeps_it(self):
         self.studio.prepare_agent(self.id,{'step':'4','indices':[1]})

@@ -92,7 +92,7 @@ class CoverAgentTests(unittest.TestCase):
         second=self.activate(revise=True);second_prompt=Path(second['context']).read_text()
         self.assertIn('CUSTOM COVER DIRECTION V2',second_prompt)
         self.assertNotIn('CUSTOM COVER DIRECTION V1',second_prompt)
-        self.assertIn('revises a copy',second_prompt)
+        self.assertIn(library.prompt('step6_cover_agent.md', 'revise'),second_prompt)
         self.assertEqual(Path(first['context']).read_text(),first_prompt)
         self.assertEqual(library.item('templates','step6_cover.md')['value'],image)
         library.restore({'revision':revision})

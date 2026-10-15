@@ -14,7 +14,7 @@ import {
 import "@xterm/xterm/css/xterm.css";
 import type { ClaudeCodeMode, Launch, Stage } from "../types";
 
-/** Lets the workspace end the session (for example "Finish & render") the same way the Stop button does. */
+/** Lets the workspace end the session (for example "Finish session") the same way the Stop button does. */
 export type AgentHandle = { stop: () => Promise<void> };
 
 export default function AgentPane({
@@ -27,6 +27,7 @@ export default function AgentPane({
   onClose,
   onError,
   directWriting,
+  noWritingSkill = false,
   claudeMode,
   disabled,
 }: {
@@ -40,6 +41,7 @@ export default function AgentPane({
   onClose: () => void;
   onError: (message: string) => void;
   directWriting: boolean;
+  noWritingSkill?: boolean;
   claudeMode: ClaudeCodeMode;
   disabled: boolean;
 }) {
@@ -203,6 +205,8 @@ export default function AgentPane({
                   ? "Your recordings, visuals and editing skill are prepared. Direct Claude Code to polish the video here."
                   : step === "6"
                   ? "Your cover copy, sizes and style are prepared. Direct Claude Code to design covers in HTML and Three.js here."
+                  : step === "1" && noWritingSkill
+                  ? "No writing skill is selected. Give Claude Code your writing instructions here."
                   : directWriting
                   ? "Your writing skill is prepared. Give Claude Code your topic and requirements here; no source document is needed."
                   : "Source, skills, and selected segments are prepared automatically. Give your instructions here.",

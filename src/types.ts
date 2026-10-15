@@ -45,6 +45,7 @@ export interface Take {
 }
 /** Where a segment's motion stands: Claude Code's composition, its keyframes, the rendered video. */
 export interface Motion {
+  progress?: { phase: string; completed: number; total: number } | null;
   composition: string | null;
   /** When the composition was last saved (seconds since the epoch). */
   composed: number | null;
@@ -93,7 +94,7 @@ export interface Detail {
     duration: number | null;
   };
   covers: string[];
-  assembly_edit?: { folder: string; skill: string; style: string; changed: boolean; valid: boolean; problem: string | null; current: boolean; duration: number | null; warnings: string[]; preview: string | null; contact_sheet: string | null } | null;
+  assembly_edit?: { verified?: boolean; published?: boolean; candidate?: string | null; folder: string; skill: string; style: string; changed: boolean; valid: boolean; problem: string | null; current: boolean; duration: number | null; warnings: string[]; preview: string | null; contact_sheet: string | null } | null;
   cover_design?: { folder: string; entries: { html: string; width: number; height: number }[]; files: string[]; previews: string[]; complete: boolean; current: boolean } | null;
   exports: string[];
   state: {
@@ -133,6 +134,7 @@ export interface Bootstrap {
   default_location: string;
   library_folder: string;
   defaults: Settings;
+  voices?: SavedVoice[];
   skills: string[];
   library: LibraryCatalog;
   /** Background music: the bundled tracks, then the ones the user added (also listed in user_music). */
@@ -140,6 +142,7 @@ export interface Bootstrap {
   user_music?: string[];
   components: { name: string; path: string | null; bundled: boolean }[];
 }
+export interface SavedVoice { id: string; name: string; }
 export interface LibraryChoice {
   id: string;
   label: string;

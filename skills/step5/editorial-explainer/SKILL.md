@@ -1,14 +1,16 @@
 ---
 name: editorial-explainer
-description: Polish a narrated Studio video with restrained typography, keyword emphasis, explanatory comparisons and charts, and clear chapter breaks during Step 5 assembly.
+description: 在第五步合成中，使用克制排版、关键词强调、对比图表和章节分隔，打磨完整口播视频。
 ---
 
-# Editorial explainer
+# 知识解说精剪
 
-Read `EDITING.md` in the edit workspace for the shared plan and rendering contract. Work on `plan.json`; set its style to `editorial-explainer`.
+先阅读精剪工作目录内的 `EDITING.md`，了解共用计划与渲染契约。编辑 `plan.json`，将 style 设为 `editorial-explainer`。默认使用简体中文交流。
 
-Keep narration and selected media in sequence. Use a dark editorial surface with warm accents, clear Chinese typography, and one dominant idea per shot. Choose narration phrases that explain mechanisms or contrast concepts; emphasize them when spoken, using keyword/quote cards, comparisons or bars. Numbers and chart labels must come from the manuscript, and every chart needs a plain-language unit in its title. Use chapter cards at genuine topic boundaries, with at most a short pause before the next narration.
+保留口播和选定素材的顺序。采用深色编辑版面、暖色点缀和清楚的中文排版，每个镜头只突出一个主要观点。选择解释机制或对比概念的口播短语，在说到时用关键词 / 金句卡、对比或条形图强调。数字和图表标签必须来自正文，每张图的标题都要注明易懂的单位。在真实主题边界放章节卡，可在下一段口播前增加短暂停顿。
 
-Use subtle reframing on static shots. Avoid stacking an explanatory card and a caption in the same area. Let a visual remain quiet when it already communicates the narration; do not add motion merely to fill every second. Use soft clicks and chimes at conceptual reveals, with impacts reserved for a major numerical or logical turning point. Music remains under the voice and may change at a chapter boundary.
+静态画面使用轻微重构图。不要将解释卡和字幕挤在同一区域。画面已能解释口播时允许安静停留，不必每秒都动。概念揭示可配轻柔点击或提示音，重大数字或逻辑转折才用冲击音。音乐保持在口播之下，可在章节边界更换。
 
-Check early, middle, ending, chapter entries and all visual types. Preview an emphasis event as well as a quiet shot. Listen for music masking consonants; inspect charts and subtitles at a small viewing size. Distinguish estimated caption timing from reviewed or ASR-aligned timing in the handoff.
+检查开头、中段、结尾、章节入场和全部画面类型。既预览强调事件，也预览安静镜头。听取音乐是否遮盖辅音，以小尺寸检查图表和字幕。交付时区分估算时间、已审阅时间和 ASR 对齐时间。
+
+遵循 `EDITING.md` 的硬件加速要求：所有 M 系列 Mac 均优先使用 Metal GPU 和 VideoToolbox；Windows 按可用显卡测试 NVENC / QSV / AMF。只有硬件不可用或验证失败时才回退 CPU，并记录原因。

@@ -40,7 +40,11 @@ export const languageModelChoices = Object.keys(languageModels).map((id) => ({
   label: keyProviders.find((p) => p.key === languageModels[id])!.name,
 }));
 // Each image service only accepts its own models; `model` is the one to switch to.
-const doubao = { model: "doubao-seedream-4-0-250828", fits: /doubao|seedream/i };
+export const seedreamModels = ["doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-260128", "doubao-seedream-5-0-flash-260915"];
+export const geminiImageModels = ["gemini-nano-banana-2.1", "gemini-3.1-flash-image"];
+export const imageModelChoices = (server: string): string[] =>
+  server === "doubao" ? seedreamModels : ["google", "google_adc"].includes(server) ? geminiImageModels : [];
+const doubao = { model: seedreamModels[0], fits: /doubao|seedream/i };
 const google = { model: "gemini-3.1-flash-image", fits: /gemini|imagen/i };
 export const imageServiceChoices = [
   { id: "doubao", label: "Volcengine Seedream (Doubao)", ...doubao },

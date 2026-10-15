@@ -30,7 +30,7 @@ def rollback(project, work, entries):
             target.unlink(missing_ok=True)
 
 
-def publish(project, outputs, remove=()):
+def publish(project, outputs, remove=(), validate=None):
     work = project / '.studio/exports' / uuid.uuid4().hex
     work.mkdir(parents=True)
     if not work.resolve().is_relative_to(project.resolve()):
@@ -38,6 +38,7 @@ def publish(project, outputs, remove=()):
     entries = []
     clean = True
     try:
+        if validate:validate()
         for target in [*outputs, *remove]:
             if target.name not in NAMES or target.parent != project or not target.resolve().is_relative_to(project.resolve()):
                 raise ValueError('Invalid export target.')
@@ -52,12 +53,14 @@ def publish(project, outputs, remove=()):
         record(journal, {'owner': os.getpid(), 'phase': 'publishing', 'entries': entries})
         clean = False
         try:
+            if validate:validate()
             for entry in entries:
                 target = project / entry['target']
                 if entry['candidate']:
                     (work / entry['candidate']).replace(target)
                 else:
                     target.unlink(missing_ok=True)
+            if validate:validate()
             record(journal, {'owner': os.getpid(), 'phase': 'committed', 'entries': entries})
             clean = True
         except BaseException:

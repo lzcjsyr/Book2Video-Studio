@@ -1,14 +1,16 @@
 ---
 name: cinematic-essay
-description: Polish a narrated Studio video as a cinematic essay with spacious compositions, gentle movement, selective quotations, chapter pauses and a restrained musical arc during Step 5.
+description: 在第五步合成中，以留白构图、缓慢运动、精选金句、章节停顿和克制的音乐走势打磨口播视频。
 ---
 
-# Cinematic essay
+# 电影感随笔精剪
 
-Read `EDITING.md` in the edit workspace for the shared plan and rendering contract. Set `plan.json` style to `cinematic-essay`.
+先阅读精剪工作目录内的 `EDITING.md`，了解共用计划与渲染契约。编辑 `plan.json`，将 style 设为 `cinematic-essay`。默认使用简体中文交流。
 
-Build an emotional arc from the existing narration rather than inventing new dialogue. Preserve every segment and its order. Favor spacious serif quotation cards, warm muted accents, deliberate chapter transitions and slow reframing. Let strong images breathe; emphasize only pivotal lines. Chapter titles may condense the adjacent narration, but record any newly authored label in notes for review.
+基于现有口播建立情绪弧线，不要编造新对白。保留全部段落及顺序。使用留白充分的衬线金句卡、柔和暖色、有意图的章节转场和缓慢重构图。让有感染力的图片充分停留，只强调关键语句。章节标题可浓缩相邻口播，但新编写的标签必须记录在 notes 中供审阅。
 
-Use short, intentional pauses before chapter changes; do not trim speech to achieve pacing. Keep captions readable and clear of quotation cards. Avoid sustained camera shakes, rapid flashes and excessive emphasis sounds. If music is selected, use a quiet opening, a considered handoff at a meaningful boundary and a resolved ending. Use a gentle chime or soft whoosh only when it helps a transition read.
+章节转换前可加入短而有目的的停顿，不要为节奏裁剪语音。字幕必须清晰，并避开金句卡。避免持续晃动、快速闪烁和过多强调音效。选用音乐时，安排安静开头、在有意义的边界衔接，并让结尾收束。轻柔提示音或掠过音只在有助于理解转场时使用。
 
-Render and inspect a quiet opening, one chapter change and the ending. Listen to narration with the music, not just in isolation. Check that pauses end on a visible frame, quotations enter as spoken, and all trimmed tails preserve the final words. State any caption timing that still needs a listening pass.
+渲染并检查安静开头、一次章节转换和结尾。将口播与音乐一起听取。确认停顿结束时仍有可见画面，金句随语音入场，裁剪尾部后仍保留最后几个字。如字幕仍需听音审阅，应明确说明。
+
+遵循 `EDITING.md` 的硬件加速要求：所有 M 系列 Mac 均优先使用 Metal GPU 和 VideoToolbox；Windows 按可用显卡测试 NVENC / QSV / AMF。只有硬件不可用或验证失败时才回退 CPU，并记录原因。

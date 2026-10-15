@@ -5,19 +5,9 @@ import type { Bootstrap, ClaudeCodeMode, Detail, Settings, LibraryChoice } from 
 import ApiKeysPanel, { type KeyStatus } from "./ApiKeysPanel";
 import LibraryPanel from "./LibraryPanel";
 import { libraryChoices, librarySettings } from "../library";
-import { imageModelFits, imageModelFor, imageServiceChoices, languageModelChoices } from "../keys";
-
-// The engine's split modes (auto / manual / agent), named for what they do.
-const splitMethods: LibraryChoice[] = [
-  { id: "auto", label: "Split evenly" },
-  { id: "manual", label: "One segment per line" },
-  { id: "agent", label: "Agent (split by meaning)" },
-];
-const splitHints: Record<string, string> = {
-  auto: "Cuts at sentence ends into segments of similar length. Every segment starts as an image.",
-  manual: "Each manuscript line becomes a segment. Lines ending in 【hf】 become motion segments.",
-  agent: "An agent groups sentences by meaning and chooses image or motion for each segment.",
-};
+import { imageModelChoices, imageModelFits, imageModelFor, imageServiceChoices, languageModelChoices } from "../keys";
+import ModelSelect from "./ModelSelect";
+import VoicePicker from "./VoicePicker";
 
 export default function SettingsPanel({
   detail,
@@ -71,7 +61,7 @@ export default function SettingsPanel({
     setSettings((s) => {
       const next = { ...s[section], [key]: value };
       const model = modelFor[key];
-      if (model && next[model]) next[model] = imageModelFor(String(value), String(next[model]));
+      if (model) next[model] = imageModelFor(String(value), String(next[model] ?? ""));
       return { ...s, [section]: next };
     });
   const modelWarning = (section: string, serverKey: string, modelKey: string) => {
@@ -86,6 +76,11 @@ export default function SettingsPanel({
   };
   // Headings carry the step number shown in the sidebar.
   const step = (number: number, name: string) => <h3>{t("Step {number} · {name}", { number, name })}</h3>;
+  const imageModel = (section: string, serverKey: string, modelKey: string, label: string) => <ModelSelect
+    key={`${section}.${modelKey}:${settings[section]?.[serverKey]}`}
+    label={t(label)} value={String(settings[section]?.[modelKey] ?? "")}
+    options={imageModelChoices(String(settings[section]?.[serverKey] ?? ""))}
+    onChange={(value) => set(section, modelKey, value)} />;
   // On a Claude subscription, Claude Code runs on the user's own login: agent providers are not used.
   const subscription = claudeMode === "subscription";
   const field = (
@@ -251,25 +246,13 @@ export default function SettingsPanel({
               </div>
               {step(2, "Segments")}
               <div className="form-grid">
-                {field("step2", "split_mode", t("Split method"), splitMethods, false,
-                  splitHints[String(settings.step2?.split_mode ?? "auto")])}
-                {field("step2", "num_segments", t("Target segments"), undefined, false,
-                  "Split evenly aims for about this many segments; the agent uses it as its target. One segment per line ignores it.")}
                 {field("step2", "llm_server", t("Agent provider"), languageModelChoices, settings.step2?.split_mode !== "agent",
                   "Used only by Agent (split by meaning).")}
                 {field("step2", "llm_model", t("Agent model"), undefined, settings.step2?.split_mode !== "agent")}
               </div>
               {step(3, "Voice")}
-              <div className="form-grid">
-                {field("step3", "voice", t("Voice ID"))}
-                {field("step3", "tts_model", t("TTS model"))}
-                {field("step3", "speech_rate", t("Speaking rate"))}
-                {field("step3", "emotion", t("Emotion"), [
-                  "neutral",
-                  "happy",
-                  "sad",
-                ])}
-              </div>
+              <VoicePicker value={String(settings.step3?.voice ?? "S_MKj17k802")} voices={bootstrap.voices ?? []}
+                onChange={(voice) => set("step3", "voice", voice)} />
               {step(4, "Visuals")}
               {/* Visuals has three parts: the summary every visual draws on, still images, and motion clips. */}
               <section className="settings-part" aria-labelledby="settings-summary">
@@ -294,12 +277,12 @@ export default function SettingsPanel({
                     t("Image provider"),
                     imageServiceChoices,
                   )}
-                  {field("step4", "image_model", t("Image model"))}
+                  {imageModel("step4", "image_server", "image_model", "Image model")}
                   {settings.step4?.image_server === "doubao" &&
                     field("step4", "seedream_max_concurrent_image_generation", t("Seedream images at once"), undefined, false, "Only for Volcengine Seedream. Raise it within your account's rate limit.")}
                   {field("step4", "image_style_preset", t("Image style"), libraryChoices(bootstrap.library, "image_styles"))}
                   {field("step4", "image_prompt_template", t("Image prompt"), libraryChoices(bootstrap.library, "image_templates"))}
-                  {field("hyperframes_opening", "ip_name", t("Opening masthead"))}
+                  {field("motion_opening", "ip_name", t("Opening masthead"))}
                 </div>
                 {modelWarning("step4", "image_server", "image_model")}
                 <div className="settings-manage-row">
@@ -311,11 +294,11 @@ export default function SettingsPanel({
                 <h4 id="settings-motion">{t("Motion clips")}</h4>
                 <p className="small-muted">{t(subscription
                   ? "Designed by your own Claude Code on your Claude subscription, then rendered by Studio. The agent provider below is not used now."
-                  : "Designed by Claude Code with HyperFrames, then rendered by Studio.")}</p>
+                  : "Designed by Claude Code with HTML / Three.js, then rendered by Studio.")}</p>
                 <div className="form-grid">
                   {field(
                     "step4",
-                    "hyperframes_style_preset",
+                    "motion_style_preset",
                     t("Animation style"),
                     libraryChoices(bootstrap.library, "motion_styles"),
                   )}
@@ -342,7 +325,7 @@ export default function SettingsPanel({
                   t("Cover provider"),
                   imageServiceChoices,
                 )}
-                {field("step6", "cover_image_model", t("Cover model ID"))}
+                {imageModel("step6", "cover_image_server", "cover_image_model", "Cover model ID")}
               </div>
               {modelWarning("step6", "cover_image_server", "cover_image_model")}
               </>}

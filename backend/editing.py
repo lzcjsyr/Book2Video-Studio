@@ -62,7 +62,7 @@ def source(studio, project, settings):
     dimensions = str(step5.get('video_size') or '1280x720').lower().replace('×', 'x').replace(' ', '')
     width, height = map(int, dimensions.split('x'))
     return {'project': str(project), 'scenes': scenes, 'settings': step5,
-            'subtitles': settings.get('subtitles', {}), 'music': music,
+            'subtitles': settings.get('subtitles', {}), 'three_by_four':settings.get('three_by_four',{}), 'music': music,
             'title': first_text(raw.get('video_titles')), 'fps': 30,
             'width': width, 'height': height}
 
@@ -115,6 +115,8 @@ def prepare(studio, project, settings, session, revise=False):
     plan = {**old_plan, 'version': 1, 'style': style if style in STYLES else STYLES[0], 'scenes': scenes,
             'music': old_plan.get('music', [{'track': track, 'start': 0, 'volume': float(payload['settings'].get('bgm_default_volume', .1))}] if track else []),
             'sfx': old_plan.get('sfx', []), 'notes': old_plan.get('notes', '')}
+    from core.infra.motion.runtime import prepare_assets
+    prepare_assets(work)
     write(work / 'studio-payload.json', payload)
     if not invalid_copy:
         write(work / 'plan.json', plan)
@@ -125,7 +127,7 @@ def prepare(studio, project, settings, session, revise=False):
     edit = {'folder': str(work.relative_to(project)), 'source': signature(payload), 'skill': style, 'initial_plan': None if invalid_copy else signature(plan),
             'initial_html': {str(p.relative_to(work)): stamp(p) for p in work.rglob('*.html') if 'build' not in p.relative_to(work).parts}}
     prompt = studio.library.prompt('step5_editing_agent.md', 'main', skill_path=skill['path'],
-        work_dir=str(work), contract_path=str(work / 'EDITING.md'), motion_skills_dir=str(studio.library_root / 'skills/step4'))
+        work_dir=str(work), contract_path=str(work / 'EDITING.md'), motion_skills_dir=str(studio.library_root / 'skills/step4/motion-core'))
     if invalid_copy:
         prompt += studio.library.prompt('step5_editing_agent.md', 'invalid')
     return edit, work, prompt
@@ -263,7 +265,7 @@ def verify_inputs(payload, plan):
     if opening and opening['content'] != quote:
         raise ValueError('Opening quote changed during this edit. Revise the edit before rendering.')
     state = read(project/'.studio/state.json') if (project/'.studio/state.json').is_file() else {}
-    for section, old in [('step5', payload['settings']), ('subtitles', payload['subtitles'])]:
+    for section, old in [('step5', payload['settings']), ('subtitles', payload['subtitles']), ('three_by_four', payload.get('three_by_four',{}))]:
         for key, value in state.get('settings', {}).get(section, {}).items():
             if key not in {'assembly_method', 'agent_skill'} and old.get(key) != value:
                 raise ValueError('Assembly settings changed during this edit. Revise the edit before rendering.')
@@ -286,7 +288,16 @@ def detail(project, edit, current_source=None):
     paths = [work/'plan.json', *work.glob('*.html'), *[project/p for p in previews]]
     current_html = {str(p.relative_to(work)): stamp(p) for p in work.rglob('*.html') if 'build' not in p.relative_to(work).parts}
     changed = bool(check and (signature(check['plan']) != edit.get('initial_plan') or current_html != edit.get('initial_html', {})))
-    return {**edit, 'changed': changed, 'style': check['plan']['style'] if check else edit['skill'], 'valid': check is not None, 'problem': problem, 'current': current_source is None or edit['source'] == signature(current_source),
+    from edit_render import candidate_current
+    verified=candidate_current(work,check) if check else False
+    published=False
+    if verified:
+        try:
+            receipt=read(work/'build/published.json')
+            from edit_render import render_signature
+            published=receipt['input_signature']==render_signature(work,check) and all(stamp(path)==value for path,value in receipt['outputs'].items())
+        except (OSError,ValueError,KeyError,TypeError):pass
+    return {**edit, 'published':published,'verified':verified,'candidate':str((work/'build/candidate.mp4').relative_to(project)) if verified else None, 'changed': changed, 'style': check['plan']['style'] if check else edit['skill'], 'valid': check is not None, 'problem': problem, 'current': current_source is None or edit['source'] == signature(current_source),
             'duration': check['duration'] if check else None, 'warnings': check['warnings'] if check else [],
             'preview': previews[0] if previews and previews[0].endswith('.mp4') else None,
             'contact_sheet': next((p for p in previews if p.endswith('.png')), None), 'revisions': {str(p.relative_to(project)): stamp(p) for p in paths}}

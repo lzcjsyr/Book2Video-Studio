@@ -60,9 +60,83 @@ class AgentTemplateTests(unittest.TestCase):
         assembly=self.launch('5')
         self.assertIn('CUSTOM step5_editing_contract.md',(Path(assembly['cwd'])/'EDITING.md').read_text())
 
+    def test_no_skill_writing_keeps_output_contract_without_loading_skill_files(self):
+        import shutil
+        # No fallback skill can accidentally make the no-skill session succeed.
+        shutil.rmtree(self.studio.library_root/'skills/step1')
+        source = self.p/'source.txt'; source.write_text('A real source document.')
+        for mode in ['direct', 'source']:
+            with self.subTest(mode=mode):
+                previous = self.studio.writing_options(self.studio.state(self.p))
+                options = {**previous, 'mode': mode, 'source': str(source), 'agent_skill': ''}
+                saved = self.studio.save_writing(self.p.name, {'options': options, 'expected': previous})
+                self.assertEqual(saved['state']['settings']['step1']['agent_skill'], '')
+                self.assertEqual(self.studio.writing_options(self.studio.state(self.p))['agent_skill'], '')
+                launch = prepare(self.studio, self.p, {'step': '1', 'instructions': 'Write a short, warm introduction.'})
+                prompt = Path(launch['context']).read_text()
+                self.assertIn('当前没有选择写作技能', prompt)
+                self.assertIn('Write a short, warm introduction.', prompt)
+                self.assertIn(str(self.p/'text/raw.json'), prompt)
+                for field in ['source_name', 'content', 'total_length', 'video_titles', 'golden_quotes']:
+                    self.assertIn(field, prompt)
+                self.assertNotIn(str(self.studio.library_root/'skills'), prompt)
+                self.assertNotIn(str(self.studio.library_root/'skills'), launch['args'])
+                self.assertNotIn('{skill_path}', prompt)
+                if mode == 'source':
+                    self.assertIn(str(source), prompt)
+                    self.assertIn(str(source.parent), launch['args'])
+                else:
+                    self.assertNotIn(str(source), prompt)
+
+    def test_every_interactive_agent_has_a_scoped_source_manifest(self):
+        for step in ['1', '4', '5', '6']:
+            with self.subTest(step=step):
+                launch = self.launch(step)
+                task = json.loads(Path(launch['task']).read_text())
+                prompt = Path(launch['context']).read_text()
+                self.assertEqual(task['stage'], step)
+                self.assertEqual(task['cwd'], str(Path(launch['cwd']).resolve()))
+                self.assertTrue(task['writable']); self.assertTrue(task['protected']); self.assertTrue(task['done'])
+                self.assertIn(str(Path(launch['task'])), prompt)
+                self.assertIn('不自行进入下一步', prompt)
+                self.assertEqual(launch['context_chars'], len(prompt))
+                self.assertNotIn(str(self.studio.library_root/'skills'), launch['args'])
+                self.assertNotIn('ANTHROPIC_API_KEY', json.dumps(task))
+                if step in {'4', '6'}:
+                    self.assertIn(str((Path(launch['cwd'])/'render.py').resolve()), task['protected'])
+                if step == '6':
+                    payload=json.loads((Path(launch['cwd'])/'studio-payload.json').read_text())
+                    self.assertNotIn('manuscript', payload)
+                    self.assertEqual(payload['manuscript_path'], str(self.p/'text/raw.json'))
+
+    def test_motion_instructions_are_shared_once_and_task_payloads_remain_distinct(self):
+        first=self.launch('4')
+        one=Path(first['context']).read_text()
+        script=json.loads((self.p/'text/script.json').read_text())
+        script['segments'].append({'index':2,'content':'A second, unrelated narration.','visualizer':'hf'})
+        atomic_json(self.p/'text/script.json',script)
+        with wave.open(str(self.p/'voice/voice_2.wav'),'wb') as wav:
+            wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(b'\0\0'*32000)
+        folders={1:self.p/'images/takes/batch-1',2:self.p/'images/takes/batch-2'}
+        launch=prepare(self.studio,self.p,{'step':'4','indices':[1,2],'folders':folders})
+        prompt=Path(launch['context']).read_text()
+        task=json.loads(Path(launch['task']).read_text())
+        self.assertEqual(prompt.count('## 浏览器片段契约'),1)
+        self.assertEqual(prompt.count('动作配方：'),1)
+        self.assertNotIn('A second, unrelated narration.',prompt)
+        self.assertLess(len(prompt),len(one)*1.5)
+        self.assertEqual(task['facts']['selected_segments'],[1,2])
+        self.assertEqual(task['writable'],[str(p.resolve()) for p in folders.values()])
+        for index, work in folders.items():
+            payload=json.loads((work/'studio-payload.json').read_text())
+            self.assertEqual(payload['segmentIndex'],index)
+            self.assertEqual(payload['durationSeconds'],float(index))
+            self.assertIn(str(work/'studio-payload.json'),prompt)
+        self.assertNotEqual(json.loads((folders[1]/'studio-payload.json').read_text())['content'],json.loads((folders[2]/'studio-payload.json').read_text())['content'])
+
     def test_missing_sections_and_variables_are_rejected_without_saving(self):
         item=self.studio.library.item('templates','step4_studio.md')
         for transform in [lambda value:value.replace('<!-- section: single -->','<!-- section: wrong -->'),
-                          lambda value:value.replace('{hyperframes_version}','')]:
+                          lambda value:value.replace('{snapshots_dir}','')]:
             with self.assertRaisesRegex(ValueError,'sections|variables'):self.save(item['id'],transform)
         self.assertEqual(self.studio.library.item('templates',item['id'])['value'],item['value'])

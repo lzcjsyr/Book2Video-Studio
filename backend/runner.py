@@ -115,7 +115,7 @@ def run(request):
         if request.get("mode") == "summary":
             return {"success": True, "message": "Content summary generated."}
     if step == "4" and request.get("mode") == "render":
-        from core.infra.hyperframes.runtime import hyperframes_command, subprocess_env
+        from core.infra.motion.renderer import render_clip
         script = json.loads((project / "text/script.json").read_text())
         selected = indices or [s["index"] for s in script["segments"] if s.get("visualizer") == "hf"]
         if not selected:
@@ -139,7 +139,7 @@ def run(request):
             print(f"Rendering segment {idx} from its saved composition…", flush=True)
             rendered = project / ".studio" / f"render-{uuid.uuid4().hex}.mp4"
             try:
-                subprocess.run([*hyperframes_command(), "render", "--output", str(rendered), "--fps", str(params.get("hyperframes_render_fps", 30)), "--variables", json.dumps(payload, ensure_ascii=False)], cwd=work, check=True, env=subprocess_env())
+                render_clip(work, payload, rendered, fps=int(params.get("motion_render_fps", 30)))
                 if not rendered.is_file() or not duration(rendered):
                     raise ValueError(f"Segment {idx} renderer did not produce a playable video. Check FFprobe and the render log.")
                 # The clip keeps its own video; Studio puts it in the engine's place when the clip is selected.
@@ -157,19 +157,8 @@ def run(request):
         candidate, report = render(work, preview=preview, start=float(request.get("start", 0)), seconds=float(request.get("seconds", 8)))
         if preview:
             return {"success": True, "message": "Editing preview rendered.", "qa": report}
-        outputs = {project / "final_video.mp4": candidate,
-                   project / "final_video.srt": work / "build/captions.srt",
-                   project / "final_video.qa.json": candidate.with_suffix(".qa.json")}
-        if getattr(config, "THREE_BY_FOUR_ENABLED", True):
-            from core.domain.composer import VideoComposer
-            VideoComposer().export_three_by_four(str(candidate), read_script(project))
-            portrait = candidate.with_name(candidate.stem + "_3x4.mp4")
-            if not portrait.is_file():
-                raise ValueError("The polished video's 3:4 copy was not produced.")
-            outputs[project / "final_video_3x4.mp4"] = portrait
-        import exports
-        editing.verify_inputs(editing.read(work / "studio-payload.json"), editing.read(work / "plan.json"))
-        exports.publish(project, outputs, remove=[] if getattr(config, "THREE_BY_FOUR_ENABLED", True) else [project / "final_video_3x4.mp4"])
+        from edit_render import publish
+        publish(work)
         return {"success": True, "message": "Polished video rendered and verified.", "qa": report}
     if step == "5" and request.get("mode") == "three_by_four":
         from core.domain.composer import VideoComposer
@@ -185,7 +174,7 @@ def run(request):
     if step == "4" and request.get("mode") == "opening_render":
         # The engine draws the opening quote over its current background; that background is now the chosen one.
         import shutil
-        from core.infra.hyperframes.opening_renderer import render_opening_video
+        from core.infra.motion.opening_renderer import render_opening_video
         background = project / "images/opening_bg.png"
         if Path(request["background"]).resolve() != background.resolve():
             shutil.copy2(request["background"], background)
@@ -200,7 +189,7 @@ def run(request):
     fn = functions[step]
     values = {**params, "project_output_dir": str(project), "target_segments": indices, "regenerate_opening": request.get("opening", False)}
     if step == "2":
-        values["split_mode"] = params.get("step1_5_split_mode", "auto")
+        values["split_mode"] = params.get("step1_5_split_mode", "punctuation")
     if step == "4":
         values.update(visual_mode="static_image", llm_server=params["llm_server_step4"], llm_model=params["llm_model_step4"], llm_base_url=params["llm_base_url_step4"])
         check_image_model(params["image_server"], params["image_model"])

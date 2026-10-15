@@ -1,7 +1,7 @@
 // Assemble everything Book2Video Studio ships besides its own binary:
 //   build/runtime  Python with the engine's packages (including the Claude Code
 //                  CLI bundled by claude-agent-sdk), Node.js, the pinned
-//                  HyperFrames CLI and its Chrome build, FFmpeg and FFprobe
+//                  browser automation libraries and Chrome, FFmpeg and FFprobe
 //   build/engine   the CLI engine's code, prompts, skills, music and defaults
 //   build/backend  the desktop's project service
 // Downloads are pinned, checksum-verified and cached in build/downloads. The
@@ -20,6 +20,7 @@ const engineSource = path.resolve(
 );
 
 const PYTHON = { version: "3.13.15", release: "20260924" };
+const CHROME = "152.0.7977.30";
 const NODE = "22.23.3";
 const FFMPEG = { version: "9.0.2", build: "1789931890_9.0.2" };
 const PLATFORMS = {
@@ -106,11 +107,11 @@ function flattenSymlinks(dir) {
 async function stageRuntime() {
   const lockDir = path.join(root, "runtime");
   const pins = {
-    platform, PYTHON, NODE, FFMPEG,
+    platform, PYTHON, NODE, FFMPEG, CHROME,
     script: sha256(fileURLToPath(import.meta.url)),
     requirements: sha256(path.join(lockDir, "requirements.lock")),
-    hyperframes: ["package.json", "package-lock.json"].map((f) => {
-      const file = path.join(lockDir, "hyperframes", f);
+    motion: ["package.json", "package-lock.json"].map((f) => {
+      const file = path.join(lockDir, "motion", f);
       return fs.existsSync(file) ? sha256(file) : "";
     }),
   };
@@ -133,7 +134,7 @@ async function stageRuntime() {
     "-r", path.join(lockDir, "requirements.lock")], { env: cleanEnv() });
   run(python, ["-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash", path.join(work, "python/lib")], { env: cleanEnv() });
 
-  // Node.js with npm: runs HyperFrames, and the motion agent's own checks.
+  // Node.js with npm runs the shared browser renderer and agent tools.
   const nodeArchive = await download(`https://nodejs.org/dist/v${NODE}/${platform.node}.tar.gz`,
     checksumFrom(await fetchText(`https://nodejs.org/dist/v${NODE}/SHASUMS256.txt`), `${platform.node}.tar.gz`));
   run("tar", ["-xzf", nodeArchive, "-C", work]);
@@ -145,23 +146,14 @@ async function stageRuntime() {
   const npm = path.join(work, "node/lib/node_modules/npm/bin/npm-cli.js");
   const nodeEnv = cleanEnv({ PATH: [path.join(work, "node/bin"), process.env.PATH].join(path.delimiter) });
 
-  // HyperFrames, pinned by its lock file, and the Chrome build it expects.
-  const hyperframes = path.join(work, "hyperframes");
-  fs.mkdirSync(hyperframes);
-  const lock = path.join(lockDir, "hyperframes/package-lock.json");
-  fs.copyFileSync(path.join(lockDir, "hyperframes/package.json"), path.join(hyperframes, "package.json"));
-  if (fs.existsSync(lock)) fs.copyFileSync(lock, path.join(hyperframes, "package-lock.json"));
-  run(node, [npm, fs.existsSync(lock) ? "ci" : "install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: hyperframes, env: nodeEnv });
-  if (!fs.existsSync(lock)) fs.copyFileSync(path.join(hyperframes, "package-lock.json"), lock);
-  const dist = path.join(hyperframes, "node_modules/hyperframes/dist");
-  const cli = path.join(dist, "cli.js");
-  // Newer CLIs code-split the constant into a chunk; \b skips MACOS_12_CHROME_VERSION.
-  const chromeVersion = fs.readdirSync(dist).filter((f) => f.endsWith(".js"))
-    .map((f) => fs.readFileSync(path.join(dist, f), "utf8").match(/\bCHROME_VERSION = "([\d.]+)"/)?.[1])
-    .find(Boolean);
-  if (!chromeVersion) throw new Error("Cannot find the Chrome version HyperFrames expects.");
+  // Pinned browser automation, animation libraries and browser, independent of video frameworks.
+  const motion = path.join(work, "motion");
+  fs.mkdirSync(motion);
+  for (const file of ["package.json", "package-lock.json"]) fs.copyFileSync(path.join(lockDir, "motion", file),path.join(motion,file));
+  run(node,[npm,"ci","--omit=dev","--no-audit","--no-fund"],{cwd:motion,env:nodeEnv});
+  const chromeVersion = CHROME;
   // v2 exposes an ESM build under exports; v3 is ESM-only at main.
-  const browsersDir = path.join(hyperframes, "node_modules/@puppeteer/browsers");
+  const browsersDir = path.join(motion, "node_modules/@puppeteer/browsers");
   const browsersPkg = JSON.parse(fs.readFileSync(path.join(browsersDir, "package.json"), "utf8"));
   const browsers = path.join(browsersDir, browsersPkg.exports?.["."]?.import ?? browsersPkg.main);
   const chrome = execFileSync(node, ["--input-type=module", "-e", `
@@ -170,15 +162,14 @@ async function stageRuntime() {
       browser: Browser.CHROMEHEADLESSSHELL, buildId: ${JSON.stringify(chromeVersion)}, platform: detectBrowserPlatform() });
     process.stdout.write(result.executablePath);`], { env: nodeEnv }).toString().trim();
 
-  // FFmpeg and FFprobe: static builds used by the engine and by HyperFrames.
+  // FFmpeg and FFprobe: static builds used by the engine and rendering tools.
   for (const tool of ["ffmpeg", "ffprobe"]) {
     const sums = await fetchText(`${platform.ffmpeg}/${tool}.zip.sha256`);
     const archive = await download(`${platform.ffmpeg}/${tool}.zip`, sums.trim().split(/\s+/)[0]);
     run("unzip", ["-o", "-q", archive, "-d", path.join(work, "bin")]);
     fs.chmodSync(path.join(work, "bin", tool), 0o755);
   }
-  fs.writeFileSync(path.join(work, "bin/hyperframes"),
-    `#!/bin/sh\nhere="$(cd "$(dirname "$0")/.." && pwd)"\nexec "$here/node/bin/node" "$here/hyperframes/node_modules/hyperframes/dist/cli.js" "$@"\n`, { mode: 0o755 });
+
 
   // Skills and the Claude Code agent run `python`; macOS has no such command and its
   // python3 is a stub that asks to install developer tools. Point both at the bundled one.
@@ -193,7 +184,7 @@ async function stageRuntime() {
     python: pythonBin,
     claude: `${sitePackages}/claude_agent_sdk/_bundled/claude`,
     node: "node/bin/node",
-    hyperframes: relative(cli),
+    motion_modules: "motion/node_modules",
     chrome: relative(chrome),
     ffmpeg: "bin/ffmpeg",
     ffprobe: "bin/ffprobe",
@@ -216,7 +207,9 @@ function stageEngine() {
   const skip = (parts) => parts.some((p) => p === "__pycache__" || p === ".DS_Store" || p === "node_modules" || p.endsWith(".pyc"));
   copyTree(path.join(engineSource, "core"), path.join(target, "core"), (parts) => skip(parts) || parts[0] === "tests");
   for (const folder of ["prompts", "skills", "music"]) copyTree(path.join(engineSource, folder), path.join(target, folder), skip);
-  copyTree(path.join(root, "skills/step5"), path.join(target, "skills/step5"), skip);
+  // Desktop Chinese instructions override engine defaults; keep upstream assets
+  // and reference paths available to the localized skill entrypoints.
+  copyTree(path.join(root, "skills"), path.join(target, "skills"), skip);
   copyTree(path.join(root, "prompts"), path.join(target, "prompts"), skip);
   fs.copyFileSync(path.join(engineSource, "config.example.yaml"), path.join(target, "config.example.yaml"));
 }
@@ -248,7 +241,7 @@ function smokeTest() {
   const version = (name, args) => execFileSync(tool(name), args, { env }).toString().split("\n")[0].trim();
   console.log("Claude Code:", version("claude", ["--version"]));
   console.log("Node.js:", version("node", ["--version"]));
-  console.log("HyperFrames:", execFileSync(tool("node"), [tool("hyperframes"), "--version"], { env }).toString().trim());
+  run(tool("node"), ["-e", "const {createRequire}=require('node:module'); const r=createRequire(process.argv[1]+'/package.json'); for(const p of ['puppeteer-core','gsap','three']) r.resolve(p); console.log('Browser libraries: ok')", tool("motion_modules")], {env});
   console.log("Chrome:", version("chrome", ["--version"]));
   console.log("FFmpeg:", version("ffmpeg", ["-version"]));
   console.log("FFprobe:", version("ffprobe", ["-version"]));

@@ -181,7 +181,7 @@ export default function TakePicker({
         <section>
           <h4><Clapperboard size={12} /> {t(opening ? "Opening clips" : "Motion clips")} <span>{clips.length}</span></h4>
           {clips.length ? <ul className="take-grid">{clips.map(tile)}</ul>
-            : <p className="take-empty">{t(opening ? "No opening clips yet." : "No motion clips yet. Claude Code designs them with HyperFrames.")}</p>}
+            : <p className="take-empty">{t(opening ? "No opening clips yet." : "No motion clips yet. Claude Code designs them with HTML / Three.js.")}</p>}
         </section>
       </div>
       <div className="take-picker-actions">

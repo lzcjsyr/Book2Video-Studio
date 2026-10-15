@@ -1,19 +1,34 @@
-# Studio editing plan and rendering contract
+# Studio 精剪计划与渲染契约
 
-`studio-payload.json` is read-only source context: current selected images/motion clips, voice recordings, canonical narration, music catalog, export settings and source dimensions. Work only in this edit folder. Source files, earlier designs and published exports remain untouched. Studio publishes only a successfully verified render.
+`studio-payload.json` 是只读来源上下文，包含当前选定的图片 / 动态片段、录音、权威正文、音乐目录、导出设置和素材尺寸。只在此精剪工作目录内编辑；保留源文件、早期设计和已发布导出。Studio 仅发布验证成功的成片。
 
-`plan.json` uses version 1 and one of the three built-in styles. Its `scenes` must contain every source index once in the original order, including index 0 when the opening is enabled. For each scene:
+`plan.json` 使用 version 1 和三个内置风格之一。`scenes` 必须按原顺序包含每个来源 index 恰好一次；启用开场时也必须包含 index 0。每个场景的字段如下：
 
-- `trim: [start, end]`: ORIGINAL recording seconds. Default is the full recording; trim only verified silence unless the user explicitly requests cutting speech.
-- `pause_before`: additional output seconds, 0–10. The scene remains visible during the pause; narration is delayed by exactly the same amount.
-- `transition`: optional cut/crossfade/fade_black/fade_white/slide_left/slide_right/wipe_left/wipe_right/zoom_in/zoom_out, with optional `transition_duration` (0.01–3 seconds, capped at a third of the scene). Defaults follow the GUI. Transitions hold the previous background frame while the new scene enters; narration stays on its continuous clock.
-- `zoom`: 1–1.4 for still-image reframing. Motion clips retain their selected content and are fit to the recording duration.
-- `captions`: `{text, start, end}` cues in original recording seconds. Together they must preserve the narration wording. No overlap or reordering. `caption_timing` is `estimated`, `aligned` or `reviewed`; the initial proportional cues are estimates.
-- `overlays`: `{kind, text, start, end, position}`. Kinds: `keyword`, `quote`, `chapter`, `compare`, `bars`; positions: `center`, `top`, `left`, `right`. `at: "exact keyword"` can replace start and resolves against caption timings. A keyword crossing cue boundaries needs a reviewed numeric time. Compare/bars add `items: [{label, value}]`; bars use values 0–100, with their unit in text. A chapter card can set `during_pause: true` to enter before the delayed narration. Keep cards concise: at most 80 characters, 36 for chapter cards or 40 in side positions, and three lines. Comparisons and charts use center/top positions, with 2–6 labels of at most 20 characters. No invented factual claims.
-- Optional `html`: relative path to your custom scene HTML. It is scene-local and must declare the exact width, height and frame-aligned duration from `check` output, use `data-composition-id="main"`, expose a paused GSAP timeline at `window.__timelines.main`, and keep narration/audio out (Studio mixes audio once). The local GSAP script is copied into `build/gsap.min.js`; reference it relatively. Media sources are listed in the payload. Read the pinned HyperFrames skills for custom compositions and check them yourself. Custom HTML permits richer explanatory scenes while retaining the same audio/timing pipeline.
+- `trim: [start, end]`：原始录音秒数，默认保留全部录音。用户未明确要求删减口播时，只能裁剪已核实的静音。
+- `pause_before`：额外成片秒数，范围 0–10。暂停时场景仍可见，口播同步延迟相同时间。
+- `transition`：可选 cut / crossfade / fade_black / fade_white / slide_left / slide_right / wipe_left / wipe_right / zoom_in / zoom_out；`transition_duration` 可选，范围 0.01–3 秒，且不超过本场景时长的三分之一。默认遵循图形界面设置。新场景入场时保持上一背景帧，口播时钟持续前进。
+- `zoom`：静态图片重构图缩放比例，范围 1–1.4。动态片段保留选定内容并适配录音时长。
+- `captions`：`{text, start, end}` 字幕条目，时间为原始录音秒数。必须完整保留口播用词，不得重叠或乱序。`caption_timing` 为 `estimated`（估算）、`aligned`（语音对齐）或 `reviewed`（已人工审阅）；初始按比例分配的时间属于估算。
+- `overlays`：`{kind, text, start, end, position}`。kind 支持 `keyword`、`quote`、`chapter`、`compare`、`bars`；position 支持 `center`、`top`、`left`、`right`。可以用 `at: "精确关键词"` 代替 start，并依据字幕时间定位；跨字幕条目的关键词需要填写审阅过的数字时间。compare / bars 增加 `items: [{label, value}]`；bars 数值范围 0–100，单位写入 text。章节卡可用 `during_pause: true` 在延迟的口播开始前入场。卡片最多 80 字，章节卡最多 36 字，侧边卡最多 40 字，均不超过三行。对比和图表位于 center / top，含 2–6 个标签，每个最多 20 字。不得编造事实。
+- 可选 `html`：当前工作目录内自定义 HTML 的相对路径。声明 window.clip={width,height,durationSeconds,ready,renderAt}，ready 为 Promise，renderAt(t) 在任意时间点重建画面并可返回 Promise。宽高和时长必须匹配 check 解析结果。使用 vendor/gsap.min.js、vendor/three/ 本地依赖；不加入配音。视频素材通过 window.clipTools.seekVideo(video,seconds) 精确 seek 并等待解码，不能用自由运行播放作为时间源。Canvas/WebGL 中的文字避让需抽帧检查。
 
-`music: [{track, start, end?, offset?, volume}]` schedules catalog tracks in FINAL video seconds. Volume 0–0.6; optional source offset permits a musical handoff. The GUI ducking/loudness controls remain effective. `sfx: [{sound, at, volume}]` uses FINAL video seconds, volume 0–0.5, and built-in procedural click/whoosh/impact/chime sounds. `notes` records editorial choices, newly authored labels, and timing limitations.
+`music: [{track, start, end?, offset?, volume}]` 按最终视频秒数安排目录内的音乐，volume 范围 0–0.6；可选 offset 是音乐源偏移，便于衔接。图形界面的闪避和响度控制仍生效。`sfx: [{sound, at, volume}]` 也使用最终视频秒数，volume 范围 0–0.5；内置程序化音效为 click / whoosh / impact / chime。`notes` 记录剪辑选择、新编写的标签和字幕时间限制。
 
-Commands: `python studio_edit.py check` validates the plan and writes a resolved timeline (`start` is final seconds and `start_frame` is its frame index). `align` uses a locally available Whisper CLI/model to align canonical words to recordings, preserving the script; it reports transcript similarity and requires review for poor matches. `preview` renders the first short section to `previews/preview.mp4` and a contact sheet. `preview --start N --seconds S` selects another part (final seconds). Inspect real frames and audio, fix issues and repeat. `render` writes a candidate master within the edit folder; Studio's **Finish & render video** publishes the final master and optional 3:4 copy.
+## 检查、预览与输出
 
-Long videos render in chunks no longer than two minutes. Chunk boundaries are frame-aligned, include one pre-roll frame, and are trimmed by frame count. An overlay crossing a seam is present in both local timelines. Media, narration, captions and SFX use a single speed transformation. Check frame count, dimensions, audio/video duration, decoded output and seam frames before saying the render is ready. Do not trust a file merely because FFmpeg created it.
+- `python studio_edit.py check`：验证计划并写出解析后的时间线；start 为成片秒数，start_frame 为帧索引。
+- `python studio_edit.py align`：使用本地可用的 Whisper CLI / 模型，将权威正文对齐录音并保留正文。会报告转写相似度，低匹配率需审阅。
+- `python studio_edit.py preview`：实渲染开头短片到 `previews/preview.mp4`，并生成联系表。`preview --start N --seconds S` 可选择其他部分（成片秒数）。查看真实帧、听取声音，修复后再次验证。
+- `python studio_edit.py render`：在精剪目录内写出候选主视频。完成全片检查后运行 publish；界面显示已生成的主片及可选 3:4 副本。
+
+长视频按不超过两分钟的块渲染。边界按帧对齐，包含一个预滚帧，再按帧数裁剪。跨边界的强调层应出现在两侧局部时间线中。画面、口播、字幕和音效采用同一次速度变换。确认帧数、尺寸、音视频时长、完整解码和接缝帧后才说明可交付；FFmpeg 创建了文件不代表通过验证。
+
+## Agent 渲染与质量循环
+<!-- AGENT_RENDER_LOOP_VERSION: 2 -->
+
+`python studio_edit.py capabilities` 实测 OS、架构、Chrome GPU、视频解码支持，以及目标尺寸/帧率下的编码器。先读取 capabilities.json，优先使用硬件；软件回退应有实测失败原因或用户指示。
+`python studio_edit.py render` 在 build/ 写入已验证 candidate.mp4、candidate.qa.json、captions.srt 及启用时的 candidate_3x4.mp4。
+完成全片的抽帧与质量检查后运行 `python studio_edit.py publish`。它会拒绝源码、计划、录音、素材、设置或产物已改变的候选，不重新渲染。
+未改动的已验证完整渲染会复用。修改后重新预览/渲染；`--force` 可重建。用户无需在会话结束后另行启动渲染。
+预览只写 previews/，不会覆盖最终视频。保留正文和素材，只通过计划调整时间、强调、字幕和声音。不要声称自动帧数/时长验证能证明审美质量；必须读抽帧，并如实报告未听审或估算字幕等限制。
+共享工具支持 `--browser-mode auto/hardware/software` 和 `--encoder auto/software`。机器判断以实测为准，不靠型号名单。

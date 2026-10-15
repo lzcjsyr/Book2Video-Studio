@@ -34,12 +34,34 @@ class EditingTests(unittest.TestCase):
         launch=self.studio.prepare_agent(self.id,{'step':'5',**body});return launch,Path(launch['cwd'])
     def plan(self,work):return editing.read(work/'plan.json')
     def setplan(self,work,plan):editing.write(work/'plan.json',plan)
+    def test_agent_tools_render_review_publish_and_reuse_without_app_render_job(self):
+        _,work=self.prepare()
+        tool=[sys.executable,str(work/'studio_edit.py')]
+        subprocess.run([*tool,'preview','--seconds','1'],check=True,capture_output=True,text=True,timeout=90)
+        self.assertTrue((work/'previews/contact-sheet.png').is_file())
+        subprocess.run([*tool,'render'],check=True,capture_output=True,text=True,timeout=90)
+        self.assertTrue(edit_render.candidate_current(work))
+        before=editing.stamp(work/'build/candidate.mp4')
+        with patch('edit_render.render_clip',side_effect=AssertionError('Do not render a verified candidate again')):
+            edit_render.render(work)
+        self.assertEqual(before,editing.stamp(work/'build/candidate.mp4'))
+        subprocess.run([*tool,'publish'],check=True,capture_output=True,text=True,timeout=30)
+        self.assertTrue((self.p/'final_video.mp4').is_file())
+        detail=self.studio.detail(self.id)
+        self.assertTrue(detail['assembly_edit']['published'])
+        self.assertNotIn('5',detail['state']['stale'])
+        detail=self.studio.finish_agent(self.id,{})
+        self.assertFalse(detail['warning'])
+        self.assertEqual(before,editing.stamp(work/'build/candidate.mp4'))
+        plan=self.plan(work);plan['notes']='changed after publishing';self.setplan(work,plan)
+        with self.assertRaisesRegex(ValueError,'Render and verify'):
+            edit_render.publish(work)
     def test_context_skill_and_provider_contract(self):
         launch,work=self.prepare();context=Path(launch['context']).read_text()
         self.assertIn('editorial-explainer/SKILL.md',context);self.assertTrue((work/'EDITING.md').is_file())
         self.assertEqual([s['index'] for s in self.plan(work)['scenes']],[1,2])
-        self.assertIn('estimated',context);self.assertIn('Finish & render video',context)
-        self.assertEqual(len([p for p in (self.studio.library_root/'skills/step5').iterdir() if p.is_dir()]),3)
+        self.assertIn('估算',context);self.assertIn('python studio_edit.py publish',context)
+        self.assertEqual(len([p for p in (self.studio.library_root/'skills/step5').iterdir() if (p/'SKILL.md').is_file()]),3)
         from server import engine_settings
         self.assertEqual(engine_settings({'step5':{'assembly_method':'agent','agent_skill':'x','video_size':'320x180'}}),{'step5':{'video_size':'320x180'}})
     def test_plan_requires_all_scenes_and_canonical_captions(self):
@@ -89,7 +111,7 @@ class EditingTests(unittest.TestCase):
         with patch('edit_render.CHUNK_FRAMES',30):
             output,report=edit_render.render(work,preview=True,seconds=2)
         self.assertEqual(report['chunks'],2);self.assertEqual(report['frames'],60)
-        ffmpeg=os.environ['HYPERFRAMES_FFMPEG_PATH']
+        ffmpeg=os.environ['AIGC_FFMPEG_PATH']
         for frame,expected in [(0,(30,60,120)),(29,(30,60,120)),(30,(60,60,120)),(59,(60,60,120))]:
             result=subprocess.run([ffmpeg,'-v','error','-i',str(output),'-vf',f'select=eq(n\\,{frame})','-frames:v','1','-f','image2pipe','-vcodec','png','-'],capture_output=True,check=True)
             with Image.open(io.BytesIO(result.stdout)) as image:
@@ -162,7 +184,7 @@ class EditingTests(unittest.TestCase):
         for transition in ['crossfade','wipe_left','slide_right','zoom_in','fade_white']:
             plan['scenes'][1]['transition']=transition;plan['scenes'][1]['transition_duration']=.2;self.setplan(work,plan)
             output,report=edit_render.render(work,preview=True,seconds=2);self.assertEqual(report['frames'],60)
-            result=subprocess.run([os.environ['HYPERFRAMES_FFMPEG_PATH'],'-v','error','-i',str(output),'-vf','select=eq(n\\,30)','-frames:v','1','-f','image2pipe','-vcodec','png','-'],capture_output=True,check=True)
+            result=subprocess.run([os.environ['AIGC_FFMPEG_PATH'],'-v','error','-i',str(output),'-vf','select=eq(n\\,30)','-frames:v','1','-f','image2pipe','-vcodec','png','-'],capture_output=True,check=True)
             with Image.open(io.BytesIO(result.stdout)) as image:
                 self.assertGreater(sum(image.convert('RGB').getpixel((3,3))),90,transition)
 
@@ -206,7 +228,7 @@ class EditingTests(unittest.TestCase):
         _,work=self.prepare();(work/'plan.json').write_text('{broken');self.studio.finish_agent(self.id,{})
         launch,revised=self.prepare(revise=True)
         self.assertEqual((revised/'plan.json').read_text(),'{broken')
-        self.assertIn('repair',Path(launch['context']).read_text());self.assertFalse(self.studio.detail(self.id)['assembly_edit']['valid'])
+        self.assertIn(self.studio.library.prompt('step5_editing_agent.md', 'invalid'),Path(launch['context']).read_text());self.assertFalse(self.studio.detail(self.id)['assembly_edit']['valid'])
 
     def test_music_ducking_lowers_music_relative_to_narration(self):
         import numpy as np
@@ -243,7 +265,7 @@ class EditingTests(unittest.TestCase):
         with patch('edit_render.CHUNK_FRAMES',15):output,report=edit_render.render(work,preview=True,seconds=1)
         self.assertEqual(report['chunks'],2);frames={}
         for frame in [0,14,15,29]:
-            result=subprocess.run([os.environ['HYPERFRAMES_FFMPEG_PATH'],'-v','error','-i',str(output),'-vf',f'select=eq(n\\,{frame})','-frames:v','1','-f','image2pipe','-vcodec','png','-'],capture_output=True,check=True)
+            result=subprocess.run([os.environ['AIGC_FFMPEG_PATH'],'-v','error','-i',str(output),'-vf',f'select=eq(n\\,{frame})','-frames:v','1','-f','image2pipe','-vcodec','png','-'],capture_output=True,check=True)
             frames[frame]=Image.open(io.BytesIO(result.stdout)).convert('RGB')
         self.assertGreater(sum(frames[29].getpixel((20,3))),600)
         self.assertLess(sum(frames[0].getpixel((20,3))),300)

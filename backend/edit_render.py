@@ -10,6 +10,9 @@ import shutil
 import subprocess
 
 from editing import estimated_captions, normal, read, validate, verify_inputs, write
+from video_encoding import encode
+from core.infra.motion.runtime import modules_dir, subprocess_env
+from core.infra.motion.renderer import render_clip
 
 FPS = 30
 CHUNK_FRAMES = 120 * FPS
@@ -21,20 +24,19 @@ def run(args, **options):
 
 
 def ffmpeg(*args):
-    return run([os.environ.get('HYPERFRAMES_FFMPEG_PATH') or shutil.which('ffmpeg') or 'ffmpeg', '-nostdin', '-y', '-v', 'error', *args])
+    return run([os.environ.get('AIGC_FFMPEG_PATH') or shutil.which('ffmpeg') or 'ffmpeg', '-nostdin', '-y', '-v', 'error', *args])
 
 
 def probe(path):
-    result = subprocess.run([os.environ.get('HYPERFRAMES_FFPROBE_PATH') or 'ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', str(path)],
+    result = subprocess.run([os.environ.get('AIGC_FFPROBE_PATH') or 'ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', str(path)],
                             check=True, capture_output=True, text=True)
     return json.loads(result.stdout)
 
 
 def align(work):
     """Map local ASR times back to canonical text, preserving every script character."""
-    from core.infra.hyperframes.runtime import subprocess_env
     cli = shutil.which('whisper-cli', path=subprocess_env()['PATH'])
-    model = Path(os.environ.get('STUDIO_WHISPER_MODEL', str(Path.home()/'.cache/hyperframes/whisper/models/ggml-small.bin')))
+    model = Path(os.environ.get('STUDIO_WHISPER_MODEL', str(Path.home()/'.cache/book2video/whisper/models/ggml-small.bin')))
     if not cli or not model.is_file():
         raise ValueError('Local Whisper alignment is unavailable. Review caption cues manually or configure STUDIO_WHISPER_MODEL and whisper-cli.')
     payload, plan = read(work/'studio-payload.json'), read(work/'plan.json')
@@ -81,8 +83,7 @@ def align(work):
 
 def assets(work, check, visual_range=None):
     build=work/'build';build.mkdir(exist_ok=True)
-    cli=Path(os.environ['AIGC_HYPERFRAMES_CLI']).resolve()
-    gsap=cli.parents[2]/'gsap/dist/gsap.min.js'
+    gsap=modules_dir()/'gsap/dist/gsap.min.js'
     if not gsap.is_file():raise ValueError('The bundled GSAP renderer is unavailable.')
     shutil.copy2(gsap,build/'gsap.min.js')
     width,height=check['payload']['width'],check['payload']['height']
@@ -99,13 +100,12 @@ def assets(work, check, visual_range=None):
         if position not in required:
             continue
         if scene.get('html'):
-            from core.infra.hyperframes.runtime import hyperframes_command, subprocess_env
             custom=work/scene['html'];rendered=build/f'custom_{index}.mp4'
             if scene['length'] > 120: raise ValueError('Custom scene HTML must be no longer than two minutes.')
-            run([*hyperframes_command(), 'render', '-c', scene['html'], '--output', rendered, '--fps', FPS, '--workers', '2'], cwd=work, env=subprocess_env())
+            render_clip(work,dict(width=width,height=height,durationSeconds=length),rendered,fps=FPS,entry=scene['html'],caption_zone=False,strict_duration=True)
             info=next(s for s in probe(rendered)['streams'] if s['codec_type']=='video')
             if abs(float(info['duration'])-length)>.1 or (info['width'],info['height'])!=(width,height): raise ValueError('Custom HTML duration or dimensions do not match the scene.')
-            ffmpeg('-i',rendered,'-an','-frames:v',scene['frames'],'-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p',visual)
+            encode(ffmpeg,'-i',rendered,'-an','-frames:v',scene['frames'],output=visual,width=width,height=height)
             ffmpeg('-i',visual,'-vf',f'select=eq(n\\,{scene["frames"]-1})','-frames:v','1',build/f'last_{index}.png')
             continue
         original=source/scene['visual'];still=original.suffix.lower() in {'.png','.jpg','.jpeg','.webp'}
@@ -113,7 +113,7 @@ def assets(work, check, visual_range=None):
         # A video's own audio never replaces the authoritative recording.
         vf=video_filter
         if not still:vf=f'trim=start={start}:end={end},setpts=(PTS-STARTPTS)/{check["speed"]},tpad=start_duration={pause}:start_mode=clone:stop_mode=clone:stop_duration={length},'+vf
-        ffmpeg(*args,'-an','-vf',vf,'-frames:v',scene['frames'],'-c:v','libx264','-preset','ultrafast','-crf','18','-pix_fmt','yuv420p',visual)
+        encode(ffmpeg,*args,'-an','-vf',vf,'-frames:v',scene['frames'],output=visual,width=width,height=height)
         ffmpeg('-i',visual,'-vf',f'select=eq(n\\,{scene["frames"]-1})','-frames:v','1',build/f'last_{index}.png')
     write(build/'timeline.json',{'frames':check['frames'],'duration':check['duration'],'scenes':check['scenes'],'warnings':check['warnings']})
     return build
@@ -143,7 +143,7 @@ def composition(work, check, start_frame, frame_count):
         custom=scene.get('html')
         # Source media is already fit to exact scene frames by FFmpeg.
         video=f'visual_{scene["index"]}.mp4'
-        content=f'<video id="video{scene['index']}" muted playsinline src="{html.escape(video)}" data-start="{local:.6f}" data-duration="{visible_end-local:.6f}" data-media-start="{offset:.6f}" data-track-index="0" style="width:100%;height:100%;object-fit:cover"></video>'
+        content=f'<video id="video{scene['index']}" muted playsinline src="{html.escape(video)}" data-clip-start="{local:.9f}" data-clip-duration="{visible_end-local:.9f}" data-clip-offset="{offset:.9f}" style="width:100%;height:100%;object-fit:cover"></video>'
         backdrop=''
         transition=scene['transition'] if position else 'cut';tau=scene['transition_duration']
         if transition!='cut' and offset<tau:
@@ -194,9 +194,16 @@ def composition(work, check, start_frame, frame_count):
                 tweens.append(f'tl.set("#{cid}",{{opacity:0}},0);tl.set("#{cid}",{{opacity:1}},{max(pre,a-begin+pre):.6f});tl.set("#{cid}",{{opacity:0}},{min(finish,b)-begin+pre:.6f});')
     duration=(frame_count+1)/FPS
     doc=f'''<!doctype html><meta charset="utf-8"><script src="gsap.min.js"></script>
-<style>*{{box-sizing:border-box}}html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;background:{base};font-family:{font};color:#fff}}#root{{position:relative;width:100%;height:100%;overflow:hidden}}.scene{{position:absolute;inset:0}}.overlay{{position:absolute;left:12%;right:12%;top:27%;padding:{32*scale}px;background:{base}ed;border-left:{5*scale}px solid {accent};font-size:{48*scale}px;line-height:1.25;opacity:0;border-radius:{10*scale}px;z-index:3}}.overlay strong{{font-weight:800;overflow-wrap:anywhere}}.overlay.top{{top:8%}}.overlay.left{{left:7%;right:48%}}.overlay.right{{left:48%;right:7%}}.chapter{{font-size:{60*scale}px;color:{accent}}}.quote{{font-family:serif;font-size:{42*scale}px}}.items{{display:flex;gap:{20*scale}px;margin-top:{20*scale}px;font-size:{25*scale}px}}.item{{flex:1;min-width:0;overflow-wrap:anywhere}}.overlay.bars{{top:8%;font-size:{36*scale}px}}.bars .items{{display:block}}.bars .item{{position:relative;margin:{10*scale}px 0}}.bars i{{display:block;height:{10*scale}px;background:{accent};margin-top:{8*scale}px}}.caption{{position:absolute;bottom:6%;left:8%;right:8%;text-align:center;font-family:sans-serif;font-size:{30*scale}px;line-height:1.4;text-shadow:0 2px 4px #000;background:#000a;padding:{8*scale}px;border-radius:{6*scale}px;z-index:5;opacity:0}}</style>
-<div id="root" data-composition-id="main" data-start="0" data-width="{width}" data-height="{height}" data-duration="{duration:.6f}">{''.join(elements)}</div>
-<script>const tl=gsap.timeline({{paused:true}});{''.join(tweens)}tl.to({{}},{{duration:0}},{duration:.6f});window.__timelines={{main:tl}};</script>'''
+<style>*{{box-sizing:border-box}}html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;background:{base};font-family:{font};color:#fff}}#segment-root{{position:relative;width:100%;height:100%;overflow:hidden}}.scene{{position:absolute;inset:0}}.overlay{{position:absolute;left:12%;right:12%;top:27%;padding:{32*scale}px;background:{base}ed;border-left:{5*scale}px solid {accent};font-size:{48*scale}px;line-height:1.25;opacity:0;border-radius:{10*scale}px;z-index:3}}.overlay strong{{font-weight:800;overflow-wrap:anywhere}}.overlay.top{{top:8%}}.overlay.left{{left:7%;right:48%}}.overlay.right{{left:48%;right:7%}}.chapter{{font-size:{60*scale}px;color:{accent}}}.quote{{font-family:serif;font-size:{42*scale}px}}.items{{display:flex;gap:{20*scale}px;margin-top:{20*scale}px;font-size:{25*scale}px}}.item{{flex:1;min-width:0;overflow-wrap:anywhere}}.overlay.bars{{top:8%;font-size:{36*scale}px}}.bars .items{{display:block}}.bars .item{{position:relative;margin:{10*scale}px 0}}.bars i{{display:block;height:{10*scale}px;background:{accent};margin-top:{8*scale}px}}.caption{{position:absolute;bottom:6%;left:8%;right:8%;text-align:center;font-family:sans-serif;font-size:{30*scale}px;line-height:1.4;text-shadow:0 2px 4px #000;background:#000a;padding:{8*scale}px;border-radius:{6*scale}px;z-index:5;opacity:0}}</style>
+<div id="segment-root">{''.join(elements)}</div>
+<script>const tl=gsap.timeline({{paused:true}});{''.join(tweens)}tl.to({{}},{{duration:0}},{duration:.6f});window.clip={{width:{width},height:{height},durationSeconds:{duration:.9f},ready:Promise.resolve(),async renderAt(t){{
+ t=Math.round(t*{FPS})/{FPS};tl.totalTime(t,false);
+ await Promise.all([...document.querySelectorAll('video')].map(video=>{{
+  const start=+video.dataset.clipStart,end=start+(+video.dataset.clipDuration);
+  if(t+1e-8<start || t>=end-1e-8)return;
+  return window.clipTools.seekVideo(video,t-start+(+video.dataset.clipOffset));
+ }}));
+}}}};</script>'''
     path=build/'chunks'/f'{start_frame}_{frame_count}'/'index.html';path.parent.mkdir(parents=True,exist_ok=True)
     sources=[build/'gsap.min.js',*posters,*[build/f'visual_{s["index"]}.mp4' for s in check['scenes'] if s['start_frame'] < start_frame+frame_count and s['start_frame']+s['frames'] > start_frame]]
     for source in sources:
@@ -249,24 +256,38 @@ def mix(work, check):
     return output
 
 
-def render(work, preview=False, start=0, seconds=8):
-    from core.infra.hyperframes.runtime import hyperframes_command, subprocess_env
+def render(work, preview=False, start=0, seconds=8, force=False):
     check=validate(work)
     verify_inputs(check["payload"], check["plan"])
+    configure(work)
+    from core.infra.motion.runtime import prepare_assets,localize_legacy
+    prepare_assets(work)
+    for scene in check['scenes']:
+        if scene.get('html'):localize_legacy(work,scene['html'])
+    revision=render_signature(work,check)
+    options={'browser':os.environ.get('AIGC_BROWSER_MODE','auto'),'encoder':os.environ.get('AIGC_VIDEO_ENCODER','auto')}
+    try:cached_options=read(work/'build/candidate.qa.json').get('render_options')
+    except (OSError,ValueError,TypeError):cached_options=None
+    if not preview and not force and candidate_current(work,check) and (all(v=='auto' for v in options.values()) or cached_options==options):
+        print('Reusing verified final video.',flush=True)
+        return work/'build/candidate.mp4',read(work/'build/candidate.qa.json')
     start_frame=round(start*FPS);frame_count=min(check['frames']-start_frame,round(seconds*FPS)) if preview else check['frames']
     if start_frame<0 or frame_count<=0:raise ValueError('Preview range is outside the edited video.')
     build=assets(work,check,(start_frame,start_frame+frame_count) if preview else None)
-    chunks=[]
+    chunks=[];browser_reports=[]
     for offset in range(start_frame,start_frame+frame_count,CHUNK_FRAMES):
         count=min(CHUNK_FRAMES,start_frame+frame_count-offset);composition_file=composition(work,check,offset,count)
         raw=build/f'raw_{offset}.mp4';chunk=build/f'chunk_{offset}.mp4'
-        run([*hyperframes_command(),'render','-c',composition_file.name,'--output',raw,'--fps',FPS,'--quality','draft' if preview else 'looks','--workers','2','--strict'],cwd=composition_file.parent,env=subprocess_env())
-        ffmpeg('-i',raw,'-an','-vf',f'trim=start_frame=1:end_frame={count+1},setpts=PTS-STARTPTS','-frames:v',count,'-c:v','libx264','-preset','fast','-crf','18','-pix_fmt','yuv420p',chunk)
+        render_clip(composition_file.parent,dict(width=check['payload']['width'],height=check['payload']['height'],durationSeconds=(count+1)/FPS),raw,fps=FPS,caption_zone=False,strict_duration=True,force=force)
+        browser_reports.append(read(raw.with_suffix('.render.json')))
+        encode(ffmpeg,'-i',raw,'-an','-vf',f'trim=start_frame=1:end_frame={count+1},setpts=PTS-STARTPTS','-frames:v',count,output=chunk,width=check['payload']['width'],height=check['payload']['height'])
         chunks.append(chunk)
     listing=build/'video-concat.txt';listing.write_text(''.join("file '"+str(c).replace("'","'\\''")+"'\n" for c in chunks))
     audio=mix(work,check);output=work/'previews/preview.mp4' if preview else work/'build/candidate.mp4';output.parent.mkdir(exist_ok=True)
-    codec='libx265' if not preview and check['payload']['settings'].get('video_codec')=='hevc' else 'libx264'
-    ffmpeg('-f','concat','-safe','0','-i',listing,'-ss',start_frame/FPS,'-i',audio,'-map','0:v:0','-map','1:a:0','-frames:v',frame_count,'-t',frame_count/FPS,'-c:v',codec,'-preset','fast','-crf','18','-c:a','aac','-b:a','192k','-movflags','+faststart',output)
+    codec='hevc' if not preview and check['payload']['settings'].get('video_codec')=='hevc' else 'h264'
+    encoded=encode(ffmpeg,'-f','concat','-safe','0','-i',listing,'-ss',start_frame/FPS,'-i',audio,'-map','0:v:0','-map','1:a:0','-frames:v',frame_count,'-t',frame_count/FPS,
+           output=output,width=check['payload']['width'],height=check['payload']['height'],codec=codec,
+           extra=['-c:a','aac','-b:a','192k','-movflags','+faststart'])
     verify_inputs(check["payload"], check["plan"])
     metadata=probe(output);video=next(s for s in metadata['streams'] if s['codec_type']=='video');audio_stream=next(s for s in metadata['streams'] if s['codec_type']=='audio')
     if int(video.get('nb_frames',0))!=frame_count or (video['width'],video['height'])!=(check['payload']['width'],check['payload']['height']):
@@ -275,8 +296,9 @@ def render(work, preview=False, start=0, seconds=8):
     if abs(float(video['duration'])-expected)>.05 or abs(float(audio_stream['duration'])-expected)>.1:
         raise ValueError('Rendered audio/video duration does not match the edit.')
     ffmpeg('-i',output,'-f','null','-')
+    if revision!=render_signature(work,check):raise ValueError('Editing sources changed during rendering. Render again.')
     report={'frames':frame_count,'duration':expected,'width':video['width'],'height':video['height'],'warnings':check['warnings'],'chunks':len(chunks),'notes':check['plan'].get('notes','')}
-    write(output.with_suffix('.qa.json'),report)
+    report.update(render_options=options,encoder=getattr(encoded,'aigc_encoder','unknown'),browser=[{key:r.get(key) for key in ['browserMode','gpu','fallbackReason']} for r in browser_reports])
     if preview:ffmpeg('-i',output,'-vf','fps=1,scale=320:-1,tile=4x2','-frames:v','1',work/'previews/contact-sheet.png')
     # A sidecar follows the same trim, pause and speed transform as burned-in captions.
     def timestamp(value):
@@ -288,15 +310,81 @@ def render(work, preview=False, start=0, seconds=8):
             b=scene['start_frame']/FPS+scene['pause_before']+(min(cue['end'],scene['source_end'])-scene['source_start'])/check['speed']
             if b>a:subtitles.append(f'{len(subtitles)+1}\n{timestamp(a)} --> {timestamp(b)}\n{cue["text"]}\n')
     (build/'captions.srt').write_text('\n'.join(subtitles),encoding='utf-8')
+    if not preview:
+        from core.config import config
+        if config.THREE_BY_FOUR_ENABLED:
+            from core.domain.composer import VideoComposer
+            project=Path(check['payload']['project'])
+            VideoComposer().export_three_by_four(str(output),read(project/'text/script.json'))
+            portrait=output.with_name(output.stem+'_3x4.mp4')
+            if not portrait.is_file():raise ValueError('The portrait export was not produced.')
+            report['portrait_stamp']=artifact_stamp(portrait)
+        report.update(input_signature=revision,output_stamp=artifact_stamp(output),captions_stamp=artifact_stamp(build/'captions.srt'),verified=True)
+    write(output.with_suffix('.qa.json'),report)
     return output,report
 
 
+def configure(work):
+    import tempfile,yaml
+    from core.config import apply_yaml_config
+    payload=read(work/'studio-payload.json')
+    fields={'step5':payload['settings'],'subtitles':payload.get('subtitles',{}),'three_by_four':payload.get('three_by_four',{})}
+    with tempfile.TemporaryDirectory() as temporary:
+        config=Path(temporary)/'render.yaml';config.write_text(yaml.safe_dump(fields,allow_unicode=True),encoding='utf-8')
+        apply_yaml_config(config)
+
+
+def artifact_stamp(path):
+    from core.infra.motion.artifacts import stamp
+    return stamp(path)
+
+
+def render_signature(work,check=None):
+    check=check or validate(work)
+    from core.infra.motion.artifacts import signature
+    return signature(work,{'payload':check['payload'],'plan':check['plan'],'renderer':artifact_stamp(Path(__file__))},entry='plan.json',fps=FPS,output=work/'build/candidate.mp4')
+
+
+def candidate_current(work,check=None):
+    try:
+        check=check or validate(work);verify_inputs(check['payload'],check['plan'])
+        report=read(work/'build/candidate.qa.json')
+        valid=report.get('verified') and report.get('input_signature')==render_signature(work,check) and report.get('output_stamp')==artifact_stamp(work/'build/candidate.mp4') and report.get('captions_stamp')==artifact_stamp(work/'build/captions.srt')
+        if check['payload'].get('three_by_four',{}).get('enabled',True):
+            valid=valid and report.get('portrait_stamp')==artifact_stamp(work/'build/candidate_3x4.mp4') and bool(report.get('portrait_stamp'))
+        return bool(valid)
+    except (OSError,ValueError,KeyError,TypeError):return False
+
+
+def publish(work):
+    if not candidate_current(work):raise ValueError('Render and verify the current edit before publishing.')
+    import exports
+    payload=read(work/'studio-payload.json');project=Path(payload['project'])
+    outputs={project/'final_video.mp4':work/'build/candidate.mp4',project/'final_video.srt':work/'build/captions.srt',project/'final_video.qa.json':work/'build/candidate.qa.json'}
+    portrait=payload.get('three_by_four',{}).get('enabled',True)
+    if portrait:outputs[project/'final_video_3x4.mp4']=work/'build/candidate_3x4.mp4'
+    def verify():
+        if not candidate_current(work):raise ValueError('Editing sources changed before publication. Render again.')
+    exports.publish(project,outputs,remove=[] if portrait else [project/'final_video_3x4.mp4'],validate=verify)
+    write(work/'build/published.json',{'input_signature':render_signature(work),'outputs':{str(p):artifact_stamp(p) for p in outputs}})
+    return outputs
+
+
 def main(work):
-    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['check','align','preview','render']);parser.add_argument('--start',type=float,default=0);parser.add_argument('--seconds',type=float,default=8)
+    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['capabilities','check','align','preview','render','publish']);parser.add_argument('--start',type=float,default=0);parser.add_argument('--seconds',type=float,default=8)
+    parser.add_argument('--force',action='store_true');parser.add_argument('--browser-mode',choices=['auto','hardware','software'],default='auto');parser.add_argument('--encoder',choices=['auto','software'],default='auto')
     args=parser.parse_args()
+    os.environ['AIGC_BROWSER_MODE']=args.browser_mode;os.environ['AIGC_VIDEO_ENCODER']=args.encoder
+    from core.infra.motion.encoding import select_encoder
+    select_encoder.cache_clear()
+    if args.action=='capabilities':
+        from core.infra.motion.capabilities import inspect_machine
+        print(json.dumps(inspect_machine(work,read(work/'studio-payload.json'),fps=FPS)));return
     if args.action=='align':return align(work)
     if args.action=='check':
         check=validate(work);(work/'build').mkdir(exist_ok=True);write(work/'build/timeline.json',check)
         print(json.dumps({'duration':check['duration'],'frames':check['frames'],'warnings':check['warnings']},ensure_ascii=False));return
-    output,report=render(work,preview=args.action=='preview',start=args.start,seconds=args.seconds)
+    if args.action=='publish':
+        print(json.dumps({'published':[str(p) for p in publish(work)]}));return
+    output,report=render(work,preview=args.action=='preview',start=args.start,seconds=args.seconds,force=args.force)
     print(json.dumps({'output':str(output),**report},ensure_ascii=False))

@@ -72,6 +72,7 @@ import CoverSetup from "./components/CoverSetup";
 import AssemblyEditing from "./components/AssemblyEditing";
 import AssemblySetup from "./components/AssemblySetup";
 import SegmentEditor from "./components/SegmentEditor";
+import { SegmentationControls, VoiceControls } from "./components/StepControls";
 import { writingOptions, sameWriting, type WritingOptions } from "./writing";
 import { useCollapsed } from "./collapse";
 import { librarySettings } from "./library";
@@ -173,6 +174,7 @@ export default function App() {
     [newName, setNewName] = useState(""),
     [newLocation, setNewLocation] = useState(""),
     [scope, setScope] = useState("selected"),
+    [visualScope, setVisualScope] = useState("selected"),
     [visualAction, setVisualAction] = useState("static"),
     [rebuild, setRebuild] = useState(false),
     [withOpening, setWithOpening] = useState(false),
@@ -603,23 +605,7 @@ export default function App() {
           notice(
             d.warning || "Agent session ended. Production outputs refreshed.",
           );
-          // What a Visuals session composed is rendered right away, so its video shows in the preview.
-          const composed = d.finished?.step === "4"
-            ? d.segments.filter((s) => d.finished!.indices.includes(s.index) && s.motion?.composition && !s.motion.video_current).map((s) => s.index)
-            : [];
-          if (composed.length)
-            api<Job>(projectRoute(d.id) + "/job", { step: "4", mode: "render", indices: composed })
-              .then((job) => {
-                setJobs((jobs) => [...jobs, job]);
-                notice(composed.length === 1
-                  ? `Rendering segment ${composed[0]} from Claude Code's composition…`
-                  : `Rendering ${composed.length} segments from Claude Code's compositions…`);
-              })
-              .catch((e) => notice(String(e)));
-          if (d.finished?.step === "5" && !d.warning && d.assembly_edit?.valid && d.assembly_edit.changed)
-            api<Job>(projectRoute(d.id) + "/job", { step: "5", mode: "edit_render" })
-              .then((job) => { setJobs((jobs) => [...jobs, job]); notice("Rendering the polished video from the saved edit…"); })
-              .catch((e) => notice(String(e)));
+          // Motion and editing agents render and review before finishing; never launch a duplicate export.
           if (d.finished?.step === "6" && !d.warning && d.cover_design?.complete)
             api<Job>(projectRoute(d.id) + "/job", { step: "6", mode: "cover_render" })
               .then((job) => {
@@ -1056,7 +1042,6 @@ export default function App() {
         (selected === 0 ? activeJob.opening || mode === "opening" : !activeJob.scope || activeJob.scope.includes(selected)),
     );
   // Voice review sits over a dimmed copy of the part's picture: its still, or a frame of its clip.
-  const voiceBackdrop = (selected === 0 ? detail?.opening.poster : segment?.poster) || null;
 
   return (
     <div
@@ -1265,7 +1250,7 @@ export default function App() {
             </div>
           ) : (
             <>
-              <div className="production-heading">
+              <div className={`production-heading${step === "4" ? " visual-generation-heading" : ""}`}>
                 <div className="production-name">
                   <current.icon size={18} />
                   <h1>{t(current.name)}</h1>
@@ -1323,10 +1308,36 @@ export default function App() {
                       <Save size={13} /> {t("Save changes")}
                     </button>
                   )}
+                  {step === "4" && <select className="visual-generation-scope" aria-label={t("Generation scope")}
+                    disabled={busy || unsaved || Boolean(activeJob) || activeAgent} value={visualScope}
+                    onChange={(e) => setVisualScope(e.target.value)}>
+                    <option value="selected">{selected === 0 ? t("Opening only") : t("Selected segment · {index}", { index: selected })}</option>
+                    <option value="missing">{t("Missing images")}</option>
+                    <option value="all">{t("All images")}</option>
+                    <option value="outdated" disabled={!detail.state.stale["4"]}>{t("Outdated segments")}</option>
+                    <option value="motion">{t("All motion segments")}</option>
+                    <option value="summary">{t("Content summary")}</option>
+                  </select>}
                   <button
                     className="button small"
-                    disabled={busy || Boolean(activeJob) || activeAgent}
+                    disabled={busy || Boolean(activeJob) || activeAgent || (step === "4" && unsaved)}
                     onClick={() => {
+                      if (step === "4") {
+                        if (visualScope === "summary") {
+                          startVisualJob({ mode: "summary" }, "Generating the content summary.");
+                          return;
+                        }
+                        if (visualScope === "missing" || visualScope === "all") {
+                          startVisualJob({ mode: "static", batch: visualScope }, visualScope === "missing" ? "Generating missing static images." : "Generating all static images.");
+                          return;
+                        }
+                        setScope(visualScope === "motion" || (visualScope === "outdated" && !detail.state.stale["4"]?.segments.length) ? "all" : visualScope);
+                        setVisualAction(visualScope === "motion" || (visualScope === "selected" && segment?.visualizer === "hf") ? "render" : "static");
+                        setWithOpening(visualScope !== "motion" && openingEnabled && (selected === 0 || Boolean(visualScope === "outdated" && detail.state.stale["4"]?.segments.includes(0))));
+                        setRebuild(false);
+                        setModal("generate");
+                        return;
+                      }
                       if ((step === "6" && coverAgent) || (step === "5" && assemblyAgent)) {
                         activate();
                         return;
@@ -1433,6 +1444,9 @@ export default function App() {
                     </div>
                   </div>
                 ) : step === "2" ? (
+                  <>
+                  <SegmentationControls settings={keySettings.step2 || {}} disabled={busy || activeAgent || Boolean(activeJob)}
+                    onChange={(patch) => saveSettings("step2", patch)} />
                   <SegmentEditor
                     segments={detail.segments}
                     draft={draft.segments || []}
@@ -1443,8 +1457,9 @@ export default function App() {
                     onSelect={changeSegment}
                     onEdit={(index, key, value) => editSegment(key, value, index)}
                   />
+                  </>
                 ) : (
-                  <div className={`media-workspace${step === "4" ? " visuals-workspace" : step === "6" ? " covers-workspace" : ""}`}>
+                  <div className={`media-workspace${step === "3" ? " voice-workspace" : step === "4" ? " visuals-workspace" : step === "6" ? " covers-workspace" : ""}`}>
                     {step === "5" && <AssemblyEditing settings={step5Settings} edit={detail.assembly_edit} library={bootstrap?.library}
                       active={detail.state.agent_active?.step === "5"} locked={busy || unsaved || Boolean(activeJob) || (activeAgent && detail.state.agent_active?.step !== "5")}
                       onChange={(patch) => saveSettings("step5", patch)} onDesign={(revise) => activateFor(undefined, undefined, revise)}
@@ -1488,18 +1503,7 @@ export default function App() {
                       <VisualDirection key={detail.id} summary={String(detail.summary.summary || "")}
                         hash={detail.hashes.summary} outdated={Boolean(detail.state.summary_stale)}
                         disabled={busy || activeAgent || Boolean(activeJob)} onSave={saveDirection}
-                        onGenerate={() => startVisualJob({ mode: "summary" }, "Generating the content summary.")}
-                        onEditInstructions={() => openLibrary("summary")} onDirtyChange={setDirectionDirty}
-                        actions={<>
-                          <button className="button small" disabled={busy || unsaved || activeAgent || Boolean(activeJob)}
-                            title={t("Uses static-image segments and the enabled opening.")}
-                            onClick={() => startVisualJob({ mode: "static", batch: "missing" }, "Generating missing static images.")}>
-                            <Plus size={13} />{t("Fill missing images")}</button>
-                          <button className="button small" disabled={busy || unsaved || activeAgent || Boolean(activeJob)}
-                            title={t("Adds a new image for every static-image segment and the enabled opening; earlier images are kept.")}
-                            onClick={() => startVisualJob({ mode: "static", batch: "all" }, "Generating all static images.")}>
-                            <RefreshCw size={13} />{t("Generate all images")}</button>
-                        </>} />
+                        onEditInstructions={() => openLibrary("summary")} onDirtyChange={setDirectionDirty} />
                     </>}
                     <div className={`preview-toolbar${step === "5" ? " output-toolbar" : ""}`}>
                       {step === "5" ? (
@@ -1663,7 +1667,7 @@ export default function App() {
                         </span>
                         <button className="button small primary" disabled={!segment?.motion?.composition} onClick={() => agentHandle.current?.stop()}
                           title={segment?.motion?.composition ? undefined : t("Available once Claude Code saves its composition.")}>
-                          <Play size={13} /> {t("Finish & render")}
+                          <Play size={13} /> {t("Finish session")}
                         </button>
                       </div>
                     )}
@@ -1671,37 +1675,25 @@ export default function App() {
                       className={`preview-canvas ${step === "3" ? "audio-preview" : ""}`}
                     >
                       {step === "3" ? (
-                        <>
-                        {voiceBackdrop && (
-                          <img className="voice-backdrop" src={media(detail.id, voiceBackdrop, version)} alt="" />
-                        )}
                         <div className="voice-preview">
-                          <Music2 size={28} />
-                          <h2>
-                            {reviewAudio?.audio
-                              ? t("Listen to the delivery.")
-                              : t("No recording yet.")}
-                          </h2>
-                          <p>
-                            {selected === 0
-                              ? t("Opening")
-                              : t("Segment {index}", { index: selected })}{" "}
-                            ·{" "}
-                            {reviewAudio?.duration
-                              ? t("{seconds} seconds", {
-                                  seconds: reviewAudio.duration!.toFixed(1),
-                                })
-                              : t("Generate a recording to review.")}
-                          </p>
-                          {reviewAudio?.audio && (
-                            <audio
-                              controls
+                          <div className="voice-player-heading">
+                            <Music2 size={20} />
+                            <div>
+                              <h2>{t("Audio preview")}</h2>
+                              <p>{selected === 0 ? t("Opening") : t("Segment {index}", { index: selected })}
+                                {reviewAudio?.duration ? <> · {t("{seconds} seconds", { seconds: reviewAudio.duration.toFixed(1) })}</> : null}
+                              </p>
+                            </div>
+                          </div>
+                          {reviewAudio?.audio ? (
+                            <audio key={reviewAudio.audio} controls
                               src={media(detail.id, reviewAudio.audio, version)}
-                              aria-label={t("Segment recording")}
-                            />
-                          )}
+                              aria-label={t("Segment recording")} />
+                          ) : <div className="voice-empty-note">
+                            <strong>{t("No recording yet.")}</strong>
+                            <span>{t("Generate a recording to review.")}</span>
+                          </div>}
                         </div>
-                        </>
                       ) : previewMedia ? (
                         /\.(mp4|mov|webm)$/i.test(selectedMedia!) ? (
                           <video
@@ -1770,16 +1762,6 @@ export default function App() {
                                 <button className="button small" data-picker-toggle onClick={(e) =>
                                   setPicker({ index: selected, rect: e.currentTarget.getBoundingClientRect(), placement: "below" })}>
                                   <Layers size={13} /> {t("Versions")}
-                                </button>
-                              )}
-                              <button className="button small primary" disabled={Boolean(makeLock())} title={t(makeLock()) || undefined}
-                                onClick={() => newImage(selected)}>
-                                <Sparkles size={13} /> {t(selected === 0 ? "New opening" : "New image")}
-                              </button>
-                              {selected !== 0 && (
-                                <button className="button small" disabled={Boolean(makeLock())} title={t(makeLock()) || undefined}
-                                  onClick={() => newClip(selected)}>
-                                  <TerminalSquare size={13} /> {t("New motion clip")}
                                 </button>
                               )}
                             </div>
@@ -1878,6 +1860,8 @@ export default function App() {
                         </div>
                       </div>
                     )}
+                    {step === "3" && <VoiceControls settings={keySettings.step3 || {}} disabled={busy || activeAgent || Boolean(activeJob)}
+                      onChange={(patch) => saveSettings("step3", patch)} />}
                     {step === "6" && detail.covers.length > 0 && (
                       <div className="cover-grid">
                         {detail.covers.map((f, i) => (
@@ -1982,6 +1966,7 @@ export default function App() {
                 onClose={() => setAgentVisible(false)}
                 onError={notice}
                 directWriting={step === "1" && writing?.mode === "direct"}
+                noWritingSkill={step === "1" && writing?.agent_skill === ""}
                 claudeMode={claudeMode}
                 disabled={busy || unsaved || activeAgent || Boolean(activeJob)}
               />
@@ -2212,7 +2197,10 @@ export default function App() {
                       "Keep a revision of the current outputs, then generate new work using your saved project settings.",
                     )}
                   </p>
-                  {["3", "4"].includes(step) && (
+                  {step === "4" && <p className="generation-scope-summary">{t("Scope")}: <strong>
+                    {visualScope === "motion" ? t("All motion segments") : visualScope === "outdated" ? t("Outdated segments") : selected === 0 ? t("Opening only") : t("Selected segment · {index}", { index: selected })}
+                  </strong></p>}
+                  {step === "3" && (
                     <label className="field">
                       <span>{t("Scope")}</span>
                       <select

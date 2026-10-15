@@ -1,14 +1,16 @@
 ---
 name: kinetic-social
-description: Polish a narrated Studio video for social viewing with bold short emphasis, readable comparisons, active reframing, concise chapter cards and synchronized sound cues in Step 5.
+description: 在第五步合成中，用醒目的短句强调、清晰对比、主动重构图、精简章节卡和同步音效打磨适合手机观看的口播视频。
 ---
 
-# Kinetic social
+# 社交短视频动感精剪
 
-Read `EDITING.md` in the edit workspace for the shared plan and rendering contract. Set `plan.json` style to `kinetic-social`.
+先阅读精剪工作目录内的 `EDITING.md`，了解共用计划与渲染契约。编辑 `plan.json`，将 style 设为 `kinetic-social`。默认使用简体中文交流。
 
-Make the opening idea legible immediately using the existing words and media. Preserve the narration and segment order. Select short high-information phrases, especially stakes, surprising numbers, comparisons and conclusions. Use bold sans-serif cards, bright accents, punch-ins and short reveals. Maintain one focal point; avoid presenting an entire paragraph as an emphasis card.
+用现有文字和素材让开场观点立即可读。保留口播及段落顺序。选择短而信息密集的短语，尤其是利害关系、意外数字、对比和结论。使用粗体无衬线卡片、亮色点缀、推近和短促揭示。保持一个视觉焦点，不要把整段文字当强调卡。
 
-Change visual emphasis at spoken idea boundaries. Use comparisons and bars only for claims supported by the narration. Alternate active moments with short rests, rather than flashing throughout the video. Keep subtitles stable and within the lower safe area. Use clicks, brief whooshes and occasional impacts at reveals; cap their level below narration. Respect the GUI narration-speed setting instead of adding a second speed change.
+在口播观点边界改变视觉强调。对比和条形图只用于正文支持的主张。活跃片段之间插入短暂安静，避免全片闪烁。字幕保持稳定，并位于底部安全区。揭示时可用点击、短掠过音和少量冲击音，音量低于口播。遵循图形界面的口播速度，不要重复变速。
 
-Preview the hook, the densest card, a transition and the final call to action if the script contains one. Inspect at phone-like size and listen for cue alignment. Remove cues that obscure speech or imply facts absent from the script. Report any estimated caption timings remaining for review.
+预览开场钩子、最密集卡片、一个转场，以及正文中若有的结尾行动引导。以手机尺寸查看并听取音效是否对齐。移除遮盖语音或暗示正文外事实的音效。报告仍需审阅的估算字幕时间。
+
+遵循 `EDITING.md` 的硬件加速要求：所有 M 系列 Mac 均优先使用 Metal GPU 和 VideoToolbox；Windows 按可用显卡测试 NVENC / QSV / AMF。只有硬件不可用或验证失败时才回退 CPU，并记录原因。

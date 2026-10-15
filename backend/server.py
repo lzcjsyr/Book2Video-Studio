@@ -32,7 +32,7 @@ STAGES = ["1", "2", "3", "4", "5", "6"]
 # step 2. Studio uses its own step numbers and translates settings at the engine boundary.
 ENGINE_SECTIONS = {"step2": "step1_5", "step4_summary": "step2"}
 DESKTOP_SECTIONS = {engine: desktop for desktop, engine in ENGINE_SECTIONS.items()}
-SETTINGS_SECTIONS = {"global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "hyperframes_opening"}
+SETTINGS_SECTIONS = {"global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "motion_opening"}
 STATE_LAYOUT = 2
 # Which service or model makes the next output. Changing one leaves finished work current.
 PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill"}
@@ -40,6 +40,8 @@ LINKS_FILE = "projects.json"
 HIDDEN_FILE = "hidden-projects.json"
 GOOGLE_CHECK_FILE = "google-adc-check.json"
 LIBRARY_ENV = "AIGC_VIDEO_LIBRARY_DIR"
+VOICES_FILE = "voices.json"
+DEFAULT_VOICE = {"id": "S_MKj17k802", "name": "默认音色"}
 MEDIA = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".mp4", ".mov", ".webm", ".srt", ".pdf", ".txt"}
 # Background music formats; the engine reads them through FFmpeg.
 MUSIC = {".mp3", ".wav", ".m4a", ".aac", ".flac"}
@@ -171,10 +173,35 @@ def engine_settings(settings):
             for section, values in settings.items()}
 
 
+def migrate_segmentation(settings):
+    """The removed evenly split mode now uses punctuation boundaries."""
+    if settings.get("step2", {}).get("split_mode") == "auto":
+        settings["step2"]["split_mode"] = "punctuation"
+
+
+def segmentation_output(values):
+    """Target count affects only agent segmentation."""
+    result = dict(values)
+    if result.get("split_mode", "punctuation") != "agent":
+        result.pop("num_segments", None)
+    return result
+
+
 def migrate_state(state):
     """Projects from earlier builds used the engine's numbering: Segments was stage "1.5" with settings
     step1_5, step2 held the content summary settings, and a stage "2" (Context) predates its merge into Visuals."""
+    settings = state.setdefault("settings", {})
+    if "hyperframes_opening" in settings:
+        settings.setdefault("motion_opening", settings.pop("hyperframes_opening"))
+    motion = settings.get("step4", {})
+    for suffix in ("style_preset", "max_turns", "render_fps", "concurrency"):
+        old = "hyperframes_" + suffix
+        if old in motion:
+            motion.setdefault("motion_" + suffix, motion.pop(old))
+    if motion.get("visual_mode") == "hyperframes_agent":
+        motion["visual_mode"] = "motion_agent"
     if state.get("layout", 1) >= STATE_LAYOUT:
+        migrate_segmentation(settings)
         return state
     stale, reviewed = state.setdefault("stale", {}), state.setdefault("reviewed", {})
     if stale.pop("2", None):
@@ -189,6 +216,7 @@ def migrate_state(state):
     if "step1_5" in settings:
         settings["step2"] = settings.pop("step1_5")
     state["layout"] = STATE_LAYOUT
+    migrate_segmentation(settings)
     return state
 
 
@@ -465,6 +493,7 @@ class Studio:
         import yaml
         data = yaml.safe_load((self.engine / "config.yaml" if (self.engine / "config.yaml").exists() else self.engine / "config.example.yaml").read_text())
         sections = {DESKTOP_SECTIONS.get(k, k): v for k, v in data.items() if isinstance(v, dict)}
+        migrate_segmentation(sections)
         if "step5" in sections:
             sections["step5"].setdefault("assembly_method", "standard")
             sections["step5"].setdefault("agent_skill", editing.STYLES[0])
@@ -499,8 +528,8 @@ class Studio:
             "Python": sys.executable,
             "Claude Code": os.environ.get("STUDIO_CLAUDE") or shutil.which("claude"),
             "Node.js": shutil.which("node"),
-            "HyperFrames": os.environ.get("AIGC_HYPERFRAMES_CLI"),
-            "Chrome Headless Shell": os.environ.get("HYPERFRAMES_BROWSER_PATH"),
+            "Browser libraries": os.environ.get("AIGC_MOTION_MODULES"),
+            "Chrome Headless Shell": os.environ.get("AIGC_BROWSER_PATH"),
             "FFmpeg": shutil.which("ffmpeg"),
             "FFprobe": shutil.which("ffprobe"),
         }
@@ -513,8 +542,38 @@ class Studio:
 
     def bootstrap(self):
         skills = [p.parent.name for p in sorted((self.library_root / "skills/step1").glob("*/SKILL.md"))]
-        return {"default_location": str(self.workspace), "library_folder": str(self.library_root), "defaults": self.defaults(), "skills": skills,
+        return {"default_location": str(self.workspace), "library_folder": str(self.library_root), "defaults": self.defaults(), "skills": skills, "voices": self.voices(),
                 "library": self.library.catalog(), **self.music(), "components": self.components()}
+
+    def voices(self):
+        saved = read_json(self.data / VOICES_FILE, {"voices": [DEFAULT_VOICE.copy()]})
+        if not isinstance(saved, dict) or not isinstance(saved.get("voices"), list) or any(
+            not isinstance(voice, dict) or not isinstance(voice.get("id"), str) or not isinstance(voice.get("name"), str)
+            for voice in saved.get("voices", [])
+        ):
+            raise ValueError("The saved voice library is invalid.")
+        return saved["voices"]
+
+    def save_voice(self, body):
+        if not isinstance(body, dict):
+            raise ValueError("Enter a voice ID and a name.")
+        voice_id, name = body.get("id"), body.get("name")
+        if not isinstance(voice_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", voice_id.strip()):
+            raise ValueError("Enter a valid voice ID (letters, numbers, underscores or hyphens).")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80 or any(ord(c) < 32 for c in name):
+            raise ValueError("Enter a voice name between 1 and 80 characters.")
+        voice = {"id": voice_id.strip(), "name": name.strip()}
+        with self.lock:
+            voices = self.voices()
+            index = next((i for i, item in enumerate(voices) if item["id"] == voice["id"]), None)
+            if index is None:
+                if len(voices) >= 500:
+                    raise ValueError("The voice library can contain up to 500 voices.")
+                voices.append(voice)
+            else:
+                voices[index] = voice
+            atomic_json(self.data / VOICES_FILE, {"voices": voices})
+        return {"voices": voices}
 
     def music(self):
         """Background music: the bundled tracks, then the ones the user added."""
@@ -673,7 +732,7 @@ class Studio:
                 segment["visualizer"] = kind
                 changed = True
         # Projects from before takes kept these; their contents now live in images/takes/.
-        for legacy in [p / "images/stills", p / "images/hyperframes"]:
+        for legacy in [p / "images/stills", p / "images/motion", p / "images/hyperframes"]:
             if legacy.is_dir() and not any(f.is_file() and f.name not in {".DS_Store", "Thumbs.db"} for f in legacy.rglob("*")):
                 shutil.rmtree(legacy, ignore_errors=True)
         if changed:
@@ -775,6 +834,9 @@ class Studio:
                 except (ValueError, OSError, KeyError):
                     edit_source = {}
                 assembly_edit = editing.detail(p, state["assembly_edit"], edit_source)
+                if assembly_edit and assembly_edit.get('published'):
+                    state['stale'].pop('5',None)
+                    self.persist(p,state)
             revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design, assembly_edit], sort_keys=True).encode()).hexdigest()
             return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio)}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
 
@@ -1207,10 +1269,14 @@ class Studio:
                 if active["step"] == "5":
                     info = editing.detail(p, state.get("assembly_edit"))
                     warning = info.get("problem") if info else "Save an editing plan before rendering."
+                    if info and info.get("published"):
+                        state["stale"].pop("5",None)
+                    elif info and info["valid"] and info["changed"]:
+                        warning = "Ask the editing agent to render, review and publish the final video."
                 if active["step"] == "6":
                     info = cover_designs.detail(p, state.get("cover_design"))
                     warning = None if info and info["complete"] else "Save every cover HTML design with Claude Code before rendering."
-                if active["step"] == "5" and info and info["changed"]:
+                if active["step"] == "5" and info and info["changed"] and not info.get("published"):
                     state["stale"]["5"] = {"reason": warning or "Render the saved edit to review the polished video.", "segments": []}
                     state["reviewed"].pop("5", None)
                 elif active["step"] == "6":
@@ -1246,7 +1312,7 @@ class Studio:
             self.persist(p, state)
         result = self.detail(project_id)
         result["warning"] = warning
-        # The app renders what a Visuals session composed as soon as the session ends.
+        # The agent already renders; ending a session only refreshes project state.
         result["finished"] = {"step": active["step"], "indices": active["indices"] or []} if active else None
         return result
 
@@ -1526,6 +1592,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(studio.check_google_adc(body) if method == "POST" else studio.google_adc_status())
             if parts == ["api", "bootstrap"]:
                 return self.json(studio.bootstrap())
+            if parts == ["api", "voices"]:
+                return self.json(studio.save_voice(body) if method == "POST" else {"voices": studio.voices()})
             if parts == ["api", "library"] and method == "GET":
                 return self.json(studio.library.catalog())
             if parts == ["api", "library", "item"] and method == "GET":
@@ -1601,13 +1669,18 @@ class Handler(BaseHTTPRequestHandler):
                                 effective.setdefault(section, {}).update(fields)
                             # The engine's step-2 settings write the content summary used by Visuals.
                             # Writing settings apply to the next writing session; the manuscript stays current (as in Writing setup).
-                            mapping = {"global": "3", "step2": "2", "step3": "3", "step4": "4", "step4_summary": "4", "step5": "5", "subtitles": "5", "step6": "6", "hyperframes_opening": "4"}
+                            mapping = {"global": "3", "step2": "2", "step3": "3", "step4": "4", "step4_summary": "4", "step5": "5", "subtitles": "5", "step6": "6", "motion_opening": "4"}
                             # Fields that are sent replace saved ones; anything left out keeps its saved value.
                             settings = copy.deepcopy(old)
                             for section, fields in body["settings"].items():
                                 settings[section] = {**old.get(section, {}), **fields} if isinstance(fields, dict) else fields
+                            migrate_segmentation(settings)
                             output = lambda values: {k: v for k, v in values.items() if k not in PROVIDER_SETTINGS}
-                            differs = lambda k: output({**effective.get(k, {}), **settings[k]}) != output(effective.get(k, {}))
+                            def differs(k):
+                                before, after = effective.get(k, {}), {**effective.get(k, {}), **settings[k]}
+                                if k == "step2":
+                                    before, after = segmentation_output(before), segmentation_output(after)
+                                return output(after) != output(before)
                             sections = [k for k in body["settings"] if k in mapping and differs(k)]
                             # The 3:4 copy is redrawn around the landscape master, so its panels outdate only that copy.
                             if "three_by_four" in body["settings"] and differs("three_by_four"):
@@ -1724,7 +1797,11 @@ def main():
     parser.add_argument("--legacy-config", help="Runtime settings of an earlier build, imported once")
     parser.add_argument("--port", type=int, default=0)
     args = parser.parse_args()
-    studio = Studio(Path(args.engine), Path(args.data), Path(args.workspace))
+    # The native host clears inherited Python paths. Shared rendering modules
+    # must resolve from this installation, regardless of the process cwd.
+    engine = Path(args.engine).resolve()
+    sys.path.insert(0, str(engine))
+    studio = Studio(engine, Path(args.data), Path(args.workspace))
     if args.legacy_config and Path(args.legacy_config).is_file():
         studio.adopt_legacy(Path(args.legacy_config))
     token = os.environ.get("STUDIO_TOKEN") or secrets.token_hex(32)
