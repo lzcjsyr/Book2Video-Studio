@@ -120,7 +120,8 @@ export interface Job {
   id: string;
   project: string;
   step: Stage;
-  status: "running" | "succeeded" | "failed" | "cancelled" | "cancelling";
+  /** "queued": new images waiting for the running job; they start together when it ends. */
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "cancelling";
   log: string[];
   result?: { message?: string; success?: boolean };
   /** Seconds since the epoch, from the project service. */

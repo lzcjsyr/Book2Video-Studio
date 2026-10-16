@@ -51,8 +51,6 @@ PROMPTS = {
     "step4_style_context.md": ("Motion style instructions", True, {"style_id", "label", "official_style", "palette", "best_for", "style_definition", "palette_definition", "references"}),
     "step5_editing_agent.md": ("Claude Code assembly template", True, {"skill_path", "work_dir", "contract_path", "motion_skills_dir"}),
     "step5_editing_contract.md": ("Assembly editing contract", None, set()),
-    "step1_subagents/title-quote-writer.md": ("Title and quote writing template", None, set()),
-    "step1_subagents/fact-style-reviewer.md": ("Writing review template", None, set()),
 }
 TEXT_EXTENSIONS = {".md", ".txt", ".yaml", ".yml", ".json", ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".toml"}
 TEMPLATE_SECTIONS = {
@@ -101,67 +99,6 @@ def install_bundled(bundled: Path, root: Path):
         installed = json.loads(record_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         installed = {}
-    # Retire obsolete Step 4 framework contracts without discarding personal edits.
-    # Retain personal reference edits in an archive outside the active skills catalog.
-    if (bundled / 'prompts/step4_motion_agent.md').exists():
-        for package in (root / 'skills/step4').glob('hyperframes*'):
-            if package.is_dir():
-                for source in package.rglob('*'):
-                    if source.is_file():
-                        relative = source.relative_to(root / 'skills/step4')
-                        target = root / '.legacy-renderer/skills/step5' / relative
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        if not target.exists():
-                            shutil.copy2(source, target)
-                        if package.name == 'hyperframes-creative':
-                            local = source.relative_to(package)
-                            key = source.relative_to(root).as_posix()
-                            if (local.parts[0] == 'palettes' or local.as_posix() == 'references/visual-styles.md') and digest(source) != installed.get(key):
-                                migrated = root / 'skills/step4/motion-creative' / local
-                                if not migrated.exists():
-                                    migrated.parent.mkdir(parents=True, exist_ok=True)
-                                    shutil.copy2(source, migrated)
-                shutil.rmtree(package)
-        old_styles = root / 'prompts/step4_hyperframes_styles.yaml'
-        new_styles = root / 'prompts/step4_motion_styles.yaml'
-        if old_styles.is_file() and not new_styles.exists() and digest(old_styles) != installed.get('prompts/step4_hyperframes_styles.yaml'):
-            styles = yaml.safe_load(old_styles.read_text(encoding='utf-8'))
-            if isinstance(styles, dict):
-                for style in styles.values():
-                    if isinstance(style, dict):
-                        references = []
-                        for reference in style.get('references', []):
-                            reference = str(reference).replace('hyperframes-creative/', 'motion-creative/').replace('hyperframes-animation/', 'motion-animation/')
-                            relative = reference.split('#', 1)[0]
-                            if (bundled / 'skills/step4' / relative).is_file() or (root / 'skills/step4' / relative).is_file():
-                                references.append(reference)
-                        style['references'] = references
-                write_bytes(new_styles, yaml.safe_dump(styles, allow_unicode=True, sort_keys=False).encode())
-        for name in ('step4_hyperframes_agent.md', 'step4_hyperframes_styles.yaml',
-                     'step4_studio.md', 'step4_skill_context.md', 'step4_style_context.md'):
-            old = root / 'prompts' / name
-            if old.is_file() and (name.startswith('step4_hyperframes') or 'hyperframes' in old.read_text(encoding='utf-8').lower()):
-                archived = root / '.legacy-step4' / name
-                archived.parent.mkdir(parents=True, exist_ok=True)
-                if not archived.exists():
-                    shutil.copy2(old, archived)
-                old.unlink()
-                installed.pop('prompts/' + name, None)
-    if (bundled / 'prompts/step5_editing_agent.md').exists() and 'AGENT_RENDER_LOOP_VERSION: 2' in (bundled / 'prompts/step5_editing_agent.md').read_text(encoding='utf-8'):
-        retired=root/'skills/step5/hyperframes'
-        if retired.is_dir():
-            archive=root/'.legacy-renderer/skills/step5/hyperframes'
-            archive.parent.mkdir(parents=True,exist_ok=True)
-            shutil.copytree(retired,archive,dirs_exist_ok=True)
-            shutil.rmtree(retired)
-        for relative in ['prompts/step4_motion_agent.md','prompts/step4_studio.md','prompts/step5_editing_agent.md','prompts/step5_editing_contract.md','skills/step5/EDITING.md']:
-            target=root/relative
-            if not target.is_file():continue
-            content=target.read_text(encoding='utf-8')
-            if any(marker in content for marker in ['HyperFrames','Finish & render','不要在本会话导出视频','不要运行 `python render.py render`']):
-                archive=root/'.legacy-renderer'/relative;archive.parent.mkdir(parents=True,exist_ok=True)
-                if not archive.exists():shutil.copy2(target,archive)
-                target.unlink();installed.pop(relative,None)
     for top in ("prompts", "skills"):
         for source in sorted((bundled / top).rglob("*")):
             relative = source.relative_to(bundled)
@@ -591,6 +528,3 @@ class Library:
         if not allowed:
             raise ValueError("Choose a valid library revision.")
         return target
-
-    def choices_hash(self, group):
-        return digest(self.group(group)[2])

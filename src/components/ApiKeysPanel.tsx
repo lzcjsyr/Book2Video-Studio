@@ -1,5 +1,5 @@
 import { useI18n } from "../i18n";
-import { useEffect, useState } from "react";
+import { useId, useEffect, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, CheckCircle2, Cloud, Image, KeyRound, MessageSquareText, ShieldCheck, TerminalSquare, Volume2, XCircle } from "lucide-react";
 import { api } from "../api";
@@ -18,6 +18,7 @@ const claudeModes: { id: ClaudeCodeMode; title: string; description: string }[] 
 
 /** Which Claude Code runs the Writing and Motion sessions, and whether the installed one is signed in. */
 function ClaudeCodeSection({ mode, onMode }: { mode: ClaudeCodeMode; onMode?: (mode: ClaudeCodeMode) => void }) {
+  const uid = useId();
   const { t } = useI18n();
   const native = isTauri();
   const [local, setLocal] = useState<ClaudeCodeStatus["local"]>(null);
@@ -47,13 +48,13 @@ function ClaudeCodeSection({ mode, onMode }: { mode: ClaudeCodeMode; onMode?: (m
     }
   };
   return (
-    <section className="credential-group claude-code-modes" aria-labelledby="claude-code-title">
-      <h4 id="claude-code-title"><TerminalSquare size={15} /> {t("Claude Code")}</h4>
+    <section className="credential-group claude-code-modes" aria-labelledby={`${uid}-claude-code-title`}>
+      <h4 id={`${uid}-claude-code-title`}><TerminalSquare size={15} /> {t("Claude Code")}</h4>
       <p className="small-muted">{t("Runs the interactive Writing, Motion, Assembly and HTML cover sessions.")}</p>
-      <div className="mode-options" role="radiogroup" aria-labelledby="claude-code-title">
+      <div className="mode-options" role="radiogroup" aria-labelledby={`${uid}-claude-code-title`}>
         {claudeModes.map((option) => (
           <label key={option.id} className={`mode-option ${mode === option.id ? "selected" : ""}`}>
-            <input type="radio" name="claude-code-mode" checked={mode === option.id} disabled={!native}
+            <input type="radio" name={`${uid}-claude-code-mode`} checked={mode === option.id} disabled={!native}
               onChange={() => void choose(option.id)} />
             <span>
               <strong>{t(option.title)}</strong>
@@ -166,6 +167,7 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
   onClaudeMode?: (mode: ClaudeCodeMode) => void;
   onStatus?: (status: KeyStatus) => void;
 }) {
+  const uid = useId();
   const { t } = useI18n();
   const native = isTauri();
   const [status, setStatus] = useState<KeyStatus | null>(null);
@@ -230,8 +232,8 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
       )}
       <ClaudeCodeSection mode={claudeMode} onMode={onClaudeMode} />
       {settings && status && (
-        <section className={`key-needs ${missing.length ? "incomplete" : "complete"}`} aria-labelledby="key-needs-title">
-          <h4 id="key-needs-title">
+        <section className={`key-needs ${missing.length ? "incomplete" : "complete"}`} aria-labelledby={`${uid}-key-needs-title`}>
+          <h4 id={`${uid}-key-needs-title`}>
             {missing.length ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />}
             {missing.length
               ? distinctGaps(missing) === 1 ? t("1 key missing for this project") : t("{count} keys missing for this project", { count: distinctGaps(missing) })
@@ -257,8 +259,8 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
         {message || (native && !status && !error ? t("Checking saved keys…") : "")}
       </p>
       {groups.map((group) => (
-        <section className="credential-group" key={group.id} aria-labelledby={`key-group-${group.id}`}>
-          <h4 id={`key-group-${group.id}`}><group.icon size={15} /> {t(group.title)}</h4>
+        <section className="credential-group" key={group.id} aria-labelledby={`${uid}-key-group-${group.id}`}>
+          <h4 id={`${uid}-key-group-${group.id}`}><group.icon size={15} /> {t(group.title)}</h4>
           <p className="small-muted">{t(group.description)}</p>
           <div className="credential-list">
             {keyProviders.filter((p) => p.group === group.id).map((provider) => {
@@ -268,7 +270,7 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
                 <form className={`credential-row ${uses.length && status && !saved ? "needed" : ""}`} key={provider.key}
                   onSubmit={(e) => { e.preventDefault(); void save(provider.key, drafts[provider.key] || ""); }}>
                   <div className="credential-heading">
-                    <label htmlFor={`key-${provider.key}`}>
+                    <label htmlFor={`${uid}-key-${provider.key}`}>
                       <KeyRound size={13} />
                       {t(provider.name)}
                       {provider.alsoText && <span className="key-tag">{t("Also a language model")}</span>}
@@ -283,7 +285,7 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
                       : t("Choose providers in a project's settings to see which keys it needs.")}
                   </p>
                   <div className="credential-input">
-                    <input id={`key-${provider.key}`} aria-label={t("{provider} API key", { provider: provider.name })}
+                    <input id={`${uid}-key-${provider.key}`} aria-label={t("{provider} API key", { provider: provider.name })}
                       type="password" autoComplete="new-password" spellCheck={false} autoCapitalize="none"
                       disabled={!native || !status || !!busy} value={drafts[provider.key] || ""}
                       placeholder={saved ? t("Saved • enter a replacement key") : t("Enter API key")}

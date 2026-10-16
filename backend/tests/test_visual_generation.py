@@ -13,6 +13,20 @@ import visual_generation as visuals
 
 
 class VisualGenerationTests(unittest.TestCase):
+    def test_api_motion_drops_inherited_login_and_other_provider_routes(self):
+        import types
+        provider = {'ANTHROPIC_BASE_URL':'http://127.0.0.1:12345', 'ANTHROPIC_AUTH_TOKEN':'fixture-key', 'ANTHROPIC_MODEL':'fixture-model'}
+        module = types.ModuleType('core.infra.ai.claude_agent')
+        module.build_step4_motion_agent_env = lambda: provider
+        inherited = {'STUDIO_CLAUDE':sys.executable, 'CLAUDE_CODE_OAUTH_TOKEN':'old-login',
+                     'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR':'3', 'CLAUDE_CODE_USE_VERTEX':'1',
+                     'CLAUDE_CODE_USE_BEDROCK':'1', 'CLAUDE_CODE_USE_FOUNDRY':'1', 'ANTHROPIC_API_KEY':'old-key'}
+        with patch.dict(os.environ, inherited), patch.dict(sys.modules, {'core.infra.ai.claude_agent':module}):
+            _, env = visuals.claude_command({'mode':'api_key'})
+        for key in ('CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+                    'CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_FOUNDRY','ANTHROPIC_API_KEY'):
+            self.assertNotIn(key, env)
+        for key, value in provider.items(): self.assertEqual(env[key], value)
     def test_subscription_does_not_inherit_api_routing(self):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY":"private", "ANTHROPIC_BASE_URL":"wrong-endpoint", "CLAUDECODE":"nested"}):
             program, env = visuals.claude_command({"mode":"subscription", "path":sys.executable})
@@ -67,6 +81,36 @@ class VisualGenerationTests(unittest.TestCase):
                 result = visuals.run(request, {}, object(), unexpected)
             self.assertTrue(result['success'])
             image_check.assert_not_called()
+
+    def test_all_images_never_starts_claude(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary); (project/'text').mkdir()
+            (project/'text/script.json').write_text(json.dumps({'segments':[{'index':1,'visualizer':'image'}, {'index':2,'visualizer':'image'}]}))
+            request = {'project':temporary, 'indices':[1,2]}
+            params = {'image_server':'test', 'image_model':'test', 'llm_server_step4':'test', 'llm_model_step4':'test', 'llm_base_url_step4':'test'}
+            with patch.object(visuals, 'claude_command', side_effect=AssertionError('Claude started for images')), patch('runner.check_image_model'):
+                def call(_, values):
+                    self.assertEqual(values['target_segments'], [1,2])
+                    self.assertEqual(values['visual_mode'], 'static_image')
+                    return {'success':True}
+                result = visuals.run(request, params, type('Steps', (), {'run_step_4':None}), call)
+            self.assertTrue(result['success'])
+            self.assertEqual(result['processed_segments'], [1,2])
+
+    def test_new_motion_overrides_saved_image_type_only_for_requested_segment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary); (project/'text').mkdir()
+            script = {'segments':[{'index':1,'visualizer':'image'}, {'index':2,'visualizer':'image'}]}
+            (project/'text/script.json').write_text(json.dumps(script))
+            request = {'project':temporary,'engine':temporary,'studio_data':temporary,'workspace':temporary,
+                       'indices':[1], 'motion_folders':{'1':temporary}, 'visualizer':'hf'}
+            with patch.object(visuals, 'claude_command', return_value=('claude', {})), patch.object(visuals, 'generate_motion', return_value=1), \
+                 patch('server.Studio'), patch('context.prepare', return_value={}) as prepare, patch('runner.check_image_model') as image_check:
+                result = visuals.run(request, {}, object(), lambda *_: self.fail('Image provider called'))
+            self.assertTrue(result['success'])
+            self.assertEqual(prepare.call_args.args[2]['indices'], [1])
+            image_check.assert_not_called()
+            self.assertEqual(json.loads((project/'text/script.json').read_text()), script)
 
 
 if __name__ == '__main__': unittest.main()

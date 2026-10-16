@@ -49,7 +49,7 @@ def source(studio, project, settings):
         index = segment['index']
         if not str(segment.get('content', '')).strip():
             raise ValueError(f'Segment {index} needs narration text before editing the video.')
-        audio = studio.asset(project, 'voice', 'opening' if index == 0 else f'voice_{index}', ['.wav', '.mp3'])
+        audio = studio.asset(project, 'voice', 'opening' if index == 0 else f'voice_{index}', ['.wav'])
         visual = studio.asset(project, 'images', 'opening' if index == 0 else f'segment_{index}', ['.mp4', '.mov', '.webm', '.png', '.jpg', '.jpeg', '.webp'])
         seconds = duration(audio)
         if not audio or not visual or not seconds:

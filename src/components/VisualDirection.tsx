@@ -1,19 +1,23 @@
-import { ChevronDown, ChevronRight, FileText, Save } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, FileText, Loader2, RefreshCw, Save } from "lucide-react";
+import { useId, useEffect, useState } from "react";
 import { useCollapsed } from "../collapse";
 import { useI18n } from "../i18n";
 
 // The shared summary every visual follows. Visuals create it when it is missing or
 // outdated; here it can be reviewed, edited, or generated on its own.
-export default function VisualDirection({ summary, hash, outdated, disabled, onSave, onEditInstructions, onDirtyChange }: {
+export default function VisualDirection({ summary, hash, outdated, disabled, generating, generationBlocked, onGenerate, onSave, onEditInstructions, onDirtyChange }: {
   summary: string;
   hash: string;
   outdated: boolean;
   disabled: boolean;
+  generating: boolean;
+  generationBlocked: boolean;
+  onGenerate: () => void;
   onSave: (summary: string, expectedHash: string) => Promise<boolean>;
   onEditInstructions: () => void;
   onDirtyChange: (dirty: boolean) => void;
 }) {
+  const uid = useId();
   const { t } = useI18n();
   const [collapsed, toggle] = useCollapsed("visual-direction", true);
   // An edit remembers the saved version it started from, so a conflicting save is rejected.
@@ -25,16 +29,22 @@ export default function VisualDirection({ summary, hash, outdated, disabled, onS
   const status = !summary.trim() ? "Not generated" : outdated ? "Outdated" : "";
   return <section className={"direction-panel" + (collapsed ? " collapsed" : "")} aria-label={t("Content summary")}>
     <div className="direction-heading">
-      <button type="button" className="collapse-toggle" aria-expanded={!collapsed} aria-controls="visual-direction-body"
+      <button type="button" className="collapse-toggle" aria-expanded={!collapsed} aria-controls={`${uid}-visual-direction-body`}
         title={t(collapsed ? "Expand" : "Collapse")} onClick={toggle}>
         {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
         <span>{t("Content summary")}</span>
       </button>
       {collapsed && <span className="collapse-summary" title={text}>{text}</span>}
       {status && <span className="direction-status">{t(status)}</span>}
+      <button className="button small direction-generate" disabled={disabled || dirty || generationBlocked}
+        title={t(dirty || generationBlocked ? "Save changes before generating." : "Generate only the content summary using its saved provider and model.")}
+        onClick={onGenerate}>
+        {generating ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
+        {t(generating ? "Generating…" : summary.trim() ? "Regenerate summary" : "Generate summary")}
+      </button>
     </div>
-    <div id="visual-direction-body" hidden={collapsed}>
-      <p className="small-muted">{t("Every image and motion clip draws on this summary of the content. Visuals create it when it is missing and refresh it after the manuscript changes.")}</p>
+    <div id={`${uid}-visual-direction-body`} hidden={collapsed}>
+      <p className="small-muted">{t("Every image and motion clip draws on this summary. Generate it separately, or let visual generation create it when missing. Regenerate it here after the manuscript changes.")}</p>
       <textarea aria-label={t("Content summary editor")} value={text} disabled={disabled}
         placeholder={t("Generate a summary, or write what the video covers.")}
         onChange={(e) => setDraft({ text: e.target.value, hash: draft?.hash ?? hash })} />

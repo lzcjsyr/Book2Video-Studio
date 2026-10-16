@@ -5,8 +5,8 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import video_encoding as encoding
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "build/engine"))
+from core.infra.motion import encoding
 
 
 class VideoEncodingTests(unittest.TestCase):

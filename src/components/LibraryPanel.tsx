@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useId, useEffect, useState } from "react";
 import { BookOpen, FolderOpen, History, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -21,6 +21,7 @@ export default function LibraryPanel({
   onUse?: (group: string, id: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
+  const uid = useId();
   const { t, locale } = useI18n();
   const [catalog, setCatalog] = useState<LibraryCatalog>({ groups: [] });
   const [groupId, setGroupId] = useState(initialGroup);
@@ -272,8 +273,8 @@ export default function LibraryPanel({
     </div>
   </>;
   if (embedded) return <section className="library-panel" aria-label={t("Skills & templates")}>{body}</section>;
-  return <div className="modal-backdrop"><section className="modal library-modal" role="dialog" aria-modal="true" aria-labelledby="library-title">
-    <div className="modal-heading"><h2 id="library-title">{t("Skills & templates")}</h2>
+  return <div className="modal-backdrop"><section className="modal library-modal" role="dialog" aria-modal="true" aria-labelledby={`${uid}-library-title`}>
+    <div className="modal-heading"><h2 id={`${uid}-library-title`}>{t("Skills & templates")}</h2>
       <button className="icon-button" aria-label={t("Close library")} disabled={busy} onClick={() => { if (guard()) onClose(); }}><X size={18} /></button></div>{body}
   </section></div>;
 }

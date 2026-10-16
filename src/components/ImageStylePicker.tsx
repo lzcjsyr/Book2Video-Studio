@@ -1,5 +1,5 @@
 import { Check, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useId, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../i18n";
 import type { LibraryChoice } from "../types";
@@ -11,12 +11,14 @@ export default function ImageStylePicker({ styles, selected, disabled, onSelect,
   onSelect: (id: string) => Promise<void>;
   onClose: () => void;
 }) {
+  const uid = useId();
   const { t } = useI18n();
   const dialog = useRef<HTMLElement>(null);
   useEffect(() => {
     const previous = document.activeElement;
     dialog.current?.querySelector<HTMLButtonElement>("button")?.focus();
     const key = (event: KeyboardEvent) => {
+      if (!dialog.current?.getClientRects().length) return;
       if (event.key === "Escape") { event.preventDefault(); onClose(); }
       if (event.key !== "Tab") return;
       const buttons = dialog.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
@@ -34,12 +36,12 @@ export default function ImageStylePicker({ styles, selected, disabled, onSelect,
 
   return createPortal(<div className="modal-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
     <section ref={dialog} className="modal image-style-picker" role="dialog" aria-modal="true"
-      aria-labelledby="image-style-picker-title" aria-describedby="image-style-picker-help">
+      aria-labelledby={`${uid}-image-style-picker-title`} aria-describedby={`${uid}-image-style-picker-help`}>
       <div className="modal-heading">
-        <h2 id="image-style-picker-title">{t("Choose image style")}</h2>
+        <h2 id={`${uid}-image-style-picker-title`}>{t("Choose image style")}</h2>
         <button type="button" className="icon-button" aria-label={t("Close style picker")} onClick={onClose}><X size={18} /></button>
       </div>
-      <p id="image-style-picker-help" className="small-muted image-style-picker-help">{t("Read the descriptions and select a style. Your choice saves automatically for this project.")}</p>
+      <p id={`${uid}-image-style-picker-help`} className="small-muted image-style-picker-help">{t("Read the descriptions and select a style. Your choice saves automatically for this project.")}</p>
       <ul className="image-style-options" aria-label={t("Image styles")}>
         {styles.map((style) => <li key={style.id}>
           <button type="button" className={"image-style-option" + (style.id === selected ? " selected" : "")}

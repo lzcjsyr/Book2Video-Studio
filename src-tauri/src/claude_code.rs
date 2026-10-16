@@ -13,7 +13,7 @@ use tauri::Manager;
 const FILE: &str = "claude-code.json";
 /// What the built-in mode sets to reach a provider. A subscription session must not
 /// inherit any of it, or Claude Code would bill that endpoint instead of the login.
-pub const PROVIDER_ENV: [&str; 10] = [
+pub const PROVIDER_ENV: [&str; 16] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
@@ -24,7 +24,66 @@ pub const PROVIDER_ENV: [&str; 10] = [
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "CLAUDE_CODE_SUBAGENT_MODEL",
     "CLAUDE_CODE_EFFORT_LEVEL",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "ANTHROPIC_API_KEY_FILE_DESCRIPTOR",
 ];
+
+pub const LOGIN_ENV: [&str; 2] = [
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+];
+
+/// Variables a running Claude Code gives the programs it starts. Inherited when Studio itself
+/// was started from a Claude Code session, they would make every session a nested child of it.
+fn host_session(name: &str) -> bool {
+    (name == "CLAUDECODE"
+        || name.starts_with("CLAUDE_CODE_")
+        || name.starts_with("CLAUDE_AGENT_SDK")
+        || matches!(name, "CLAUDE_PID" | "CLAUDE_EFFORT" | "MCP_CONNECTION_NONBLOCKING"))
+        && !LOGIN_ENV.contains(&name)
+}
+
+/// Apply routing identically for every interactive stage. User-level Claude settings
+/// and inherited OAuth/provider variables must not replace Studio's API choice.
+pub(crate) fn configure_connection(
+    command: &mut portable_pty::CommandBuilder,
+    mode: Mode,
+    provider: &std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let inherited: Vec<String> = command
+        .iter_full_env_as_str()
+        .map(|(name, _)| name)
+        .filter(|name| host_session(name))
+        .map(String::from)
+        .collect();
+    for name in inherited.iter().map(String::as_str).chain(PROVIDER_ENV) {
+        command.env_remove(name);
+    }
+    if mode == Mode::ApiKey {
+        if provider.get("ANTHROPIC_BASE_URL").is_none_or(|v| v.trim().is_empty())
+            || provider.get("ANTHROPIC_MODEL").is_none_or(|v| v.trim().is_empty())
+            || !["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].iter()
+                .any(|key| provider.get(*key).is_some_and(|v| !v.trim().is_empty()))
+        {
+            return Err("The configured agent provider needs an endpoint, model and API key. Check Settings → Production and API keys.".into());
+        }
+        for name in LOGIN_ENV { command.env_remove(name); }
+        command.args(["--setting-sources", "project,local"]);
+        command.args(["--model", provider["ANTHROPIC_MODEL"].as_str()]);
+        for (name, value) in provider { command.env(name, value); }
+        // An interactive session stops to ask whether to use an ANTHROPIC_API_KEY, offering "No";
+        // the auth token reaches the provider (as a bearer token) without that question.
+        let key = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"].iter()
+            .find_map(|name| provider.get(*name).filter(|v| !v.trim().is_empty())).unwrap();
+        command.env("ANTHROPIC_AUTH_TOKEN", key);
+        command.env_remove("ANTHROPIC_API_KEY");
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,7 +173,7 @@ fn run(mut command: Command, limit: Duration) -> Result<Output, String> {
 
 /// Where the user's own Claude Code is. Apps opened from the Finder do not get the
 /// shell's PATH, so ask the login shell first, then look in the installers' folders.
-fn find(bundled: &Path) -> Option<PathBuf> {
+pub(crate) fn find(bundled: &Path) -> Option<PathBuf> {
     let home =
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)?;
     let mut candidates = Vec::new();
@@ -284,6 +343,65 @@ pub async fn claude_code_set_mode(app: tauri::AppHandle, mode: Mode) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_connection_replaces_inherited_login_and_provider_for_every_stage() {
+        use std::collections::HashMap;
+        for stage in ["1", "4", "5", "6"] {
+            let mut command = portable_pty::CommandBuilder::new("claude");
+            for key in PROVIDER_ENV.into_iter().chain(LOGIN_ENV) { command.env(key, "old-session"); }
+            command.env("CLAUDECODE", "nested");
+            let provider = HashMap::from([
+                ("ANTHROPIC_BASE_URL".into(), "http://127.0.0.1:12345".into()),
+                ("ANTHROPIC_AUTH_TOKEN".into(), "fixture-api-key".into()),
+                ("ANTHROPIC_API_KEY".into(), "".into()),
+                ("ANTHROPIC_MODEL".into(), "provider-model".into()),
+            ]);
+            configure_connection(&mut command, Mode::ApiKey, &provider).unwrap();
+            assert_eq!(command.get_env("ANTHROPIC_AUTH_TOKEN"), Some(std::ffi::OsStr::new("fixture-api-key")), "stage {stage}");
+            assert!(command.get_env("ANTHROPIC_API_KEY").is_none(), "stage {stage}");
+            for name in LOGIN_ENV.into_iter().chain(["CLAUDECODE", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"]) {
+                assert!(command.get_env(name).is_none(), "stage {stage}: {name}");
+            }
+            let args = command.get_argv();
+            assert!(args.windows(2).any(|a| a == ["--setting-sources", "project,local"]));
+            assert!(args.windows(2).any(|a| a == ["--model", "provider-model"]));
+        }
+    }
+
+    #[test]
+    fn a_provider_api_key_is_sent_as_the_auth_token() {
+        let mut command = portable_pty::CommandBuilder::new("claude");
+        let provider = std::collections::HashMap::from([
+            ("ANTHROPIC_BASE_URL".into(), "http://127.0.0.1:12345".into()),
+            ("ANTHROPIC_API_KEY".into(), "fixture-api-key".into()),
+            ("ANTHROPIC_MODEL".into(), "provider-model".into()),
+        ]);
+        configure_connection(&mut command, Mode::ApiKey, &provider).unwrap();
+        assert_eq!(command.get_env("ANTHROPIC_AUTH_TOKEN"), Some(std::ffi::OsStr::new("fixture-api-key")));
+        assert!(command.get_env("ANTHROPIC_API_KEY").is_none());
+    }
+
+    #[test]
+    fn missing_api_configuration_fails_without_falling_back_to_login() {
+        let mut command = portable_pty::CommandBuilder::new("claude");
+        assert!(configure_connection(&mut command, Mode::ApiKey, &Default::default()).is_err());
+    }
+
+    #[test]
+    fn subscription_keeps_login_and_removes_api_routing() {
+        let mut command = portable_pty::CommandBuilder::new("claude");
+        for name in PROVIDER_ENV { command.env(name, "old-provider"); }
+        command.env("CLAUDE_CODE_OAUTH_TOKEN", "fixture-login");
+        for name in ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID"] { command.env(name, "host"); }
+        command.env("CLAUDE_CONFIG_DIR", "/fixture/config");
+        configure_connection(&mut command, Mode::Subscription, &Default::default()).unwrap();
+        for name in ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID"] { assert!(command.get_env(name).is_none(), "{name}"); }
+        assert_eq!(command.get_env("CLAUDE_CONFIG_DIR"), Some(std::ffi::OsStr::new("/fixture/config")));
+        for name in PROVIDER_ENV { assert!(command.get_env(name).is_none()); }
+        assert_eq!(command.get_env("CLAUDE_CODE_OAUTH_TOKEN"), Some(std::ffi::OsStr::new("fixture-login")));
+        assert_eq!(command.get_argv().len(), 1);
+    }
 
     #[test]
     fn modes_are_stored_by_name() {

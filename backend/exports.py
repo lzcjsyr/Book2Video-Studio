@@ -1,7 +1,6 @@
 """Publish verified exports, with rollback and recovery after a forced shutdown."""
 import json
 import os
-from pathlib import Path
 import shutil
 import uuid
 

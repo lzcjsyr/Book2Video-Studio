@@ -1,6 +1,6 @@
 import { useI18n } from "../i18n";
 import { useEffect, useRef } from "react";
-import { Images, Music2, ChevronLeft, ChevronRight, Quote, Clapperboard, Layers } from "lucide-react";
+import { Images, Music2, ChevronLeft, ChevronRight, Quote, Clapperboard, Layers, ListPlus } from "lucide-react";
 import type { Detail, Take } from "../types";
 import { media } from "../api";
 export const formatTime = (seconds: number) =>
@@ -17,6 +17,7 @@ export default function Timeline({
   openingEnabled,
   focus,
   onPick,
+  queued,
 }: {
   detail: Detail;
   selected: number;
@@ -27,6 +28,8 @@ export default function Timeline({
   openingEnabled: boolean;
   /** The track the current step works on; it carries the selection highlight. */
   focus: "visual" | "voice" | "both";
+  /** Visuals: the parts (0: the opening) whose new image waits in the queue. */
+  queued?: number[];
 }) {
   const { t } = useI18n();
   const active = useRef<HTMLButtonElement | null>(null);
@@ -44,7 +47,8 @@ export default function Timeline({
     return start;
   });
   // The sequence shows only the take each part uses: a still, or a motion clip's keyframe.
-  function thumb(part: { poster: string | null; takes: Take[]; motion: Detail["segments"][number]["motion"] }, opening = false) {
+  function thumb(part: { poster: string | null; takes: Take[]; motion: Detail["segments"][number]["motion"] }, index: number) {
+    const opening = index === 0;
     const motion = part.motion;
     const rendered = Boolean(motion?.video && motion.video_current);
     return (
@@ -65,6 +69,11 @@ export default function Timeline({
         {onPick && part.takes.length > 1 && (
           <span className="clip-takes" title={t("{count} versions kept", { count: part.takes.length })}>
             <Layers size={9} /> {part.takes.length}
+          </span>
+        )}
+        {queued?.includes(index) && (
+          <span className="clip-queued" title={t("A new image is queued")}>
+            <ListPlus size={9} /> {t("Queued")}
           </span>
         )}
       </>
@@ -139,7 +148,7 @@ export default function Timeline({
             >
               <span className="timeline-ruler">00:00</span>
               <span className={marks(0).thumb} title={marks(0).thumbTitle}>
-                {thumb({ ...detail.opening, motion: null }, true)}
+                {thumb({ ...detail.opening, motion: null }, 0)}
                 <span className="clip-number">{t("Opening")}</span>
               </span>
               <span
@@ -167,7 +176,7 @@ export default function Timeline({
             >
               <span className="timeline-ruler">{formatTime(offsets[i])}</span>
               <span className={marks(s.index).thumb} title={marks(s.index).thumbTitle}>
-                {thumb(s)}
+                {thumb(s, s.index)}
                 <span className="clip-number">
                   {String(s.index).padStart(2, "0")}
                 </span>

@@ -1,4 +1,4 @@
-"""Resolve the CLI's existing stage provider in an isolated process.
+"""Resolve a stage's agent provider in an isolated process.
 
 Only the native host receives stdout. Credentials never enter frontend state,
 launch manifests, settings files, terminal output, or API responses.
@@ -13,11 +13,10 @@ def resolve(engine, project, step):
     sys.path.insert(0,str(engine))
     import yaml
     from core.config import apply_yaml_config
-    path=engine/'config.yaml' if (engine/'config.yaml').exists() else engine/'config.example.yaml'
-    merged=yaml.safe_load(path.read_text(encoding='utf-8'))
+    merged=yaml.safe_load((engine/'config.example.yaml').read_text(encoding='utf-8'))
     state=json.loads((project/'.studio/state.json').read_text(encoding='utf-8'))
-    from server import engine_settings,migrate_state
-    for section,values in engine_settings(migrate_state(state).get('settings',{})).items():merged.setdefault(section,{}).update(values)
+    from server import engine_settings
+    for section,values in engine_settings(state.get('settings',{})).items():merged.setdefault(section,{}).update(values)
     with tempfile.TemporaryDirectory() as temporary:
         runtime=Path(temporary)/'agent-config.yaml';runtime.write_text(yaml.safe_dump(merged,allow_unicode=True),encoding='utf-8');apply_yaml_config(runtime)
     from core.infra.ai.claude_agent import build_step1_agent_env,build_step4_motion_agent_env

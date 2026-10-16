@@ -41,10 +41,9 @@ def new_id(kind: str, when: float | None = None) -> str:
 
 
 def made(take: str) -> float:
-    """When a take was made, from its id (ids from before milliseconds have none)."""
+    """When a take was made, from its id."""
     parts = take.split("-")
-    seconds = time.mktime(time.strptime(parts[1] + parts[2], "%Y%m%d%H%M%S"))
-    return seconds + (int(parts[3]) / 1000 if len(parts) > 4 and parts[3].isdigit() else 0)
+    return time.mktime(time.strptime(parts[1] + parts[2], "%Y%m%d%H%M%S")) + int(parts[3]) / 1000
 
 
 def same(a: Path, b: Path) -> bool:
@@ -174,19 +173,6 @@ def keep_background(p: Path) -> None:
         shutil.copy2(current, d / (new_id("background", current.stat().st_mtime) + current.suffix.lower()))
 
 
-def recover_backgrounds(p: Path) -> None:
-    """Backgrounds from before Studio kept them: every opening job saved the one it replaced in revision history."""
-    kept = [t["file"] for t in listing(p, 0) if t["kind"] == "background"]
-    earlier = sorted((f for f in (p / ".studio/history").glob("*/images/opening_bg.*") if f.suffix.lower() in STILLS), key=lambda f: f.stat().st_mtime)
-    for old in earlier:
-        if not any(same(f, old) for f in kept):
-            d = folder(p, 0)
-            d.mkdir(parents=True, exist_ok=True)
-            target = d / (new_id("background", old.stat().st_mtime) + old.suffix.lower())
-            shutil.copy2(old, target)
-            kept.append(target)
-
-
 def current_background(p: Path) -> str | None:
     """The background the engine renders the next opening with."""
     current = p / BACKGROUND
@@ -202,30 +188,9 @@ def keep(p: Path, index: int, file: Path, takes: list[dict]) -> None:
         add_still(p, index, file) if kind == "still" else add_motion(p, index, video=file)
 
 
-def migrate(p: Path, index: int, visualizer: str) -> str | None:
-    """Projects from before takes kept one still (in use, or set aside in images/stills/) and one composition."""
-    still = motion_take = None
-    for parked in [f for ext in STILLS if (f := p / "images/stills" / (stem(index) + ext)).is_file()]:
-        still = add_still(p, index, parked, move=True)
-    for current in placed(p, index, STILLS)[:1]:
-        still = add_still(p, index, current)
-    work = p / "images/motion" / stem(index)
-    if not (work / "index.html").is_file():
-        work = p / "images/hyperframes" / stem(index)
-    video = next(iter(placed(p, index, VIDEOS)), None)
-    if (work / "index.html").is_file() or video:
-        motion_take = add_motion(p, index, work if (work / "index.html").is_file() else None, video)
-    folder(p, index).mkdir(parents=True, exist_ok=True)
-    return motion_take if visualizer == "hf" else still
-
-
-def sync(p: Path, index: int, selection: str | None, visualizer: str) -> str | None:
+def sync(p: Path, index: int, selection: str | None) -> str | None:
     """Adopt new engine output as a take, then put the selected take in the engine's place."""
-    if not folder(p, index).is_dir():
-        # The segment's type decides which of its migrated files it uses.
-        selection = migrate(p, index, visualizer)
-        place(p, index, selection)
-        return selection
+    folder(p, index).mkdir(parents=True, exist_ok=True)
     takes = listing(p, index)
     still = next(iter(placed(p, index, STILLS)), None)
     video = next(iter(placed(p, index, VIDEOS)), None)

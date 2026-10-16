@@ -66,6 +66,18 @@ impl Installation {
         } else {
             return Err("This installation is incomplete. Reinstall Book2Video Studio.".into());
         };
+        let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let workspace = app
+            .path()
+            .video_dir()
+            .or_else(|_| app.path().home_dir())
+            .map_err(|e| e.to_string())?
+            .join("Book2Video Studio");
+        Self::new(&resources, data, workspace)
+    }
+
+    /// The installation staged in `resources` (backend, engine, runtime), keeping user data in `data`.
+    pub(crate) fn new(resources: &Path, data: PathBuf, workspace: PathBuf) -> Result<Self, String> {
         let runtime = resources.join("runtime");
         let manifest: Manifest = std::fs::read(runtime.join("manifest.json"))
             .ok()
@@ -77,13 +89,6 @@ impl Installation {
         } else {
             resources.join("backend")
         };
-        let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        let workspace = app
-            .path()
-            .video_dir()
-            .or_else(|_| app.path().home_dir())
-            .map_err(|e| e.to_string())?
-            .join("Book2Video Studio");
         let library = data.join("library");
         let tool = |relative: &str| runtime.join(relative);
         // Bundled programs come first; the system PATH remains for the agent's own shell use.
@@ -221,7 +226,12 @@ fn drain(stream: impl Read + Send + 'static, mut log: File) {
 }
 
 fn start_service(app: &tauri::AppHandle) -> Result<Bootstrap, String> {
-    let keys = credentials::load()?;
+    // A credential store that cannot be read (locked, or access denied) must not keep the app
+    // from starting: Settings → API keys reports it, and the keys follow once they can be read.
+    let keys = credentials::load().unwrap_or_else(|_| {
+        credentials::defer_apply();
+        Default::default()
+    });
     let runtime = app.state::<Runtime>();
     *runtime.info.lock().unwrap() = None;
     if let Some(process) = runtime.backend.lock().unwrap().take() {
@@ -231,12 +241,6 @@ fn start_service(app: &tauri::AppHandle) -> Result<Bootstrap, String> {
     let logs = installation.data.join("logs");
     std::fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
     let log = File::create(logs.join("service.log")).map_err(|e| e.to_string())?;
-    // Builds before the standalone app kept projects in the CLI engine; list them once.
-    let legacy = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| e.to_string())?
-        .join("runtime.json");
     let token = uuid::Uuid::new_v4().to_string() + &uuid::Uuid::new_v4().to_string();
     let mut command = installation.command(&installation.python);
     command
@@ -248,8 +252,6 @@ fn start_service(app: &tauri::AppHandle) -> Result<Bootstrap, String> {
         .arg(&installation.data)
         .arg("--workspace")
         .arg(&installation.workspace)
-        .arg("--legacy-config")
-        .arg(legacy)
         .current_dir(&installation.data)
         .env("STUDIO_TOKEN", &token)
         .env("STUDIO_NATIVE_HOST", "1")
@@ -424,8 +426,7 @@ fn main() {
             terminal::terminal_start,
             terminal::terminal_write,
             terminal::terminal_resize,
-            terminal::terminal_stop,
-            terminal::terminal_list
+            terminal::terminal_stop
         ])
         .build(tauri::generate_context!())
         .expect("Cannot build Book2Video Studio")
