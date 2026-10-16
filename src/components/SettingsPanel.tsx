@@ -1,5 +1,5 @@
 import { useI18n } from "../i18n";
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { X } from "lucide-react";
 import type { Bootstrap, ClaudeCodeMode, Detail, Settings, LibraryChoice } from "../types";
 import ApiKeysPanel, { type KeyStatus } from "./ApiKeysPanel";
@@ -8,6 +8,7 @@ import { libraryChoices, librarySettings } from "../library";
 import { imageModelChoices, imageModelFits, imageModelFor, imageServiceChoices, languageModelChoices } from "../keys";
 import ModelSelect from "./ModelSelect";
 import VoicePicker from "./VoicePicker";
+import AgentConnection from "./AgentConnection";
 
 export default function SettingsPanel({
   detail,
@@ -19,6 +20,7 @@ export default function SettingsPanel({
   initialTab,
   claudeMode,
   onClaudeMode,
+  onDirtyChange,
 }: {
   detail: Detail | null;
   bootstrap: Bootstrap | null;
@@ -29,7 +31,9 @@ export default function SettingsPanel({
   initialTab?: "production" | "keys";
   claudeMode?: ClaudeCodeMode;
   onClaudeMode?: (mode: ClaudeCodeMode) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
+  const uid = useId();
   const { t, locale, setLocale } = useI18n();
   const [settings, setSettings] = useState<Settings>(() => {
     const m = structuredClone(bootstrap?.defaults || {});
@@ -43,6 +47,11 @@ export default function SettingsPanel({
   );
   const [libraryTarget, setLibraryTarget] = useState({ group: "writing_skills", id: "" });
   const [libraryDirty, setLibraryDirty] = useState(false);
+  const savedSettings = useRef(JSON.stringify(settings));
+  useEffect(() => {
+    onDirtyChange?.(JSON.stringify(settings) !== savedSettings.current || libraryDirty);
+    return () => onDirtyChange?.(false);
+  }, [settings, libraryDirty, onDirtyChange]);
   const [libraryNotice, setLibraryNotice] = useState("");
   function leaveLibrary(next: () => void) {
     if (libraryDirty) setLibraryNotice("Save or discard your library edits before switching.");
@@ -140,10 +149,10 @@ export default function SettingsPanel({
         className={"modal settings-modal" + (tab === "library" ? " with-library" : "")}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="settings-title"
+        aria-labelledby={`${uid}-settings-title`}
       >
         <div className="modal-heading">
-          <h2 id="settings-title">{t("Settings")}</h2>
+          <h2 id={`${uid}-settings-title`}>{t("Settings")}</h2>
           <button
             className="icon-button"
             aria-label={t("Close settings")}
@@ -154,7 +163,7 @@ export default function SettingsPanel({
         </div>
         <div className="settings-language">
           <div>
-            <span id="interface-language-label">{t("Language")}</span>
+            <span id={`${uid}-interface-language-label`}>{t("Language")}</span>
             <p className="small-muted">
               {t(
                 "Changes apply immediately and are remembered on this computer.",
@@ -190,30 +199,30 @@ export default function SettingsPanel({
           aria-label={t("Settings sections")}
         >
           <button
-            id="production-settings-tab"
+            id={`${uid}-production-settings-tab`}
             role="tab"
             aria-selected={tab === "production"}
-            aria-controls="production-settings-panel"
+            aria-controls={`${uid}-production-settings-panel`}
             disabled={!detail || !bootstrap}
             onClick={() => leaveLibrary(() => setTab("production"))}
           >
             {t("Production")}
           </button>
           <button
-            id="api-keys-tab"
+            id={`${uid}-api-keys-tab`}
             role="tab"
             aria-selected={tab === "keys"}
-            aria-controls="api-keys-panel"
+            aria-controls={`${uid}-api-keys-panel`}
             onClick={() => leaveLibrary(() => setTab("keys"))}
           >
             {t("API keys")}
           </button>
-          <button role="tab" id="library-settings-tab" aria-selected={tab === "library"}
-            aria-controls="library-settings-panel" disabled={!bootstrap}
+          <button role="tab" id={`${uid}-library-settings-tab`} aria-selected={tab === "library"}
+            aria-controls={`${uid}-library-settings-panel`} disabled={!bootstrap}
             onClick={() => setTab("library")}>{t("Skills & templates")}</button>
         </div>
         {libraryNotice && <p className="library-message" role="status">{t(libraryNotice)}</p>}
-        {tab === "library" && <div id="library-settings-panel" role="tabpanel" aria-labelledby="library-settings-tab">
+        {tab === "library" && <div id={`${uid}-library-settings-panel`} role="tabpanel" aria-labelledby={`${uid}-library-settings-tab`}>
           <LibraryPanel embedded initialGroup={libraryTarget.group} initialId={libraryTarget.id}
             onDirtyChange={setLibraryDirty} onChanged={onLibraryChanged}
             onClose={() => leaveLibrary(() => setTab(detail ? "production" : "keys"))}
@@ -224,10 +233,10 @@ export default function SettingsPanel({
         </div>}
         {tab === "keys" && (
           <div
-            id="api-keys-panel"
+            id={`${uid}-api-keys-panel`}
             className="modal-content"
             role="tabpanel"
-            aria-labelledby="api-keys-tab"
+            aria-labelledby={`${uid}-api-keys-tab`}
           >
             {/* The keys this project needs follow the provider choices in this unsaved draft. */}
             <ApiKeysPanel settings={detail ? settings : null} motion={Boolean(detail?.segments.some((s) => s.visualizer === "hf"))} claudeMode={claudeMode} onClaudeMode={onClaudeMode} onStatus={onKeyStatus} />
@@ -236,11 +245,12 @@ export default function SettingsPanel({
         {tab === "production" && detail && bootstrap && (
           <>
             <div
-              id="production-settings-panel"
+              id={`${uid}-production-settings-panel`}
               className="modal-content"
               role="tabpanel"
-              aria-labelledby="production-settings-tab"
+              aria-labelledby={`${uid}-production-settings-tab`}
             >
+              <AgentConnection mode={claudeMode ?? "api_key"} onMode={onClaudeMode} disabled={Boolean(detail.state.agent_active)} />
               {step(1, "Writing")}
               <p className="small-muted settings-note">{t(subscription
                 ? "Not used now: Writing runs in your own Claude Code on your Claude subscription. Change this in Settings → API keys."
@@ -260,8 +270,8 @@ export default function SettingsPanel({
                 onChange={(voice) => set("step3", "voice", voice)} />
               {step(4, "Visuals")}
               {/* Visuals has three parts: the summary every visual draws on, still images, and motion clips. */}
-              <section className="settings-part" aria-labelledby="settings-summary">
-                <h4 id="settings-summary">{t("Content summary")}</h4>
+              <section className="settings-part" aria-labelledby={`${uid}-settings-summary`}>
+                <h4 id={`${uid}-settings-summary`}>{t("Content summary")}</h4>
                 <p className="small-muted">{t("Written from the manuscript; every image and motion clip draws on it.")}</p>
                 <div className="form-grid">
                   {field("step4_summary", "llm_server", t("Content summary provider"), languageModelChoices)}
@@ -271,8 +281,8 @@ export default function SettingsPanel({
                   {manage("summary", "Edit content summary instructions")}
                 </div>
               </section>
-              <section className="settings-part" aria-labelledby="settings-images">
-                <h4 id="settings-images">{t("Image generation")}</h4>
+              <section className="settings-part" aria-labelledby={`${uid}-settings-images`}>
+                <h4 id={`${uid}-settings-images`}>{t("Image generation")}</h4>
                 <p className="small-muted">{t("Still images for segments, and the background of the opening.")}</p>
                 <div className="form-grid">
                   {field("step4", "image_size", t("Frame size (images and clips)"))}
@@ -289,8 +299,8 @@ export default function SettingsPanel({
                 </div>
                 {modelWarning("step4", "image_server", "image_model")}
               </section>
-              <section className="settings-part" aria-labelledby="settings-motion">
-                <h4 id="settings-motion">{t("Motion clips")}</h4>
+              <section className="settings-part" aria-labelledby={`${uid}-settings-motion`}>
+                <h4 id={`${uid}-settings-motion`}>{t("Motion clips")}</h4>
                 <p className="small-muted">{t(subscription
                   ? "Designed by your own Claude Code on your Claude subscription, then rendered by Studio. The agent provider below is not used now."
                   : "Designed by Claude Code with HTML / Three.js, then rendered by Studio.")}</p>

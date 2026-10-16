@@ -1,10 +1,8 @@
 import { FileText, Image, TerminalSquare } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useId, useEffect, useState } from "react";
 import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
 import type { LibraryCatalog, Settings } from "../types";
-
-const defaultSizes = { "16:9": "3200x1800", "9:16": "1800x3200", "4:3": "3000x2250", "3:4": "2250x3000", "1:1": "2500x2500" };
 
 /** The cover's creative choices, saved directly from its production page. */
 export default function CoverSetup({ settings, library, disabled, onChange, onEditStyles, copy, agentMode }: {
@@ -16,14 +14,12 @@ export default function CoverSetup({ settings, library, disabled, onChange, onEd
   copy: { title: string; subtitle: string };
   agentMode: string;
 }) {
+  const uid = useId();
   const { t } = useI18n();
-  const sizePresets = settings.cover_image_size_presets;
-  const presets = sizePresets && typeof sizePresets === "object" && !Array.isArray(sizePresets) ? sizePresets : defaultSizes;
+  const presets = (settings.cover_image_size_presets ?? {}) as Record<string, string>;
   // One generation makes every chosen size, each with its own candidates.
-  // Earlier settings named one size; generation reads them the same way (backend/runner.py).
   const saved = settings.cover_image_size_keys;
-  const sizes = (Array.isArray(saved) && saved.length ? saved.map(String) : [String(settings.default_cover_image_size_key ?? "")])
-    .filter((ratio) => Object.hasOwn(presets, ratio));
+  const sizes = (Array.isArray(saved) ? saved.map(String) : []).filter((ratio) => Object.hasOwn(presets, ratio));
   function toggleSize(ratio: string) {
     // Saved in the list's order, which is the order the covers are made in.
     onChange("cover_image_size_keys", Object.keys(presets).filter((r) => r === ratio ? !sizes.includes(r) : sizes.includes(r)));
@@ -86,7 +82,7 @@ export default function CoverSetup({ settings, library, disabled, onChange, onEd
       <legend>{t("Cover style")}</legend>
       {!styles.some((choice) => choice.id === style) && <p className="small-muted">{t("Unavailable: {id}", { id: style })}</p>}
       {styles.map((choice) => <label key={choice.id} className={`cover-style-choice${choice.id === style ? " selected" : ""}`}>
-        <input type="radio" name="cover-style" value={choice.id} checked={choice.id === style}
+        <input type="radio" name={`${uid}-cover-style`} value={choice.id} checked={choice.id === style}
           onChange={() => onChange("cover_image_style", choice.id)} />
         <span>
           <strong>{t(choice.label)}</strong>

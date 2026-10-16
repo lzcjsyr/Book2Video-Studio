@@ -20,7 +20,7 @@ The GUI becomes the main text editor. The app owns project discovery, files, set
 
 ## 2. What the repository already provides
 
-The [architecture document](../AIGC_Video_CLI/core/ARCHITECTURE.md) explicitly identifies `core` as shared runtime logic for the CLI and a future UI. The separation into pipeline, domain, and infrastructure makes this a reasonable foundation. Individual [step functions](../AIGC_Video_CLI/core/pipeline/steps.py:402) return structured results, while the interactive menus live in the CLI adapter.
+The [architecture document](engine/core/ARCHITECTURE.md) explicitly identifies `core` as shared runtime logic for the CLI and a future UI. The separation into pipeline, domain, and infrastructure makes this a reasonable foundation. Individual [step functions](engine/core/pipeline/steps.py:402) return structured results, while the interactive menus live in the CLI adapter.
 
 | Production stage | Existing outputs and behavior | Proposed review experience |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ Several useful capabilities already exist:
 - Steps 3 and 4 accept selected segment indices and a separate opening-regeneration flag. “Regenerate these three segments” can use existing functions.
 - Visual production supports static images, HyperFrames animations, and a mixed mode that follows each segment’s visualizer.
 - HyperFrames reads the actual recording duration before generating and rendering an animation.
-- Project discovery and legacy progress detection exist in the [scanner](../AIGC_Video_CLI/core/pipeline/scanner.py:144).
+- Project discovery and legacy progress detection exist in the [scanner](engine/core/pipeline/scanner.py:144).
 - Automated agents already run in writing, optional segmentation, and HyperFrames generation. Their JSONL logs can supply a separate activity view.
 
 I examined an existing project with **151 script segments, 151 segment images, and 151 WAV recordings**, plus an SRT file. I also inspected one generated image. That scale calls for searchable, filterable segment navigation, numeric ordering, lazy-loaded thumbnails, and keyboard next/previous controls. An endlessly expanded form would be difficult to use.
@@ -126,7 +126,7 @@ Do not silently change the working directory of a live agent when you click anot
 
 The app supervises the interactive process and recognizes valid production outputs; Claude Code handles that step's task. Navigation, scheduling later steps, progress state, artifact selection, and regeneration remain app responsibilities. Optional segmentation agents and non-agent generation functions do not gain a terminal requirement from this decision. Step 4's existing static-image and animation modes remain available; implementing the interactive path must preserve their distinct production behavior.
 
-One critical animation nuance: the current [HyperFrames generation function](../AIGC_Video_CLI/core/infra/ai/claude_agent.py:832) removes the previous `index.html` before generating a fresh composition. After you manually revise animation HTML in the terminal, the GUI needs a **Render existing composition** action that skips regeneration. Otherwise the next generation call can discard your edits.
+One critical animation nuance: the current [HyperFrames generation function](engine/core/infra/ai/claude_agent.py:832) removes the previous `index.html` before generating a fresh composition. After you manually revise animation HTML in the terminal, the GUI needs a **Render existing composition** action that skips regeneration. Otherwise the next generation call can discard your edits.
 
 ### Future Step 5: agent-and-skills editing
 
@@ -177,8 +177,8 @@ Generated animation HTML belongs in an isolated preview surface without access t
 ### Cross-platform requirements
 
 - **Media preview:** Tauri uses WebView2 on Windows and WKWebView on macOS, so test actual playback, seeking, subtitles, local media access, and animation previews in both runtimes. Keep a playback-compatible preview copy when a delivery codec cannot play in the embedded viewer. See [Tauri's webview documentation](https://v2.tauri.app/reference/webview-versions/).
-- **Rendering environment:** The current HyperFrames [runtime helper](../AIGC_Video_CLI/core/infra/hyperframes/runtime.py:22) prepends macOS/Homebrew and fixed Node version paths. Replace this assumption with platform-aware discovery or managed runtime paths. Verify Windows invocation of Node/npm executables as well as FFmpeg and the render browser.
-- **Encoding:** The current [exporter](../AIGC_Video_CLI/core/infra/media/exporter.py:21) first tries VideoToolbox encoding and falls back to libx264. Select encoding from detected platform/capabilities; make the effective codec visible, including a fallback from a requested HEVC export to H.264.
+- **Rendering environment:** The current HyperFrames [runtime helper](engine/core/infra/hyperframes/runtime.py:22) prepends macOS/Homebrew and fixed Node version paths. Replace this assumption with platform-aware discovery or managed runtime paths. Verify Windows invocation of Node/npm executables as well as FFmpeg and the render browser.
+- **Encoding:** The current [exporter](engine/core/infra/media/exporter.py:21) first tries VideoToolbox encoding and falls back to libx264. Select encoding from detected platform/capabilities; make the effective codec visible, including a fallback from a requested HEVC export to H.264.
 - **Paths and fonts:** Use platform path APIs and structured process arguments. Test spaces, Chinese text, quotes, long paths, Windows drive letters, temporary folders, and available Chinese fonts. Store mutable project data outside packaged application resources.
 - **Runtime dependencies:** Define how Python, FFmpeg, Node/HyperFrames, its render browser, and the agent executable are installed or bundled. Tauri does not eliminate those dependencies. Agent authentication should use the configured local agent environment.
 - **Development and distribution:** Prioritize a working macOS build and validate it on the development Mac. Keep Windows-specific code and build configuration available behind platform adapters. Before delivering a Windows installer, build and test it on Windows, including a clean installation without an IDE or developer shell. Minimum OS versions and processor architectures can be selected during packaging.

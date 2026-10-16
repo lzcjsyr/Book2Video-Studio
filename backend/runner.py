@@ -86,8 +86,7 @@ def run(request):
     os.chdir(project)
     import yaml
     from core.config import apply_yaml_config, get_generation_params, config
-    config_path = engine / "config.yaml" if (engine / "config.yaml").exists() else engine / "config.example.yaml"
-    merged = yaml.safe_load(config_path.read_text())
+    merged = yaml.safe_load((engine / "config.example.yaml").read_text())
     from server import engine_settings
     for section, fields in engine_settings(request.get("settings", {})).items():
         merged.setdefault(section, {}).update(fields)
@@ -100,11 +99,6 @@ def run(request):
     from core.pipeline import steps
     step = request["step"]
     indices = request.get("indices")
-    # The desktop's JSON editor is authoritative; keep the legacy DOCX bridge aligned.
-    if step == "2" or request.get("summary"):
-        from core.domain.docx_transform import export_raw_to_docx
-        raw = json.loads((project / "text/raw.json").read_text())
-        export_raw_to_docx(raw, str(project / "text/raw.docx"))
     if request.get("summary"):
         # Every visual follows a shared direction written from the manuscript (engine step 2).
         print("Generating the content summary…", flush=True)
@@ -132,7 +126,8 @@ def run(request):
             payload = json.loads((work / "studio-payload.json").read_text())
             from server import duration
             segment = next(s for s in script["segments"] if s["index"] == idx)
-            recording = next((project / "voice" / f"voice_{idx}{ext}" for ext in [".wav", ".mp3"] if (project / "voice" / f"voice_{idx}{ext}").exists()), None)
+            recording = project / "voice" / f"voice_{idx}.wav"
+            recording = recording if recording.exists() else None
             seconds = duration(recording)
             if not seconds:
                 raise ValueError(f"Segment {idx} needs its recording before rendering.")
@@ -211,17 +206,15 @@ def run(request):
     if step == "6":
         # One run makes every chosen size, each with its own candidates.
         cover = merged.get("step6", {})
-        # Earlier settings named one size; the cover panel reads them the same way.
         presets = cover.get("cover_image_size_presets", {})
-        keys = cover.get("cover_image_size_keys") or [cover.get("default_cover_image_size_key")]
-        cover_sizes = [presets[key] for key in keys if key in presets]
+        cover_sizes = [presets[key] for key in cover.get("cover_image_size_keys", []) if key in presets]
         values.update(cover_image_size=cover_sizes or params["image_size"],
                       cover_image_server=params.get("cover_image_server") or params["image_server"])
         if params.get("cover_image_model"):
             check_image_model(values["cover_image_server"], params["cover_image_model"])
     if step == "3":
-        # Projects saved before the engine had a default voice carry an empty one.
-        default_voice = (yaml.safe_load(config_path.read_text()).get("step3") or {}).get("voice", "")
+        # A voice left empty in Settings means the default voice.
+        default_voice = (yaml.safe_load((engine / "config.example.yaml").read_text()).get("step3") or {}).get("voice", "")
         values.update(tts_server=config.SUPPORTED_TTS_SERVERS[0], voice=params.get("voice") or default_voice)
     if step in {"3", "5"}:
         values["mute_cut_min_silence_ms"] = params.get("mute_cut_min_silence_ms", 200)

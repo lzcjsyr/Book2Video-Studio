@@ -1,6 +1,6 @@
 import { Check, Clapperboard, FolderOpen, Loader2, Play, TerminalSquare, X } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useId, useEffect, useState } from "react";
 import { useI18n } from "../i18n";
 import { media } from "../api";
 import { clipState, clipStateLabel } from "../takes";
@@ -52,6 +52,7 @@ export default function ClipPreview({
   onShowFiles: (folder: string) => void;
   onClose: () => void;
 }) {
+  const uid = useId();
   const { t, locale } = useI18n();
   const motion = take.motion;
   const frames = motion?.keyframes || [];
@@ -70,9 +71,9 @@ export default function ClipPreview({
 
   return (
     <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <section className="modal clip-modal" role="dialog" aria-modal="true" aria-labelledby="clip-title">
+      <section className="modal clip-modal" role="dialog" aria-modal="true" aria-labelledby={`${uid}-clip-title`}>
         <div className="modal-heading">
-          <h2 id="clip-title">
+          <h2 id={`${uid}-clip-title`}>
             <Clapperboard size={16} /> {title}
             {inUse && <span className="clip-in-use"><Check size={11} strokeWidth={3} /> {t("In use")}</span>}
           </h2>

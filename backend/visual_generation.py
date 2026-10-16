@@ -13,6 +13,8 @@ PROVIDER_ENV = (
     "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_EFFORT_LEVEL",
     "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_API_KEY_FILE_DESCRIPTOR",
 )
 
 
@@ -24,6 +26,8 @@ def claude_command(saved):
     if saved.get("mode") == "subscription":
         program = saved.get("path") or shutil.which("claude")
     else:
+        for key in ("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"):
+            env.pop(key, None)
         program = os.environ.get("STUDIO_CLAUDE") or shutil.which("claude")
         from core.infra.ai.claude_agent import build_step4_motion_agent_env
         env.update(build_step4_motion_agent_env())
@@ -44,6 +48,7 @@ def generate_motion(launch, program, env, max_turns):
             *launch["args"], "--output-format", "json", "--max-turns", str(max_turns),
             "--permission-mode", "acceptEdits", "--tools", "Read,Write,Edit,Bash,Glob,Grep",
             "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep", "--setting-sources", "project,local",
+            *(["--model", env["ANTHROPIC_MODEL"]] if env.get("ANTHROPIC_MODEL") else []),
         ], cwd=work, env=env, stdout=log, stderr=errors, text=True, timeout=1800)
     if result.returncode:
         raise ValueError(f"Claude Code failed for segment {index}. See {work / 'claude-session.json'}")
@@ -70,6 +75,8 @@ def run(request, params, steps, call):
     project = Path(request["project"])
     script = json.loads((project / "text/script.json").read_text(encoding="utf-8"))
     targets = set(request["indices"])
+    if request.get("visualizer") == "hf":
+        script["segments"] = [{**s, "visualizer": "hf"} if s["index"] in targets else s for s in script["segments"]]
     images = [s["index"] for s in script["segments"] if s["index"] in targets and s.get("visualizer", "image") != "hf"]
     motions = [s["index"] for s in script["segments"] if s["index"] in targets and s.get("visualizer") == "hf"]
     launches = []

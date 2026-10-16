@@ -33,7 +33,6 @@ STAGES = ["1", "2", "3", "4", "5", "6"]
 ENGINE_SECTIONS = {"step2": "step1_5", "step4_summary": "step2"}
 DESKTOP_SECTIONS = {engine: desktop for desktop, engine in ENGINE_SECTIONS.items()}
 SETTINGS_SECTIONS = {"global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "motion_opening"}
-STATE_LAYOUT = 2
 # Which service or model makes the next output. Changing one leaves finished work current.
 PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill"}
 LINKS_FILE = "projects.json"
@@ -45,6 +44,7 @@ DEFAULT_VOICE = {"id": "S_MKj17k802", "name": "默认音色"}
 MEDIA = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".mp4", ".mov", ".webm", ".srt", ".pdf", ".txt"}
 # Background music formats; the engine reads them through FFmpeg.
 MUSIC = {".mp3", ".wav", ".m4a", ".aac", ".flac"}
+MOTION_PACKAGES = ("puppeteer-core", "three", "gsap")
 # The still the Assembly page shows for the 3:4 copy's panels.
 PANEL_PREVIEW = ".studio/preview_3x4.png"
 RENDER_REASON = "Render the revised motion compositions to review the new visuals"
@@ -136,7 +136,7 @@ def raw_problem(raw) -> str | None:
 
 
 def stray_raw(project: Path) -> Path | None:
-    """A usable manuscript the agent saved under a legacy output/<name>/text folder instead of text/."""
+    """A usable manuscript a writing skill saved under output/<name>/text instead of text/."""
     found = [f for f in project.glob("output/**/raw.json") if f.is_file()]
     for f in sorted(found, key=lambda f: f.stat().st_mtime, reverse=True):
         if raw_problem(read_json(f, {})) is None:
@@ -173,51 +173,12 @@ def engine_settings(settings):
             for section, values in settings.items()}
 
 
-def migrate_segmentation(settings):
-    """The removed evenly split mode now uses punctuation boundaries."""
-    if settings.get("step2", {}).get("split_mode") == "auto":
-        settings["step2"]["split_mode"] = "punctuation"
-
-
 def segmentation_output(values):
     """Target count affects only agent segmentation."""
     result = dict(values)
     if result.get("split_mode", "punctuation") != "agent":
         result.pop("num_segments", None)
     return result
-
-
-def migrate_state(state):
-    """Projects from earlier builds used the engine's numbering: Segments was stage "1.5" with settings
-    step1_5, step2 held the content summary settings, and a stage "2" (Context) predates its merge into Visuals."""
-    settings = state.setdefault("settings", {})
-    if "hyperframes_opening" in settings:
-        settings.setdefault("motion_opening", settings.pop("hyperframes_opening"))
-    motion = settings.get("step4", {})
-    for suffix in ("style_preset", "max_turns", "render_fps", "concurrency"):
-        old = "hyperframes_" + suffix
-        if old in motion:
-            motion.setdefault("motion_" + suffix, motion.pop(old))
-    if motion.get("visual_mode") == "hyperframes_agent":
-        motion["visual_mode"] = "motion_agent"
-    if state.get("layout", 1) >= STATE_LAYOUT:
-        migrate_segmentation(settings)
-        return state
-    stale, reviewed = state.setdefault("stale", {}), state.setdefault("reviewed", {})
-    if stale.pop("2", None):
-        state["summary_stale"] = True
-    reviewed.pop("2", None)
-    for table in (stale, reviewed):
-        if "1.5" in table:
-            table["2"] = table.pop("1.5")
-    settings = state.setdefault("settings", {})
-    if "step2" in settings:
-        settings["step4_summary"] = settings.pop("step2")
-    if "step1_5" in settings:
-        settings["step2"] = settings.pop("step1_5")
-    state["layout"] = STATE_LAYOUT
-    migrate_segmentation(settings)
-    return state
 
 
 class Conflict(Exception):
@@ -386,7 +347,7 @@ class Studio:
             self.credentials = dict(keys)
 
     def state(self, p: Path):
-        return migrate_state(read_json(p / ".studio/state.json", {"stale": {}, "reviewed": {}, "settings": {}, "source": "", "events": [], "layout": STATE_LAYOUT}))
+        return read_json(p / ".studio/state.json", {"stale": {}, "reviewed": {}, "settings": {}, "source": "", "events": []})
 
     def persist(self, p: Path, state):
         atomic_json(p / ".studio/state.json", state)
@@ -436,11 +397,15 @@ class Studio:
             # The opening (0) speaks and shows the chosen golden quote.
             self.mark_stale(state, "3", "Opening quote changed", [0])
             self.mark_stale(state, "4", "Opening quote changed", [0])
+        # The opening clip also shows the source name under the quote; it is not spoken.
+        named = opening and str(before.get("source_name") or "").strip() != str(after.get("source_name") or "").strip()
+        if named:
+            self.mark_stale(state, "4", "Source name changed", [0])
         if spoken:
             self.mark_stale(state, "3", "Segment text changed", sorted(spoken))
         if shown:
             self.mark_stale(state, "4", "Segment text changed", sorted(shown))
-        if spoken or shown or quote or len(new) != len(old):
+        if spoken or shown or quote or named or len(new) != len(old):
             self.mark_stale(state, "5", "Segments changed")
         if cover_copy(before) != cover_copy(after):
             self.mark_stale(state, "6", "Cover text changed")
@@ -491,12 +456,16 @@ class Studio:
 
     def defaults(self):
         import yaml
-        data = yaml.safe_load((self.engine / "config.yaml" if (self.engine / "config.yaml").exists() else self.engine / "config.example.yaml").read_text())
+        data = yaml.safe_load((self.engine / "config.example.yaml").read_text())
         sections = {DESKTOP_SECTIONS.get(k, k): v for k, v in data.items() if isinstance(v, dict)}
-        migrate_segmentation(sections)
         if "step5" in sections:
             sections["step5"].setdefault("assembly_method", "standard")
             sections["step5"].setdefault("agent_skill", editing.STYLES[0])
+            # Music is licensed and not always bundled; the engine silently skips a missing track,
+            # so start new projects without one rather than with a track that cannot play.
+            track = str(sections["step5"].get("bgm_filename") or "")
+            if not track or Path(track).name != track or not (self.engine / "music" / track).is_file():
+                sections["step5"]["bgm_filename"] = None
         if "step6" in sections:
             sections["step6"].setdefault("cover_method", "api")
         return {k: v for k, v in sections.items() if k in SETTINGS_SECTIONS}
@@ -533,9 +502,12 @@ class Studio:
             "FFmpeg": shutil.which("ffmpeg"),
             "FFprobe": shutil.which("ffprobe"),
         }
+        # The browser libraries are a node_modules folder; everything else is a program.
+        present = lambda name, path: all((Path(path) / package / "package.json").is_file() for package in MOTION_PACKAGES) \
+            if name == "Browser libraries" else Path(path).is_file()
         result = []
         for name, path in found.items():
-            available = bool(path) and Path(path).is_file()
+            available = bool(path) and present(name, path)
             result.append({"name": name, "path": path if available else None,
                            "bundled": available and Path(path).resolve().is_relative_to(bundle)})
         return result
@@ -667,23 +639,6 @@ class Studio:
             raise ValueError("Some project folders could not be deleted. Close anything using them and try again.")
         return {"removed": removed, "projects": self.projects()}
 
-    def adopt_legacy(self, config: Path):
-        """List the projects of a build that kept them in the CLI engine's output folder."""
-        try:
-            engine = Path(json.loads(config.read_text(encoding="utf-8"))["engine"])
-        except (OSError, ValueError, KeyError, TypeError):
-            return
-        output = engine / "output"
-        if output.is_dir():
-            for p in sorted(output.iterdir()):
-                if (p / "text").is_dir():
-                    self.link(p)
-            links = read_json(output / ".studio-projects.json", {})
-            for location in links.values() if isinstance(links, dict) else []:
-                if isinstance(location, str) and (Path(location) / "text").is_dir():
-                    self.link(Path(location))
-        config.replace(config.with_name(config.name + ".migrated"))
-
     def projects(self):
         result = []
         for p in self.roots():
@@ -714,14 +669,10 @@ class Studio:
         script = script if script is not None else read_json(p / "text/script.json", {})
         selections = state.setdefault("takes", {})
         changed = False
-        parts = [(0, "hf" if takes.placed(p, 0, takes.VIDEOS) and not takes.placed(p, 0, takes.STILLS) else "image")]
-        parts += [(int(s["index"]), s.get("visualizer", "image")) for s in script.get("segments", [])]
+        parts = [0, *(int(s["index"]) for s in script.get("segments", []))]
         takes.keep_background(p)
-        if not state.get("backgrounds_recovered"):
-            takes.recover_backgrounds(p)
-            state["backgrounds_recovered"] = True
-        for index, visualizer in parts:
-            selection = takes.sync(p, index, selections.get(str(index)), visualizer)
+        for index in parts:
+            selection = takes.sync(p, index, selections.get(str(index)))
             if selection:
                 selections[str(index)] = selection
             else:
@@ -731,10 +682,6 @@ class Studio:
             if segment is not None and kind and segment.get("visualizer", "image") != kind:
                 segment["visualizer"] = kind
                 changed = True
-        # Projects from before takes kept these; their contents now live in images/takes/.
-        for legacy in [p / "images/stills", p / "images/motion", p / "images/hyperframes"]:
-            if legacy.is_dir() and not any(f.is_file() and f.name not in {".DS_Store", "Thumbs.db"} for f in legacy.rglob("*")):
-                shutil.rmtree(legacy, ignore_errors=True)
         if changed:
             atomic_json(p / "text/script.json", script)
             state.setdefault("hashes", {})["script"] = fingerprint(p / "text/script.json")
@@ -795,7 +742,7 @@ class Studio:
                                 "poster": chosen["poster"] if chosen else None, "motion": chosen.get("motion") if chosen else None}
             for s in script.get("segments", []):
                 idx = int(s["index"])
-                audio = self.asset(p, "voice", f"voice_{idx}", [".wav", ".mp3"])
+                audio = self.asset(p, "voice", f"voice_{idx}", [".wav"])
                 part = parts[idx]
                 segments.append({**s, **part, "audio": relative(audio), "duration": duration(audio),
                                  "composition": part["motion"]["composition"] if part["motion"] else None})
@@ -814,7 +761,7 @@ class Studio:
                     if indices:
                         self.invalidate(state, stage, indices, project=p)
             state["assets"] = assets
-            opening_audio = self.asset(p, "voice", "opening", [".wav", ".mp3"])
+            opening_audio = self.asset(p, "voice", "opening", [".wav"])
             covers = [str(f.relative_to(p)) for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA]
             ready = {"1": bool(raw.get("content")), "2": bool(segments), "3": bool(segments) and all(s["audio"] for s in segments), "4": bool(segments) and all(s["visual"] for s in segments), "5": (p / "final_video.mp4").is_file(), "6": bool(covers)}
             opening_required = state.get("settings", {}).get("global", self.defaults().get("global", {})).get("opening_quote", True)
@@ -868,6 +815,9 @@ class Studio:
             if kind == "raw":
                 if not isinstance(value.get("content"), str) or not value["content"].strip():
                     raise ValueError("The manuscript cannot be empty.")
+                if not isinstance(value.get("source_name"), str) or not value["source_name"].strip():
+                    raise ValueError("The source name cannot be empty.")
+                value["source_name"] = value["source_name"].strip()
                 selections = body.get("selections", {})
                 if not isinstance(selections, dict) or any(k not in METADATA_FIELDS for k in selections):
                     raise ValueError("Invalid generation choices. Refresh and select your candidates again.")
@@ -903,8 +853,8 @@ class Studio:
                 return self.detail(project_id)
             script_path = p / "text/script.json"
             script = read_json(script_path) if kind == "raw" else None
-            # Titles, cover text and quotes reach the segments right away; only new manuscript text needs segmenting again.
-            synced = {**script, **{k: value[k] for k in METADATA_FIELDS}} if isinstance(script, dict) else None
+            # Titles, cover text, quotes and the source name reach the segments right away; only new manuscript text needs segmenting again.
+            synced = {**script, **{k: value[k] for k in (*METADATA_FIELDS, "source_name")}} if isinstance(script, dict) else None
             if synced == script:
                 synced = None
             self.snapshot(p, [path, script_path] if synced else [path], f"Before editing {kind}")
@@ -1320,12 +1270,15 @@ class Studio:
         p = self.project(project_id)
         with self.lock:
             step = str(body["step"])
+            # Default visual generation follows each segment's saved type and runs in the job process.
+            if step == "4" and body.get("mode") is None:
+                body = {**body, "mode": "segments", "batch": body.get("batch") or ("selected" if body.get("indices") is not None else "all")}
             if self.busy(project_id, step):
                 raise Conflict("Finish the active project job or agent first.")
             if step not in STAGES or step == "1":
                 raise ValueError("Step 1 runs interactively through Activate Claude Code.")
             if step == "4" and body.get("mode") not in {"segments", "static", "render", "opening", "opening_render", "summary"}:
-                raise ValueError("Animated generation runs through the interactive Claude Code terminal.")
+                raise ValueError("Unknown visual generation action.")
             if step == "5" and body.get("mode") not in {None, "three_by_four", "edit_render", "edit_preview"}:
                 raise ValueError("Unknown assembly action.")
             if step == "5" and body.get("mode") in {"edit_render", "edit_preview"}:
@@ -1371,6 +1324,10 @@ class Studio:
                 if batch not in {"all", "missing", "selected"}:
                     raise ValueError("Choose missing, all or selected segments.")
                 candidates = detail["segments"]
+                if body.get("visualizer") is not None:
+                    if body["visualizer"] != "hf" or batch != "selected":
+                        raise ValueError("Choose selected segments to generate a new motion clip.")
+                    candidates = [{**s, "visualizer": "hf"} for s in candidates]
                 enabled = {**self.defaults().get("global", {}), **detail["state"].get("settings", {}).get("global", {})}.get("opening_quote", True)
                 if batch == "selected":
                     indices = body.get("indices")
@@ -1408,7 +1365,7 @@ class Studio:
                     settings.setdefault(section, {}).update(fields)
                 image_work = body.get("mode") not in {"render", "opening_render", "summary"}
                 if body.get("mode") == "segments":
-                    image_work = body["opening"] or any(s["index"] in body["indices"] and s.get("visualizer") != "hf" for s in detail["segments"])
+                    image_work = body["opening"] or any(s["index"] in body["indices"] and s.get("visualizer") != "hf" for s in candidates)
                 required = ([] if body.get("mode") == "cover_render" else [("cover_styles", "step6", "cover_image_style")]) if step == "6" else [
                     ("image_styles", "step4", "image_style_preset"),
                     ("image_templates", "step4", "image_prompt_template"),
@@ -1426,7 +1383,7 @@ class Studio:
             if step in {"3", "4"}:
                 paths = self.scoped_media(paths, p, body.get("indices"), body.get("opening", False) or body.get("mode") == "opening")
             if summary:
-                paths += [p / "text/mini_summary.json", p / "text/raw.docx"]
+                paths += [p / "text/mini_summary.json"]
             if step == "5":
                 paths = [p / "final_video_3x4.mp4"] if body.get("mode") == "three_by_four" else list(p.glob("final_video*.mp4"))
                 if body.get("mode") == "edit_render":
@@ -1441,8 +1398,7 @@ class Studio:
                        "music_dir": str(self.music_root)}
             motion_takes = {}
             if step == "4" and body.get("mode") == "segments":
-                script = read_json(p / "text/script.json", {})
-                for segment in script.get("segments", []):
+                for segment in candidates:
                     if segment["index"] in body["indices"] and segment.get("visualizer") == "hf":
                         motion_takes[str(segment["index"])] = takes.add_motion(p, segment["index"])
                 request.update(motion_folders={i: str(takes.folder(p, int(i)) / take) for i, take in motion_takes.items()},
@@ -1498,6 +1454,14 @@ class Studio:
                     job["log"] = job["log"][-300:]
         code = process.wait()
         process.stdout.close()
+        with self.lock:
+            try:
+                self.job_ended(job, code)
+            finally:
+                # Images queued behind this job start as soon as it ends.
+                self.start_queued(job["project"])
+
+    def job_ended(self, job, code):
         with self.lock:
             job.pop("_secrets", None)
             job["status"] = "cancelled" if job["status"] == "cancelling" else "succeeded" if code == 0 and (job.get("result") or {}).get("success") else "failed"
@@ -1580,12 +1544,86 @@ class Studio:
                 state["stale"].pop(job["step"], None)
             self.persist(p, state)
 
+    def queued(self, project_id):
+        """The project's images waiting for its running job, as one queued job, or None."""
+        return next((j for j in self.jobs.values() if j["project"] == project_id and j["status"] == "queued"), None)
+
+    def queue_image(self, project_id, body):
+        """Add a part's new image (0: a new opening) to the queue, or remove it. Queued images start
+        together, as one image job, when the running job ends; with nothing running they start now."""
+        p = self.project(project_id)
+        with self.lock:
+            if self.state(p).get("agent_active"):
+                raise Conflict("Finish the Claude Code session first.")
+            index = body.get("index")
+            available = {s.get("index") for s in read_json(p / "text/script.json", {}).get("segments", [])}
+            if self.opening_enabled(p):
+                available.add(0)
+            if type(index) is not int or index not in available:
+                raise ValueError("Choose segment numbers that exist in this project.")
+            queued = self.queued(project_id)
+            if body.get("remove"):
+                if queued:
+                    if index == 0:
+                        queued["opening"] = False
+                    queued["scope"] = [i for i in queued["scope"] if i != index]
+                    if not queued["scope"] and not queued["opening"]:
+                        self.jobs.pop(queued["id"])
+                        return None
+                return self.public_job(queued) if queued else None
+            if not queued and not self.running(project_id, "4"):
+                # Nothing to wait for: the image starts now, as it does without a queue.
+                return self.run_job(project_id, {"step": "4", "mode": "opening", "opening": True, "indices": []} if index == 0
+                                    else {"step": "4", "mode": "static", "indices": [index]})
+            if not queued:
+                queued = {"id": uuid.uuid4().hex, "project": project_id, "step": "4", "status": "queued", "log": [], "started": time.time(),
+                          "result": None, "scope": [], "mode": "static", "opening": False}
+                self.jobs[queued["id"]] = queued
+            if index == 0:
+                queued["opening"] = True
+            else:
+                queued["scope"] = sorted({*queued["scope"], index})
+            # A queue left behind with nothing running (never expected) starts rather than waits forever.
+            return self.start_queued(project_id) or self.public_job(queued)
+
+    def opening_enabled(self, p: Path) -> bool:
+        return {**self.defaults().get("global", {}), **self.state(p).get("settings", {}).get("global", {})}.get("opening_quote", True)
+
+    def start_queued(self, project_id):
+        """Start the project's queued images once nothing they wait for runs; the started job, or None."""
+        with self.lock:
+            queued = self.queued(project_id)
+            if not queued or self.busy(project_id, "4"):
+                return None
+            self.jobs.pop(queued["id"])
+            try:
+                # The job before may have changed the segments: parts that are gone are left out.
+                p = self.project(project_id)
+                available = {s.get("index") for s in read_json(p / "text/script.json", {}).get("segments", [])}
+                indices = [i for i in queued["scope"] if i in available]
+                opening = queued["opening"] and self.opening_enabled(p)
+                if not indices and not opening:
+                    return None
+                return self.run_job(project_id, {"step": "4", "mode": "static", "indices": indices, "opening": opening})
+            except Exception as exc:
+                failed = {**queued, "status": "failed", "ended": time.time(),
+                          "result": {"success": False, "message": f"The queued images could not start: {exc}"}}
+                self.jobs[failed["id"]] = failed
+                return self.public_job(failed)
+
     def cancel_job(self, job_id):
         with self.lock:
             job = self.jobs[job_id]
+            if job["status"] == "queued":
+                self.jobs.pop(job_id)
+                return {**self.public_job(job), "status": "cancelled"}
             if job["status"] != "running":
                 return self.public_job(job)
             job["status"] = "cancelling"
+            # Stopping the work the queue waits for also drops the images queued behind it.
+            queued = self.queued(job["project"])
+            if queued and not self.beside("4", job["step"]):
+                self.jobs.pop(queued["id"])
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(job["process"].pid), "/T", "/F"], capture_output=True)
             else:
@@ -1698,6 +1736,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json(studio.save(project_id, body))
                     if action == "job":
                         return self.json(studio.run_job(project_id, body))
+                    if action == "queue-image":
+                        return self.json(studio.queue_image(project_id, body))
                     if action == "panel-preview":
                         return self.json(studio.panel_preview(project_id))
                     if action == "agent":
@@ -1734,7 +1774,6 @@ class Handler(BaseHTTPRequestHandler):
                             settings = copy.deepcopy(old)
                             for section, fields in body["settings"].items():
                                 settings[section] = {**old.get(section, {}), **fields} if isinstance(fields, dict) else fields
-                            migrate_segmentation(settings)
                             output = lambda values: {k: v for k, v in values.items() if k not in PROVIDER_SETTINGS}
                             def differs(k):
                                 before, after = effective.get(k, {}), {**effective.get(k, {}), **settings[k]}
@@ -1854,7 +1893,6 @@ def main():
     parser.add_argument("--engine", required=True, help="Bundled engine: code, prompts, skills, music, defaults")
     parser.add_argument("--data", required=True, help="User data: editable library and project registry")
     parser.add_argument("--workspace", required=True, help="Default folder for new projects")
-    parser.add_argument("--legacy-config", help="Runtime settings of an earlier build, imported once")
     parser.add_argument("--port", type=int, default=0)
     args = parser.parse_args()
     # The native host clears inherited Python paths. Shared rendering modules
@@ -1862,8 +1900,6 @@ def main():
     engine = Path(args.engine).resolve()
     sys.path.insert(0, str(engine))
     studio = Studio(engine, Path(args.data), Path(args.workspace))
-    if args.legacy_config and Path(args.legacy_config).is_file():
-        studio.adopt_legacy(Path(args.legacy_config))
     token = os.environ.get("STUDIO_TOKEN") or secrets.token_hex(32)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.studio, server.token = studio, token

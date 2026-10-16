@@ -31,7 +31,7 @@ class ProjectTests(unittest.TestCase):
         self.engine=Path(self.temp.name)/'引擎 with spaces'
         (self.engine/'core/pipeline').mkdir(parents=True)
         (self.engine/'core/pipeline/steps.py').write_text('')
-        (self.engine/'config.yaml').write_text('global:\n  opening_quote: false\n')
+        (self.engine/'config.example.yaml').write_text('global:\n  opening_quote: false\n')
         self.studio=self.open()
         self.p=self.studio.workspace/'测试 production'
         for folder in ['text','images','voice']:(self.p/folder).mkdir(parents=True)
@@ -45,11 +45,52 @@ class ProjectTests(unittest.TestCase):
         """The service as the app starts it: read-only engine, user data, default projects folder."""
         return Studio(self.engine, Path(self.temp.name)/'用户 data', Path(self.temp.name)/'Book2Video Studio')
     def tearDown(self): self.temp.cleanup()
+    def test_system_check_finds_the_browser_library_folder(self):
+        modules=self.engine.parent/'runtime/motion/node_modules'
+        status=lambda:{c['name']:c for c in self.studio.components()}['Browser libraries']
+        from unittest.mock import patch
+        with patch.dict(os.environ,{'AIGC_MOTION_MODULES':str(modules)}):
+            for package in ['puppeteer-core','three']:
+                (modules/package).mkdir(parents=True);(modules/package/'package.json').write_text('{}')
+            self.assertIsNone(status()['path'])
+            (modules/'gsap').mkdir();(modules/'gsap/package.json').write_text('{}')
+            self.assertEqual((status()['path'],status()['bundled']),(str(modules),True))
+    def test_default_music_is_dropped_when_the_track_is_not_bundled(self):
+        (self.engine/'config.example.yaml').write_text('step5:\n  bgm_filename: Theme.mp3\n')
+        self.assertIsNone(self.studio.defaults()['step5']['bgm_filename'])
+        (self.engine/'music').mkdir();(self.engine/'music/Theme.mp3').write_bytes(b'mp3')
+        self.assertEqual(self.studio.defaults()['step5']['bgm_filename'],'Theme.mp3')
     def test_project_and_media_paths_are_confined(self):
         for name in ['../escape','/tmp/escape','测试 production/../other']:
             with self.assertRaises(ValueError):self.studio.project(name)
     def test_polling_does_not_change_revision(self):
         self.assertEqual(self.studio.detail(self.p.name)['revision'],self.studio.detail(self.p.name)['revision'])
+    def test_different_projects_generate_concurrently_without_sharing_outputs(self):
+        from unittest.mock import patch
+        import shutil
+        other = self.studio.workspace/'Second project'
+        shutil.copytree(self.p, other)
+        with patch('server.subprocess.Popen') as spawn, patch('server.threading.Thread'):
+            first = self.studio.run_job(self.p.name, {'step':'4','mode':'segments','batch':'all'})
+            second = self.studio.run_job(other.name, {'step':'4','mode':'segments','batch':'all'})
+            requests = [json.loads(call.args[0][-1]) for call in spawn.call_args_list]
+            self.assertNotEqual(first['id'], second['id'])
+            self.assertEqual([r['project'] for r in requests], [str(self.p), str(other)])
+            self.assertTrue(self.studio.busy(self.p.name))
+            self.assertTrue(self.studio.busy(other.name))
+            with self.assertRaises(Conflict):
+                self.studio.run_job(self.p.name, {'step':'4','mode':'segments','batch':'all'})
+    def test_interactive_sessions_are_independent_between_projects(self):
+        from unittest.mock import patch
+        import shutil
+        other = self.studio.workspace/'Second project'
+        shutil.copytree(self.p, other)
+        with patch('context.prepare', side_effect=[{'id':'session-one'}, {'id':'session-two'}]):
+            self.studio.prepare_agent(self.p.name, {'step':'1'})
+            self.studio.prepare_agent(other.name, {'step':'1'})
+        self.assertEqual(self.studio.state(self.p)['agent_active']['launch'], 'session-one')
+        self.assertEqual(self.studio.state(other)['agent_active']['launch'], 'session-two')
+        with self.assertRaises(Conflict): self.studio.prepare_agent(self.p.name, {'step':'1'})
     def test_save_preserves_revision_and_invalidates_dependents(self):
         d=self.studio.detail(self.p.name);value=copy.deepcopy(RAW);value['content']='GUI 新版本。'
         after=self.studio.save(self.p.name,{'kind':'raw','value':value,'expected_hash':d['hashes']['raw']})
@@ -139,7 +180,7 @@ class ProjectTests(unittest.TestCase):
         self.assertIsNotNone(self.studio.finish_agent(self.p.name,{})['warning'])
     def test_writing_agent_is_told_where_to_save_everything(self):
         (self.engine/'prompts').mkdir();(self.engine/'prompts/step1_agent.md').write_text('任务：{output_json} {text_dir} {skill_path}',encoding='utf-8')
-        (self.engine/'prompts/step1_studio.md').write_text((DESKTOP/'prompts/step1_studio.md').read_text(),encoding='utf-8')
+        (self.engine/'prompts/step1_studio.md').write_text((DESKTOP/'engine/prompts/step1_studio.md').read_text(),encoding='utf-8')
         skill=self.engine/'skills/step1/sample_writer';skill.mkdir(parents=True);(skill/'SKILL.md').write_text('---\nname: sample_writer\ndescription: 测试\n---\n正文',encoding='utf-8')
         studio=self.open();launch=studio.prepare_agent(self.p.name,{'step':'1'})
         prompt=Path(launch['context']).read_text(encoding='utf-8')
@@ -274,6 +315,78 @@ class ProjectTests(unittest.TestCase):
             job = self.studio.run_job(self.p.name, body)
         self.studio.jobs.clear()
         return job
+    def enable_opening(self):
+        state=self.studio.state(self.p);state.setdefault('settings',{})['global']={'opening_quote':True};state['stale']={};self.studio.persist(self.p,state)
+    def test_source_name_edit_reaches_the_script_and_outdates_only_the_opening(self):
+        synced={k:RAW[k] for k in ['source_name','video_titles','cover_titles','cover_subtitles','golden_quotes']}
+        atomic_json(self.p/'text/script.json',{**copy.deepcopy(SCRIPT),**synced})
+        self.enable_opening()
+        d=self.studio.detail(self.p.name);value=copy.deepcopy(RAW);value['source_name']='  《新书名》  '
+        after=self.studio.save(self.p.name,{'kind':'raw','value':value,'expected_hash':d['hashes']['raw']})
+        self.assertEqual(after['raw']['source_name'],'《新书名》')
+        self.assertEqual(after['script']['source_name'],'《新书名》')
+        stale=after['state']['stale']
+        # The opening clip shows the name; nothing speaks it, and the segments keep their visuals.
+        self.assertEqual(stale['4'],{'reason':'Source name changed','segments':[0]})
+        self.assertEqual(sorted(stale),['4','5'])
+    def test_blank_source_name_does_not_save(self):
+        d=self.studio.detail(self.p.name);value=copy.deepcopy(RAW);value['source_name']='  '
+        with self.assertRaisesRegex(ValueError,'source name cannot be empty'):
+            self.studio.save(self.p.name,{'kind':'raw','value':value,'expected_hash':d['hashes']['raw']})
+        self.assertEqual(fingerprint(self.p/'text/raw.json'),d['hashes']['raw'])
+    def test_images_queued_behind_a_running_job_start_together_when_it_ends(self):
+        from unittest.mock import patch
+        self.enable_opening()
+        with patch('server.subprocess.Popen'), patch('server.threading.Thread'):
+            running=self.studio.run_job(self.p.name,{'step':'3'})
+        for index in [2,1,0,2]:
+            queued=self.studio.queue_image(self.p.name,{'index':index})
+        self.assertEqual((queued['status'],queued['scope'],queued['opening']),('queued',[1,2],True))
+        queued=self.studio.queue_image(self.p.name,{'index':0,'remove':True})
+        self.assertEqual((queued['scope'],queued['opening']),([1,2],False))
+        with self.assertRaises(ValueError):self.studio.queue_image(self.p.name,{'index':9})
+        process=subprocess.Popen([sys.executable,'-c','print(\'STUDIO_RESULT:{"success":true}\')'],stdout=subprocess.PIPE,text=True)
+        job=self.studio.jobs[running['id']]
+        with patch('server.subprocess.Popen') as spawn, patch('server.threading.Thread'):
+            self.studio.observe_job(job,process)
+            request=json.loads(spawn.call_args.args[0][-1])
+        self.assertEqual((request['step'],request['mode'],request['indices'],request['opening']),('4','static',[1,2],False))
+        self.assertIsNone(self.studio.queued(self.p.name))
+        self.assertTrue(self.studio.running(self.p.name,'4'))
+    def test_queueing_with_nothing_running_starts_the_image_now(self):
+        from unittest.mock import patch
+        with patch('server.subprocess.Popen') as spawn, patch('server.threading.Thread'):
+            job=self.studio.queue_image(self.p.name,{'index':2})
+            request=json.loads(spawn.call_args.args[0][-1])
+        self.assertEqual((job['status'],request['mode'],request['indices']),('running','static',[2]))
+        self.assertIsNone(self.studio.queued(self.p.name))
+    def test_stopping_the_running_job_drops_its_queue(self):
+        from unittest.mock import patch
+        with patch('server.subprocess.Popen'), patch('server.threading.Thread'):
+            running=self.studio.run_job(self.p.name,{'step':'3'})
+        queued=self.studio.queue_image(self.p.name,{'index':1})
+        with patch('server.os.killpg'):self.studio.cancel_job(running['id'])
+        self.assertIsNone(self.studio.queued(self.p.name))
+        self.assertNotIn(queued['id'],self.studio.jobs)
+    def test_clearing_the_queue_leaves_the_running_job(self):
+        from unittest.mock import patch
+        with patch('server.subprocess.Popen'), patch('server.threading.Thread'):
+            running=self.studio.run_job(self.p.name,{'step':'3'})
+        queued=self.studio.queue_image(self.p.name,{'index':1})
+        self.assertEqual(self.studio.cancel_job(queued['id'])['status'],'cancelled')
+        self.assertIsNone(self.studio.queued(self.p.name))
+        self.assertEqual(self.studio.jobs[running['id']]['status'],'running')
+    def test_queued_images_that_cannot_start_report_a_failed_job(self):
+        from unittest.mock import patch
+        with patch('server.subprocess.Popen'), patch('server.threading.Thread'):
+            running=self.studio.run_job(self.p.name,{'step':'3'})
+        queued=self.studio.queue_image(self.p.name,{'index':1})
+        process=subprocess.Popen([sys.executable,'-c','pass'],stdout=subprocess.PIPE,text=True)
+        with patch.object(self.studio,'run_job',side_effect=ValueError('No image key')):
+            self.studio.observe_job(self.studio.jobs[running['id']],process)
+        failed=self.studio.jobs[queued['id']]
+        self.assertEqual(failed['status'],'failed');self.assertIn('No image key',failed['result']['message'])
+        self.assertIsNone(self.studio.queued(self.p.name))
     def test_assembly_needs_inputs_but_runs_with_outdated_ones(self):
         state=self.studio.state(self.p);state['stale']['3']={'reason':'Edit','segments':[1]};self.studio.persist(self.p,state)
         self.assertEqual(self.spawn_job({'step':'5'})['step'],'5')
@@ -385,6 +498,23 @@ class ProjectTests(unittest.TestCase):
         _, request = self.segment_batch_request(batch='selected', indices=[2,2])
         self.assertEqual(request['indices'], [2])
         self.assertEqual(json.loads((self.p/'text/script.json').read_text())['segments'][1]['visualizer'], 'hf')
+    def test_default_visual_request_generates_all_images_without_interactive_agent(self):
+        _, request = self.segment_batch_request(mode=None, batch='all')
+        self.assertEqual(request['mode'], 'segments')
+        self.assertEqual(request['indices'], [1, 2])
+        self.assertEqual(request['motion_folders'], {})
+        self.assertNotIn('agent_active', self.studio.state(self.p))
+    def test_new_motion_clip_runs_in_background_even_for_image_segment(self):
+        from unittest.mock import patch
+        with patch.object(self.studio, 'prepare_agent', side_effect=AssertionError('Interactive agent activated')):
+            _, request = self.segment_batch_request(batch='selected', indices=[1], visualizer='hf')
+        self.assertEqual(set(request['motion_folders']), {'1'})
+        self.assertEqual(request['visualizer'], 'hf')
+        self.assertNotIn('agent_active', self.studio.state(self.p))
+        self.assertEqual(json.loads((self.p/'text/script.json').read_text())['segments'][0]['visualizer'], 'image')
+        (self.p/'voice/voice_1.wav').unlink()
+        with self.assertRaisesRegex(ValueError, 'recordings for motion segments first: 1'):
+            self.segment_batch_request(batch='selected', indices=[1], visualizer='hf')
     def test_invalid_segment_selection_never_generates_everything(self):
         for indices in [None, [], [0], [3], ['1'], [True]]:
             with self.subTest(indices=indices), self.assertRaises(ValueError):
@@ -428,6 +558,14 @@ class ProjectTests(unittest.TestCase):
         state.pop('summary_stale'); self.studio.persist(self.p, state); (self.p/'text/mini_summary.json').unlink()
         job, request = self.batch_request('all')
         self.assertTrue(request['summary']); self.assertTrue(job['summary'])
+    def test_explicit_summary_job_does_not_start_visual_generation(self):
+        from unittest.mock import patch
+        with patch('server.subprocess.Popen') as spawn, patch('server.threading.Thread'):
+            job = self.studio.run_job(self.p.name, {'step':'4', 'mode':'summary'})
+            request = json.loads(spawn.call_args.args[0][-1])
+        self.assertEqual(job['mode'], 'summary')
+        self.assertTrue(request['summary'])
+        self.assertNotIn('motion_folders', request)
     def test_manuscript_edit_outdates_the_direction_and_a_new_direction_outdates_only_visuals(self):
         d = self.studio.detail(self.p.name); value = copy.deepcopy(RAW); value['content'] = 'GUI 新版本。'
         after = self.studio.save(self.p.name, {'kind':'raw','value':value,'expected_hash':d['hashes']['raw']})
@@ -447,28 +585,11 @@ class ProjectTests(unittest.TestCase):
         self.studio.observe_job(job, process)
         after = self.studio.detail(self.p.name)
         self.assertNotIn('summary_stale', after['state']); self.assertEqual(sorted(after['state']['stale']), ['4','5'])
-    def legacy_state(self, **fields):
-        """A state file as builds before Studio's own step numbers wrote it."""
-        atomic_json(self.p/'.studio/state.json', {'stale':{}, 'reviewed':{}, 'settings':{}, 'source':'', 'events':[], **fields})
-    def test_legacy_context_markers_move_to_the_direction(self):
-        self.legacy_state(stale={'2':{'reason':'Step 1.5 changed','segments':[]}}, reviewed={'2':'reviewed'})
-        after = self.studio.detail(self.p.name)
-        self.assertTrue(after['state']['summary_stale']); self.assertNotIn('2', after['state']['stale']); self.assertNotIn('2', after['state']['reviewed'])
-    def test_legacy_engine_numbering_becomes_studio_steps(self):
-        self.legacy_state(stale={'1.5':{'reason':'Step 1 changed','segments':[]}}, reviewed={'1.5':'reviewed'},
-                          settings={'step1_5':{'num_segments':7}, 'step2':{'llm_server':'kimi'}})
-        state = self.studio.state(self.p)
-        self.assertEqual(state['stale'], {'2':{'reason':'Step 1 changed','segments':[]}}); self.assertEqual(state['reviewed'], {'2':'reviewed'})
-        self.assertEqual(state['settings'], {'step2':{'num_segments':7}, 'step4_summary':{'llm_server':'kimi'}})
-        self.assertNotIn('summary_stale', state)
-        # Migrated once: Segments' own "2" markers are never mistaken for the old Context stage.
-        self.studio.persist(self.p, state)
-        self.assertEqual(self.studio.state(self.p)['stale'], {'2':{'reason':'Step 1 changed','segments':[]}})
     def test_settings_reach_the_engine_under_its_own_section_names(self):
         from server import engine_settings
         self.assertEqual(engine_settings({'step2':{'split_mode':'agent'}, 'step4_summary':{'llm_server':'kimi'}, 'step1':{'writing_mode':'direct', 'agent_skill':'x'}}),
                          {'step1_5':{'split_mode':'agent'}, 'step2':{'llm_server':'kimi'}, 'step1':{'agent_skill':'x'}})
-        (self.engine/'config.yaml').write_text('step1_5:\n  num_segments: 9\nstep2:\n  llm_server: kimi\n')
+        (self.engine/'config.example.yaml').write_text('step1_5:\n  num_segments: 9\nstep2:\n  llm_server: kimi\n')
         self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'kimi'}})
     def test_motion_agent_requires_a_direction(self):
         (self.p/'text/mini_summary.json').unlink()
@@ -565,13 +686,6 @@ class ProjectTests(unittest.TestCase):
         state = self.studio.state(self.p); state['stale'] = {}; self.studio.persist(self.p, state)
         self.assertIn('2', self.post_settings({'step2': {'num_segments': 3}})['stale'])
 
-    def test_legacy_split_method_migrates_without_touching_saved_segments(self):
-        state = self.studio.state(self.p)
-        state['settings'] = {'step2': {'split_mode': 'auto', 'num_segments': 17}}
-        self.studio.persist(self.p, state)
-        after = self.studio.detail(self.p.name)
-        self.assertEqual(after['state']['settings']['step2'], {'split_mode': 'punctuation', 'num_segments': 17})
-        self.assertEqual([s['content'] for s in after['segments']], [s['content'] for s in SCRIPT['segments']])
 
     def test_keep_current_clears_needs_rebuild(self):
         state=self.studio.state(self.p);state['stale']={'3':{'reason':'Edit','segments':[1]},'4':{'reason':'Edit','segments':[]}};state['summary_stale']=True;self.studio.persist(self.p,state)
@@ -728,14 +842,8 @@ class PipelineTests(unittest.TestCase):
         script = json.loads((self.p/'text/script.json').read_text())
         self.assertEqual([s['content'] for s in script['segments']], ['中文。', 'English.', 'Why?', '真的？', 'Go!', '好！', 'Next;', '最后；', '尾声'])
 
-    def test_gui_manuscript_overrides_stale_docx_before_segmentation(self):
-        sys.path.insert(0,str(ENGINE));from core.domain.docx_transform import export_raw_to_docx
-        old=copy.deepcopy(RAW);old['content']='旧的 Word 内容。';export_raw_to_docx(old,str(self.p/'text/raw.docx'))
-        self.run_worker('2',{'step1':{'writing_mode':'direct'},'step2':{'num_segments':2,'split_mode':'manual'}})
-        text=''.join(s['content'] for s in json.loads((self.p/'text/script.json').read_text())['segments'])
-        self.assertIn('GUI',text);self.assertNotIn('旧的 Word',text)
     def test_selected_boxes_reach_script_cover_and_opening_inputs(self):
-        # Exercise the real worker and its DOCX round trip, without calling a provider.
+        # Exercise the real worker without calling a provider.
         studio = object.__new__(Studio)
         studio.engine = ENGINE; studio.workspace = self.p.parent.resolve(); studio.data = Path(self.temp.name)/'data'
         studio.lock = threading.RLock(); studio.jobs = {}; studio.credentials = {}
@@ -749,8 +857,6 @@ class PipelineTests(unittest.TestCase):
                     'selections': {'video_titles': 1, 'cover_titles': 2, 'cover_subtitles': 1, 'golden_quotes': 1},
                     'expected_hash': detail['hashes']['raw']})
         sys.path.insert(0, str(ENGINE))
-        from core.domain.docx_transform import export_raw_to_docx
-        export_raw_to_docx(RAW, str(self.p/'text/raw.docx'))
         self.run_worker('2', {'step2': {'num_segments': 2, 'split_mode': 'manual'}})
         script = json.loads((self.p/'text/script.json').read_text())
         raw = json.loads((self.p/'text/raw.json').read_text())
@@ -813,6 +919,18 @@ class AgentContextTests(unittest.TestCase):
         for step in ['1', '4']:
             result = subprocess.run([sys.executable, '-c', probe, str(ENGINE), str(self.p), step], cwd=DESKTOP/'backend', env={**os.environ, 'DEEPSEEK_API_KEY': 'test-saved-secret'}, capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, 'Agent environment did not use the saved provider key')
+    def test_every_agent_stage_resolves_its_configured_endpoint_model_and_key(self):
+        atomic_json(self.p/'.studio/state.json', {'settings': {
+            'step1': {'llm_server':'openrouter', 'llm_model':'writing-provider-model'},
+            'step4': {'llm_server':'kimi', 'llm_model':'motion-provider-model'},
+        }})
+        probe = "from agent_env import resolve; from pathlib import Path; import sys; v=resolve(Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]); assert v['ANTHROPIC_BASE_URL']==sys.argv[4]; assert v['ANTHROPIC_MODEL']==sys.argv[5]; assert v['ANTHROPIC_AUTH_TOKEN']==sys.argv[6]; assert v['ANTHROPIC_API_KEY']==sys.argv[7]"
+        for step in ['1','4','5','6']:
+            expected = ['https://api.moonshot.cn/anthropic','motion-provider-model','motion-fixture-key','motion-fixture-key'] if step == '4' else ['https://openrouter.ai/api','writing-provider-model','writing-fixture-key','']
+            with self.subTest(step=step):
+                result = subprocess.run([sys.executable,'-c',probe,str(ENGINE),str(self.p),step,*expected],
+                    cwd=DESKTOP/'backend',env={**os.environ,'OPENROUTER_API_KEY':'writing-fixture-key','KIMI_API_KEY':'motion-fixture-key'},capture_output=True,text=True,timeout=20)
+                self.assertEqual(result.returncode,0,'Stage did not resolve its configured endpoint, model and key')
     def test_real_stage_context_contracts(self):
         from server import Studio
         from context import prepare
@@ -862,7 +980,7 @@ class MotionRenderTests(unittest.TestCase):
         from unittest.mock import patch
         import runner
         script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
-        work=self.p/'images/takes/segment_1/motion-20260101-000000-abcd';work.mkdir(parents=True)
+        work=self.p/'images/takes/segment_1/motion-20260101-000000-000-abcd';work.mkdir(parents=True)
         html='<!DOCTYPE html><p>Existing user composition</p>';(work/'index.html').write_text(html)
         atomic_json(work/'studio-payload.json',{'durationSeconds':99,'content':'Old narration'})
         recording(self.p/'voice/voice_1.wav');(self.p/'images/segment_1.png').write_bytes(b'previous image')
@@ -920,14 +1038,6 @@ class MotionRenderTests(unittest.TestCase):
         finally:os.chdir(original)
         self.assertTrue(result['success']);self.assertEqual(sizes,['3200x1800','2250x3000'])
         self.assertEqual(result['cover_paths'],['cover_3200x1800.png','cover_2250x3000.png'])
-        # Settings saved before several sizes name one size, and the cover panel shows that one.
-        sizes.clear()
-        try:
-            with patch('core.pipeline.steps.generate_cover_images',side_effect=generate):
-                runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'6','settings':{'step6':{
-                    'cover_image_size_keys':[],'default_cover_image_size_key':'1:1','cover_image_server':'google_adc','cover_image_model':'gemini-3.1-flash-image'}}})
-        finally:os.chdir(original)
-        self.assertEqual(sizes,['2500x2500'])
 
 class ImageModelTests(unittest.TestCase):
     """A model left over from another image service is refused before any provider is called."""
@@ -1055,7 +1165,7 @@ class MotionContextTests(unittest.TestCase):
         self.assertEqual(finished['segments'][0]['visualizer'],'image');self.assertEqual(len(finished['segments'][0]['takes']),1)
     def test_revising_a_missing_clip_is_refused(self):
         with self.assertRaisesRegex(ValueError,'no longer in the project'):
-            self.studio.prepare_agent(self.id,{'step':'4','indices':[1],'take':'motion-19990101-000000-dead'})
+            self.studio.prepare_agent(self.id,{'step':'4','indices':[1],'take':'motion-19990101-000000-000-dead'})
         with self.assertRaisesRegex(ValueError,'one segment'):
             self.studio.prepare_agent(self.id,{'step':'4','indices':[1,2],'take':'new'})
 
@@ -1071,31 +1181,16 @@ class SegmentTakeTests(unittest.TestCase):
     def clip(self,index=1,frames=2,video=None,composed=1000):
         """A motion clip as a Claude Code session leaves it, optionally rendered."""
         self.studio.detail(self.p.name)
-        work=self.p/'images/takes'/f'segment_{index}'/'motion-20260101-000000-abcd';(work/'snapshots').mkdir(parents=True,exist_ok=True)
+        work=self.p/'images/takes'/f'segment_{index}'/'motion-20260101-000000-000-abcd';(work/'snapshots').mkdir(parents=True,exist_ok=True)
         (work/'index.html').write_text('<!DOCTYPE html>');(work/'studio-payload.json').write_text('{}')
         for n in range(frames):(work/'snapshots'/f'frame-0{n}-at-{n}.0s.png').write_bytes(b'frame')
         os.utime(work/'index.html',(composed,composed))
         if video:(work/'video.mp4').write_bytes(video)
         return work
-    def test_a_legacy_project_moves_its_still_composition_and_render_into_takes(self):
-        script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
-        (self.p/'images/stills').mkdir();(self.p/'images/segment_1.png').replace(self.p/'images/stills/segment_1.png');os.utime(self.p/'images/stills/segment_1.png',(500,500))
-        work=self.p/'images/hyperframes/segment_1';(work/'snapshots').mkdir(parents=True)
-        (work/'index.html').write_text('<!DOCTYPE html>');(work/'snapshots/frame-00-at-0.0s.png').write_bytes(b'frame');os.utime(work/'index.html',(1000,1000))
-        (self.p/'images/hyperframes/.DS_Store').write_bytes(b'finder')
-        (self.p/'images/segment_1.mp4').write_bytes(b'video')
-        segment=self.studio.detail(self.p.name)['segments'][0]
-        self.assertEqual([t['kind'] for t in segment['takes']],['still','motion'])
-        self.assertEqual(segment['take'],segment['takes'][1]['id']);self.assertEqual(segment['visual'],'images/segment_1.mp4')
-        self.assertTrue(segment['motion']['video_current']);self.assertIn('/snapshots/frame-00',segment['poster'])
-        self.assertFalse((self.p/'images/stills').exists());self.assertFalse((self.p/'images/hyperframes').exists())
-        self.assertEqual(Path(self.p/segment['takes'][0]['path']).read_bytes(),b'visual')
-        # A still segment keeps using its image.
-        second=self.studio.detail(self.p.name)['segments'][1]
-        self.assertEqual(second['visual'],'images/segment_2.png');self.assertEqual(second['take'],second['takes'][0]['id'])
     def test_hf_visual_selection_and_delivery_refresh(self):
         script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
-        (self.p/'images/segment_1.mp4').write_bytes(b'video')
+        # The engine renders an animated segment's clip in place of its still.
+        (self.p/'images/segment_1.png').unlink();(self.p/'images/segment_1.mp4').write_bytes(b'video')
         d=self.studio.detail(self.p.name);self.assertEqual(d['segments'][0]['visual'],'images/segment_1.mp4')
         self.assertFalse((self.p/'images/segment_1.png').exists())
         (self.p/'final_video.mp4').write_bytes(b'export')
@@ -1148,7 +1243,7 @@ class SegmentTakeTests(unittest.TestCase):
         self.assertEqual(segment['visual'],'images/segment_1.mp4');self.assertEqual((self.p/'images/segment_1.mp4').read_bytes(),b'fresh render')
     def test_selection_is_refused_during_a_job_or_a_session_on_that_segment(self):
         work=self.clip(video=b'video')
-        with self.assertRaisesRegex(ValueError,'no longer in the project'):self.select('still-19990101-000000-dead')
+        with self.assertRaisesRegex(ValueError,'no longer in the project'):self.select('still-19990101-000000-000-dead')
         state=self.studio.state(self.p);state['agent_active']={'step':'4','indices':[1]};self.studio.persist(self.p,state)
         with self.assertRaises(Conflict):self.select(work.name)
         # Other segments can still change their visual while Claude Code works on segment 1.
@@ -1246,7 +1341,7 @@ class SegmentTakeTests(unittest.TestCase):
         self.assertNotIn('agent_active',reopened);self.assertEqual(reopened['stale']['4']['segments'],[1,2])
     def test_an_interrupted_new_clip_is_dropped_and_the_still_returns(self):
         self.studio.detail(self.p.name);still=self.studio.state(self.p)['takes']['1']
-        empty=self.p/'images/takes/segment_1/motion-20260101-000000-beef';empty.mkdir()
+        empty=self.p/'images/takes/segment_1/motion-20260101-000000-000-beef';empty.mkdir()
         state=self.studio.state(self.p);state['takes']['1']=empty.name
         state['agent_active']={'step':'4','indices':[1],'launch':'x','owner':999999,'raw_before':'','takes':{'1':empty.name},'created':[1],'previous':{'1':still}};self.studio.persist(self.p,state)
         self.open()
@@ -1270,18 +1365,6 @@ class SegmentTakeTests(unittest.TestCase):
         self.assertEqual([t['current'] for t in backgrounds],[False,True])
         # A background is never put in the engine's place as the opening itself.
         self.assertFalse((self.p/'images/opening.png').exists());self.assertIsNone(self.studio.detail(self.p.name)['opening']['take'])
-    def test_backgrounds_replaced_before_they_were_kept_come_back_from_history(self):
-        old=self.p/'.studio/history/20260101-000000-aaaa/images/opening_bg.png';old.parent.mkdir(parents=True)
-        old.write_bytes(b'first background');os.utime(old,(1000,1000))
-        (self.p/'.studio/history/20260102-000000-bbbb/images').mkdir(parents=True)
-        (self.p/'.studio/history/20260102-000000-bbbb/images/opening_bg.png').write_bytes(b'newest background')
-        (self.p/'images/opening_bg.png').write_bytes(b'newest background')
-        backgrounds=[t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background']
-        self.assertEqual([(self.p/t['path']).read_bytes() for t in backgrounds],[b'first background',b'newest background'])
-        self.assertEqual([t['current'] for t in backgrounds],[False,True])
-        # Recovered once: a background removed later is not brought back.
-        (self.p/backgrounds[0]['path']).unlink()
-        self.assertEqual(len([t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background']),1)
     def test_rendering_the_opening_with_a_kept_background(self):
         from unittest.mock import patch
         (self.p/'images/opening_bg.png').write_bytes(b'background')
@@ -1380,15 +1463,6 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(listed[created['id']]['problem'],'Cannot open this folder')
             self.assertNotIn('problem',listed[self.p.name])
         finally:state.chmod(0o644)
-    def test_projects_from_the_cli_engine_build_are_listed_once(self):
-        engine=self.elsewhere();output=engine/'output';(output/'书 A'/'text').mkdir(parents=True);(output/'notes').mkdir()
-        external=Path(self.temp.name)/'外部'/'书 B';(external/'text').mkdir(parents=True)
-        atomic_json(output/'.studio-projects.json',{'ext-1-书 B':str(external)})
-        config=Path(self.temp.name)/'runtime.json';config.write_text(json.dumps({'engine':str(engine),'python':'python3'}))
-        self.studio.adopt_legacy(config)
-        paths={Path(p['path']).resolve() for p in self.studio.projects()}
-        self.assertTrue({(output/'书 A').resolve(),external.resolve()}<=paths);self.assertNotIn((output/'notes').resolve(),paths)
-        self.assertFalse(config.exists());self.assertTrue(config.with_name('runtime.json.migrated').exists())
 
 class RemoveProjectTests(unittest.TestCase):
     """The project list can be cleaned up one by one or all at once, with or without the files."""

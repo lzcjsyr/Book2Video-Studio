@@ -1,4 +1,4 @@
-import { Check, FileText, Film, Play, TerminalSquare } from "lucide-react";
+import { Check, FileText, Film, TerminalSquare } from "lucide-react";
 import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
 import type { Detail, LibraryCatalog, Settings } from "../types";

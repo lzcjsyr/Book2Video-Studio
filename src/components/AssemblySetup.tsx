@@ -1,5 +1,5 @@
 import { FolderOpen, Pause, Play } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useId, useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import type { Settings } from "../types";
 
@@ -70,12 +70,13 @@ function TextSetting({ label, value, placeholder, disabled, multiline, onCommit 
 function Segmented({ label, name, options, value, disabled, onChange }: {
   label: string; name: string; options: { id: string; label: string }[]; value: string; disabled: boolean; onChange: (id: string) => void;
 }) {
+  const uid = useId();
   const { t } = useI18n();
   return <fieldset className="segmented-field" disabled={disabled}>
     <legend>{label}</legend>
     <div className="segmented" role="radiogroup" aria-label={label}>
       {options.map((o) => <label key={o.id} className={o.id === value ? "selected" : ""}>
-        <input type="radio" name={name} value={o.id} checked={o.id === value} onChange={() => onChange(o.id)} />
+        <input type="radio" name={`${uid}-${name}`} value={o.id} checked={o.id === value} onChange={() => onChange(o.id)} />
         {t(o.label)}
       </label>)}
     </div>
@@ -95,6 +96,7 @@ export default function AssemblySetup({ step5, panels, music, userMusic, copy, d
   onChange: (section: "step5" | "three_by_four", patch: Patch) => Promise<boolean>;
   onAddMusic: () => void;
 }) {
+  const uid = useId();
   const { t } = useI18n();
   const set5 = (patch: Patch) => onChange("step5", patch);
   const setPanel = (patch: Patch) => onChange("three_by_four", patch);
@@ -142,8 +144,8 @@ export default function AssemblySetup({ step5, panels, music, userMusic, copy, d
       <p className="small-muted">{t("Selections save automatically. Music and video changes apply when you Generate; 3:4 panel changes only need Build 3:4 copy.")}</p>
     </div>
 
-    <div className="setup-group" role="group" aria-labelledby="assembly-music">
-      <h3 id="assembly-music">{t("Background music")}</h3>
+    <div className="setup-group" role="group" aria-labelledby={`${uid}-assembly-music`}>
+      <h3 id={`${uid}-assembly-music`}>{t("Background music")}</h3>
       <label className="field">
         <span>{t("Track")}</span>
         <div className="input-action">
@@ -187,8 +189,8 @@ export default function AssemblySetup({ step5, panels, music, userMusic, copy, d
       </label>
     </div>
 
-    <div className="setup-group" role="group" aria-labelledby="assembly-video">
-      <h3 id="assembly-video">{t("Video")}</h3>
+    <div className="setup-group" role="group" aria-labelledby={`${uid}-assembly-video`}>
+      <h3 id={`${uid}-assembly-video`}>{t("Video")}</h3>
       <label className="field">
         <span>{t("Export size (16:9)")}</span>
         <select disabled={disabled} value={size} onChange={(e) => set5({ video_size: e.target.value })}>
@@ -217,13 +219,13 @@ export default function AssemblySetup({ step5, panels, music, userMusic, copy, d
       </label>
     </div>
 
-    <div className={"setup-group" + (enabled ? "" : " inactive")} role="group" aria-labelledby="assembly-panels">
-      <h3 id="assembly-panels">{t("3:4 panels")}</h3>
+    <div className={"setup-group" + (enabled ? "" : " inactive")} role="group" aria-labelledby={`${uid}-assembly-panels`}>
+      <h3 id={`${uid}-assembly-panels`}>{t("3:4 panels")}</h3>
       {!enabled && <p className="small-muted">{t("Turn on the 3:4 copy at the top of the page to design its panels.")}</p>}
       <fieldset className="theme-choices" disabled={panelLocked}>
         <legend>{t("Style")}</legend>
         {themes.map((choice) => <label key={choice.id} className={`theme-choice${choice.id === theme ? " selected" : ""}`}>
-          <input type="radio" name="panel-theme" value={choice.id} checked={choice.id === theme} onChange={() => setPanel({ theme: choice.id })} />
+          <input type="radio" name={`${uid}-panel-theme`} value={choice.id} checked={choice.id === theme} onChange={() => setPanel({ theme: choice.id })} />
           <span className={`theme-swatch ${choice.id}`} aria-hidden="true"><i /></span>
           <strong>{t(choice.label)}</strong>
           <small>{t(choice.hint)}</small>

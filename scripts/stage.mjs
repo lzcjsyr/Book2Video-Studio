@@ -2,7 +2,8 @@
 //   build/runtime  Python with the engine's packages (including the Claude Code
 //                  CLI bundled by claude-agent-sdk), Node.js, the pinned
 //                  browser automation libraries and Chrome, FFmpeg and FFprobe
-//   build/engine   the CLI engine's code, prompts, skills, music and defaults
+//   build/engine   the production engine (engine/): code, prompts, skills, music
+//                  and defaults
 //   build/backend  the desktop's project service
 // Downloads are pinned, checksum-verified and cached in build/downloads. The
 // runtime is rebuilt only when a pin or lock file changes.
@@ -15,9 +16,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const build = path.join(root, "build");
 const downloads = path.join(build, "downloads");
-const engineSource = path.resolve(
-  process.env.STUDIO_ENGINE_ROOT || path.join(root, "../AIGC_Video_CLI"),
-);
+const engineSource = path.join(root, "engine");
 
 const PYTHON = { version: "3.13.15", release: "20260924" };
 const CHROME = "152.0.7977.30";
@@ -200,27 +199,48 @@ async function stageRuntime() {
   fs.renameSync(work, target);
 }
 
+// Assemble a folder beside its target and swap it in only once it is complete,
+// so a failed stage leaves the previous build in place.
+function stageFolder(name, fill) {
+  const target = path.join(build, name);
+  const work = path.join(build, `${name}.partial`);
+  fs.rmSync(work, { recursive: true, force: true });
+  fs.mkdirSync(work, { recursive: true });
+  try {
+    fill(work);
+  } catch (error) {
+    fs.rmSync(work, { recursive: true, force: true });
+    throw error;
+  }
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.renameSync(work, target);
+}
+
+const ENGINE_PARTS = ["core/pipeline/steps.py", "prompts", "skills", "config.example.yaml"];
+const junk = (parts) => parts.some((p) => p === "__pycache__" || p === ".DS_Store" || p === "node_modules" || p.endsWith(".pyc") || p.endsWith(".log"));
+
 // Only the engine's shipped parts: never .env, config.yaml, input or output.
 function stageEngine() {
-  const target = path.join(build, "engine");
-  fs.rmSync(target, { recursive: true, force: true });
-  const skip = (parts) => parts.some((p) => p === "__pycache__" || p === ".DS_Store" || p === "node_modules" || p.endsWith(".pyc"));
-  copyTree(path.join(engineSource, "core"), path.join(target, "core"), (parts) => skip(parts) || parts[0] === "tests");
-  for (const folder of ["prompts", "skills", "music"]) copyTree(path.join(engineSource, folder), path.join(target, folder), skip);
-  // Desktop Chinese instructions override engine defaults; keep upstream assets
-  // and reference paths available to the localized skill entrypoints.
-  copyTree(path.join(root, "skills"), path.join(target, "skills"), skip);
-  copyTree(path.join(root, "prompts"), path.join(target, "prompts"), skip);
-  fs.copyFileSync(path.join(engineSource, "config.example.yaml"), path.join(target, "config.example.yaml"));
+  const missing = ENGINE_PARTS.filter((part) => !fs.existsSync(path.join(engineSource, part)));
+  if (missing.length) throw new Error(`The engine in ${engineSource} is incomplete (missing ${missing.join(", ")}).`);
+  stageFolder("engine", (target) => {
+    copyTree(path.join(engineSource, "core"), path.join(target, "core"), (parts) => junk(parts) || parts[0] === "tests");
+    for (const folder of ["prompts", "skills"]) copyTree(path.join(engineSource, folder), path.join(target, folder), junk);
+    // Background music is licensed and kept out of git: ship whatever is in engine/music.
+    fs.mkdirSync(path.join(target, "music"));
+    const music = path.join(engineSource, "music");
+    if (fs.existsSync(music)) copyTree(music, path.join(target, "music"), (parts) => junk(parts) || parts.at(-1) === ".gitkeep");
+    if (!fs.readdirSync(path.join(target, "music")).length) console.log("No bundled background music: engine/music is empty.");
+    fs.copyFileSync(path.join(engineSource, "config.example.yaml"), path.join(target, "config.example.yaml"));
+  });
 }
 
 function stageBackend() {
-  const target = path.join(build, "backend");
-  fs.rmSync(target, { recursive: true, force: true });
-  fs.mkdirSync(target, { recursive: true });
-  for (const file of fs.readdirSync(path.join(root, "backend"))) {
-    if (file.endsWith(".py")) fs.copyFileSync(path.join(root, "backend", file), path.join(target, file));
-  }
+  stageFolder("backend", (target) => {
+    for (const file of fs.readdirSync(path.join(root, "backend"))) {
+      if (file.endsWith(".py")) fs.copyFileSync(path.join(root, "backend", file), path.join(target, file));
+    }
+  });
 }
 
 // Fail the build, not the user's first job, when a bundled part is broken.
@@ -234,6 +254,7 @@ function smokeTest() {
   }
   run(tool("python"), ["-c", "import sys; sys.path.insert(0, sys.argv[1]); import core.pipeline.steps, claude_agent_sdk, fitz, moviepy, docx, yaml; print('Python engine imports: ok')",
     path.join(build, "engine")], { env });
+  run(tool("python"), [path.join(root, "scripts/check_engine_contract.py"), path.join(build, "engine"), path.join(build, "backend")], { env });
   // The agent's shell finds the bundled Python by name, and it can read every input format.
   console.log("Agent shell:", execFileSync("sh", ["-c",
     'command -v python | grep -qF "$RUNTIME/bin/python" && python -c "import fitz, pdfplumber, ebooklib, mobi, docx, yaml; print(\'python on PATH with extractors: ok\')"'],
@@ -247,7 +268,8 @@ function smokeTest() {
   console.log("FFprobe:", version("ffprobe", ["-version"]));
 }
 
-await stageRuntime();
+// The quick, local parts first, so a broken source fails before any download.
 stageEngine();
 stageBackend();
+await stageRuntime();
 smokeTest();

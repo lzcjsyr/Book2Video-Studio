@@ -149,7 +149,7 @@ class EditingTests(unittest.TestCase):
         edit_render.ffmpeg('-f','lavfi','-i','testsrc2=s=320x180:r=30:d=1','-c:v','libx264','-pix_fmt','yuv420p',self.p/'images/segment_2.mp4')
         script=editing.read(self.p/'text/script.json');script['segments'][1]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
         _,work=self.prepare();plan=self.plan(work);self.assertEqual([s['index'] for s in plan['scenes']],[0,1,2])
-        html='<!doctype html><script src="build/gsap.min.js"></script><style>html,body{margin:0}#root{background:#2b6155;width:320px;height:180px;position:relative}.box{position:absolute;width:50px;height:50px;background:#f0c060;top:60px;left:30px}</style><div id="root" data-composition-id="main" data-start="0" data-width="320" data-height="180" data-duration="1"><div class="box"></div></div><script>const tl=gsap.timeline({paused:true});tl.to(".box",{x:150,duration:1,ease:"none"});window.__timelines={main:tl};</script>'
+        html='<!doctype html><script src="vendor/gsap.min.js"></script><style>html,body{margin:0;background:#2b6155;width:320px;height:180px;position:relative}.box{position:absolute;width:50px;height:50px;background:#f0c060;top:60px;left:30px}</style><div class="box"></div><script>const p=window.clipPayload,tl=gsap.timeline({paused:true});tl.to(".box",{x:150,duration:1,ease:"none"});window.clip={width:p.width,height:p.height,durationSeconds:p.durationSeconds,ready:document.fonts.ready,renderAt(t){tl.totalTime(t,false)}};</script>'
         (work/'custom.html').write_text(html);plan['scenes'][1]['html']='custom.html';self.setplan(work,plan)
         output,report=edit_render.render(work,preview=True,seconds=3)
         self.assertEqual(report['frames'],90);self.assertTrue(output.is_file())

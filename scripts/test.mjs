@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { stagedRuntime } from "./python.mjs";
 const language = spawnSync(
   process.execPath,
-  ["--experimental-strip-types", "--test", "scripts/test-language.mjs", "scripts/test-keys.mjs", "scripts/test-library.mjs", "scripts/test-visual-generation.mjs"],
+  ["--experimental-strip-types", "--test", "scripts/test-language.mjs", "scripts/test-keys.mjs", "scripts/test-library.mjs", "scripts/test-visual-generation.mjs", "scripts/test-workspace-tabs.mjs"],
   { stdio: "inherit" },
 );
 if (language.status !== 0) process.exit(language.status ?? 1);

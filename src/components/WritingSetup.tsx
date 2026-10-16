@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { ChevronDown, ChevronRight, FileText, FolderOpen, Save, TerminalSquare } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -5,19 +6,22 @@ import { useCollapsed } from "../collapse";
 import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
 import { languageModelChoices } from "../keys";
-import type { Bootstrap } from "../types";
+import type { Bootstrap, ClaudeCodeMode } from "../types";
+import AgentConnection from "./AgentConnection";
 import type { WritingOptions } from "../writing";
 
-export default function WritingSetup({ value, bootstrap, disabled, pending, subscription, onChange, onSave, onEditSkill }: {
+export default function WritingSetup({ value, bootstrap, disabled, pending, subscription, onClaudeMode, onChange, onSave, onEditSkill }: {
   value: WritingOptions;
   bootstrap: Bootstrap | null;
   disabled: boolean;
   pending: boolean;
   subscription: boolean;
+  onClaudeMode: (mode: ClaudeCodeMode) => void;
   onChange: (value: WritingOptions) => void;
   onSave: () => void;
   onEditSkill: () => void;
 }) {
+  const uid = useId();
   const { t } = useI18n();
   const skills = libraryChoices(bootstrap?.library, "writing_skills");
   const change = <K extends keyof WritingOptions>(key: K, next: WritingOptions[K]) => onChange({ ...value, [key]: next });
@@ -29,7 +33,7 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
   ].join(" · ");
   return <section className={"writing-setup" + (collapsed ? " collapsed" : "")} aria-label={t("Writing setup")}>
     <div className="writing-setup-heading">
-      <button type="button" className="collapse-toggle" aria-expanded={!collapsed} aria-controls="writing-setup-body"
+      <button type="button" className="collapse-toggle" aria-expanded={!collapsed} aria-controls={`${uid}-writing-setup-body`}
         title={t(collapsed ? "Expand" : "Collapse")} onClick={toggle}>
         {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
         <span>{t("Writing mode")}</span>
@@ -39,7 +43,7 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
         <Save size={13} /> {t(pending ? "Save writing setup" : "Writing setup saved")}
       </button>}
     </div>
-    <div id="writing-setup-body" hidden={collapsed}>
+    <div id={`${uid}-writing-setup-body`} hidden={collapsed}>
     <div className="writing-mode-options" role="group" aria-label={t("Writing mode")}>
       <button type="button" aria-pressed={value.mode === "source"} disabled={disabled} onClick={() => change("mode", "source")}>
         <FileText size={17} /><span><strong>{t("Write from a document")}</strong><small>{t("Use a manuscript, book, or source folder")}</small></span>
@@ -78,13 +82,14 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
     {!value.agent_skill && <p className="small-muted">{t("Claude Code follows your instructions without a writing skill. The app's output format still applies.")}</p>}
     <details className="writing-agent-settings">
       <summary>{t("Writing agent provider & model")}</summary>
+      <AgentConnection mode={subscription ? "subscription" : "api_key"} disabled={disabled} onMode={onClaudeMode} />
       {subscription && <p className="small-muted">{t("Not used now: Writing runs in your own Claude Code on your Claude subscription. Change this in Settings → API keys.")}</p>}
       <div className="form-grid">
-        <label className="field"><span>{t("Writing agent provider")}</span><select value={value.llm_server} disabled={disabled} onChange={(e) => change("llm_server", e.target.value)}>
+        <label className="field"><span>{t("Writing agent provider")}</span><select value={value.llm_server} disabled={disabled || subscription} onChange={(e) => change("llm_server", e.target.value)}>
           {!languageModelChoices.some((c) => c.id === value.llm_server) && <option value={value.llm_server}>{t("Unavailable: {id}", { id: value.llm_server || "—" })}</option>}
           {languageModelChoices.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </select></label>
-        <label className="field"><span>{t("Writing agent model")}</span><input value={value.llm_model} disabled={disabled} onChange={(e) => change("llm_model", e.target.value)} /></label>
+        <label className="field"><span>{t("Writing agent model")}</span><input value={value.llm_model} disabled={disabled || subscription} onChange={(e) => change("llm_model", e.target.value)} /></label>
       </div>
     </details>
     {pending && <p className="small-muted" role="status">{t("Your selections will also be saved when you activate Claude Code.")}</p>}

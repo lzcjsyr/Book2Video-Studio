@@ -129,7 +129,7 @@ def prepare(studio, project, body):
         prompt_parts, payloads = [], []
         for segment in chosen:
             from server import duration
-            audio = studio.asset(project, "voice", f"voice_{segment['index']}", [".wav", ".mp3"])
+            audio = studio.asset(project, "voice", f"voice_{segment['index']}", [".wav"])
             seconds = duration(audio)
             if not seconds:
                 raise ValueError(f"Segment {segment['index']} needs a recording before animated visual production.")

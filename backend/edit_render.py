@@ -10,7 +10,7 @@ import shutil
 import subprocess
 
 from editing import estimated_captions, normal, read, validate, verify_inputs, write
-from video_encoding import encode
+from core.infra.motion.encoding import encode
 from core.infra.motion.runtime import modules_dir, subprocess_env
 from core.infra.motion.renderer import render_clip
 
@@ -260,10 +260,8 @@ def render(work, preview=False, start=0, seconds=8, force=False):
     check=validate(work)
     verify_inputs(check["payload"], check["plan"])
     configure(work)
-    from core.infra.motion.runtime import prepare_assets,localize_legacy
+    from core.infra.motion.runtime import prepare_assets
     prepare_assets(work)
-    for scene in check['scenes']:
-        if scene.get('html'):localize_legacy(work,scene['html'])
     revision=render_signature(work,check)
     options={'browser':os.environ.get('AIGC_BROWSER_MODE','auto'),'encoder':os.environ.get('AIGC_VIDEO_ENCODER','auto')}
     try:cached_options=read(work/'build/candidate.qa.json').get('render_options')

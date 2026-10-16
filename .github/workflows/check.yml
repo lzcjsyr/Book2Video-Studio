@@ -9,8 +9,8 @@ jobs:
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
-      # The bundled runtime and engine are assembled by `npm run stage`, which needs the
-      # AIGC_Video_CLI engine and large downloads, so CI checks the sources only.
+      # The bundled runtime is assembled by `npm run stage`, which needs large
+      # downloads, so CI checks the sources only.
       - run: mkdir -p build/backend build/engine build/runtime
       - run: npm ci
       - run: npm run build

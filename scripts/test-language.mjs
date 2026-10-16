@@ -104,6 +104,7 @@ test("all static interface messages have Chinese translations", () => {
   const missing = new Set();
   for (const file of [
     "App.tsx",
+    "ProjectWorkspace.tsx",
     ...fs
       .readdirSync("src/components")
       .filter((f) => f.endsWith(".tsx"))

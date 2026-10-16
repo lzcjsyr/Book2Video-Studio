@@ -5,16 +5,16 @@ Reference notes for how each part of the app behaves (English). For an overview 
 
 A standalone Tauri 2 desktop app that turns books and manuscripts into narrated videos. It ships everything production needs, so nothing else has to be installed:
 
-- the production engine from AIGC_Video_CLI: code, prompts, skills, background music and default settings;
+- the production engine in `engine/`: code, prompts, skills, background music and default settings;
 - Python 3.13 with the engine's packages, including the Claude Code CLI bundled by `claude-agent-sdk`;
-- Node.js 22, the pinned HyperFrames 0.8.150 CLI and the Chrome Headless Shell build it renders with;
+- Node.js 22 with the pinned browser libraries (Puppeteer Core, GSAP, Three.js) and the Chrome Headless Shell build motion clips render with;
 - static FFmpeg and FFprobe builds.
 
 The release build is `src-tauri/target/release/bundle/macos/Book2Video Studio.app`. **System check / 系统检查** at the bottom of the sidebar lists every bundled component and opens the projects and library folders.
 
 ## Where your files live
 
-- **Projects:** new projects go to `~/Movies/Book2Video Studio` (the Videos folder on Windows), or any location chosen when creating one. **Open project folder** adds an existing production folder (from a backup, another computer or the CLI) to the list. The first launch after updating from an earlier build lists the projects that build kept in the CLI engine's `output/` folder; they stay where they are.
+- **Projects:** new projects go to `~/Movies/Book2Video Studio` (the Videos folder on Windows), or any location chosen when creating one. **Open project folder** adds an existing production folder (from a backup or another computer) to the list.
 - **Skills and templates:** an editable copy in the app data folder (`~/Library/Application Support/com.book2video.studio/library`). App updates add new bundled files and refresh files you never changed; your edits and deletions are kept.
 - **Logs:** the project service writes `logs/service.log` in the same app data folder.
 - **Protected folders:** macOS asks once before the app reads projects in Desktop, Documents or Downloads; the app shows "Starting production service" until you answer. If access is denied, those projects are listed as "Cannot open this folder". Unsigned builds are a new app to macOS after every rebuild, so the question returns.
@@ -27,7 +27,7 @@ npm run stage     # assemble build/runtime, build/engine and build/backend
 npm run desktop   # stage, then run the app in development
 ```
 
-`npm run stage` downloads pinned, checksum-verified copies of Python, Node.js, FFmpeg/FFprobe, HyperFrames and Chrome into `build/downloads`, installs `runtime/requirements.lock` and `runtime/hyperframes/package-lock.json`, copies the engine from `../AIGC_Video_CLI` (or `STUDIO_ENGINE_ROOT`) and smoke-tests every component. The runtime is rebuilt only when a pin or lock file changes. Only the engine's `core`, `prompts`, `skills`, `music` and `config.example.yaml` are copied: never `.env`, `config.yaml`, `input` or `output`.
+`npm run stage` downloads pinned, checksum-verified copies of Python, Node.js, FFmpeg/FFprobe and Chrome into `build/downloads`, installs `runtime/requirements.lock` and `runtime/motion/package-lock.json`, copies the engine from `engine/`, and smoke-tests every component, including that the engine provides every `core` module and name the backend imports. The runtime is rebuilt only when a pin or lock file changes. Each staged folder is assembled beside its target and swapped in only when complete, so a failed stage leaves the previous build working. `engine/music` holds licensed tracks that stay out of git; whatever is there is bundled.
 
 Use **Settings → Language / 设置 → 语言** to switch between **English** and **简体中文**. Both choices are visible above the Production/API keys tabs, even before opening a project. Switching applies immediately, preserves unsaved edits and active terminals, and remembers your choice on this computer. The first launch follows the system's preferred language, choosing Simplified Chinese for Chinese language preferences and English otherwise.
 
@@ -80,10 +80,10 @@ The Mac app is not yet signed or notarized; see **Before public distribution** b
 - **Writing:** activate Claude Code in the right terminal. The app prepares the selected source (document mode), Skill, output contract, and configured provider. Type your instructions in the terminal. Review and edit the manuscript in the center. Video titles, cover titles, cover subtitles, and opening quotes each have separate editable candidate boxes. Select one per group, then **Save manuscript** before continuing or generating. Add/remove candidates as needed; a newline within a box stays part of that candidate.
 - **Opening quote / 开场金句:** the candidate editor sits before the manuscript, matching playback order. **Use opening quote / 使用开场金句** saves immediately and controls opening narration, visuals, sequence timing, and assembly. Quote edits/selections use **Save manuscript**. Turning the opening off retains candidates and existing media and lets the final video start with the body; generate Assembly to update completed exports. The switch marks assembly for rebuilding without invalidating unrelated segment recordings or visuals. Opening-only stale markers are suspended while excluded and restored if re-enabled.
 - **Steps:** Writing → Segments → Voice → Visuals → Assembly → Covers, numbered 1–6. Segments is the engine's step 1.5 and the visual direction is its step 2; the engine and its settings keep those names.
-- **Segments:** edit each narration directly in the list. Each row has an **Image / Motion** toggle: Image is generated by the image API in Visuals; Motion is built by Claude Code with HyperFrames in Visuals. **Save changes** in the header saves every edited row together; a visual-type-only change marks just Visuals for rebuilding. Generate through the existing pipeline.
+- **Segments:** edit each narration directly in the list. Each row has an **Image / Motion** toggle: Image is generated by the image API in Visuals; Motion is built by Claude Code as an HTML clip in Visuals. **Save changes** in the header saves every edited row together; a visual-type-only change marks just Visuals for rebuilding. Generate through the existing pipeline.
 - **Visual direction / 画面基调:** a collapsible card at the top of Visuals holds the short story summary every image and motion clip follows. Visuals jobs generate it first when it is missing or outdated (the manuscript changed, or its provider/model changed in **Settings → Production → Visuals**). Edit and **Save direction**, or generate it alone; either marks the visuals for rebuilding but not the recordings. Motion with Claude Code needs a current direction. **Edit instructions** opens its prompt.
 - **Voice / Visuals:** select a segment or opening in the sequence. Play recordings, inspect images/video, and edit narration. Generate one item, missing items, or the whole step.
-- **Visuals with Claude Code:** activation selects motion for the requested segments and prepares the HyperFrames skills, narration, actual recording duration, style, dimensions, and saved composition paths. Give the agent instructions interactively. After it ends, use **Render saved motion compositions**. Static images use the existing image provider.
+- **Visuals with Claude Code:** activation selects motion for the requested segments and prepares the motion skills, narration, actual recording duration, style, dimensions, and saved composition paths. Give the agent instructions interactively. After it ends, use **Render saved motion compositions**. Static images use the existing image provider.
 - **Batch images:** Step 4 has direct **Generate all images / 生成全部图片** and **Fill missing images / 补全缺失图片** actions. All generates every static-image segment; missing preserves existing PNG/JPEG/WebP files. Both include the opening when enabled (missing only when absent), skip motion segments, and require current segments. Prior outputs are preserved in project history.
 - **Assembly:** the 16:9 video is always made; the **3:4 copy** card at the top of the page has its own switch. Selecting a segment seeks the video. The panel on the right saves as you change it:
   - **Background music:** a bundled track or one added with **Add music…** (copied into the app data folder's `music/`, so every project can use it), a preview button, volume, lowering the music under narration, and loudness levelling.
@@ -96,14 +96,14 @@ The Mac app is not yet signed or notarized; see **Before public distribution** b
 
 **Generate** preserves a revision and optionally queues later steps for rebuilding, pausing for your review and interactive agents. The rebuild guide lasts for the current app session; generated outputs, review markers, settings, and revision history persist.
 
-Text edits and generation create history under each production's `.studio/history`. JSON is the GUI's editing authority. The runner refreshes the legacy DOCX bridge before segmentation or visual direction generation so an older Word file cannot override an edit. Unsaved text is preserved on refresh, and conflicting saves are rejected. Production and a stage agent cannot concurrently write the same project.
+Text edits and generation create history under each production's `.studio/history`. The manuscript and script JSON files are the only sources production reads. Unsaved text is preserved on refresh, and conflicting saves are rejected. Production and a stage agent cannot concurrently write the same project.
 
-Saved metadata selections appear first in each candidate group; the other candidates remain available. This matches the existing CLI contract and survives the DOCX bridge. Generating Segments carries those choices into the script, opening narration/visuals, cover generation, and 3:4 export text. Changing a choice marks dependent outputs for generation; it does not silently replace completed media.
+Saved metadata selections appear first in each candidate group; the other candidates remain available. Generating Segments carries those choices into the script, opening narration/visuals, cover generation, and 3:4 export text. Changing a choice marks dependent outputs for generation; it does not silently replace completed media.
 
 ## Architecture
 
 - `src/`: React/TypeScript editing workspace; xterm.js terminal display.
-- `src-tauri/`: native Rust host, OS credential storage, portable-pty terminal, the bundled runtime's environment, and local service lifetime. Every child process gets the bundled programs first on `PATH`, the library location, and the HyperFrames browser/FFmpeg paths; the user's Python settings are cleared.
+- `src-tauri/`: native Rust host, OS credential storage, portable-pty terminal, the bundled runtime's environment, and local service lifetime. Every child process gets the bundled programs first on `PATH`, the library location, and the browser and FFmpeg paths; the user's Python settings are cleared.
 - `backend/server.py`: authenticated loopback project/artifact service, revisions, invalidation, job supervision, and range-based media streaming.
 - `backend/runner.py`: isolated process invoking the engine's real stage functions.
 - `backend/library.py`: the editable skills and templates, and their seeding from the bundled engine.
@@ -133,9 +133,9 @@ The opt-in native credential-store test uses a disposable random account and rem
 
 ## Before public distribution
 
-- **Platforms:** `npm run stage` packages macOS on Apple silicon. Intel Macs and Windows need their entries in `PLATFORMS` (Python, Node.js and FFmpeg builds) and a `.cmd` HyperFrames launcher; the host code is platform-neutral but untested there.
+- **Platforms:** `npm run stage` packages macOS on Apple silicon. Intel Macs and Windows need their entries in `PLATFORMS` (Python, Node.js and FFmpeg builds); the host code is platform-neutral but untested there.
 - **Signing:** sign every bundled executable and library (Python extensions, Node.js, Chrome, FFmpeg, Claude Code) with a Developer ID and hardened runtime, then notarize. Node.js and Chrome need the JIT entitlement.
-- **Licenses:** `runtime/THIRD_PARTY_NOTICES.md` lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source; HyperFrames 0.8.150 is Apache-2.0, and the libvips that its image library sharp bundles is LGPL-3.0-or-later.
+- **Licenses:** `runtime/THIRD_PARTY_NOTICES.md` lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source.
 
 HEVC playback varies by system; H.264 is the compatibility choice in project settings.
 

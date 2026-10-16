@@ -1,4 +1,4 @@
-import { Check, Clapperboard, Image, Loader2, Maximize2, Plus, Sparkles, TerminalSquare, X } from "lucide-react";
+import { Check, Clapperboard, Image, ListPlus, ListX, Loader2, Maximize2, Plus, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { media } from "../api";
@@ -31,6 +31,8 @@ export default function TakePicker({
   lockReason,
   renderLock,
   generating,
+  newImageLock,
+  queue,
   newImageLabel,
   newImageHint,
   onSelect,
@@ -55,6 +57,10 @@ export default function TakePicker({
   /** Why a new opening cannot be rendered now, or "". */
   renderLock: string;
   generating: boolean;
+  /** Why a new image cannot be made or queued now, or "". */
+  newImageLock: string;
+  /** "add": a job is running, so a new image joins the queue; "queued": it is in the queue already. */
+  queue: "" | "add" | "queued";
   newImageLabel: string;
   newImageHint: string;
   onSelect: (take: Take) => void;
@@ -185,12 +191,14 @@ export default function TakePicker({
         </section>
       </div>
       <div className="take-picker-actions">
-        <button className="button small" disabled={locked} title={locked ? t(lockReason) : t(newImageHint)} onClick={onNewImage}>
-          {generating ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />} {t(newImageLabel)}
+        <button className="button small" disabled={Boolean(newImageLock)} aria-pressed={queue === "queued" || undefined}
+          title={t(newImageLock || newImageHint)} onClick={onNewImage}>
+          {generating && queue !== "queued" ? <Loader2 size={13} className="spin" />
+            : queue === "queued" ? <ListX size={13} /> : queue === "add" ? <ListPlus size={13} /> : <Sparkles size={13} />} {t(newImageLabel)}
         </button>
         {!opening && (
           <button className="button small" disabled={locked} title={locked ? t(lockReason) : t("Claude Code designs a new clip; the existing ones are kept")} onClick={onNewClip}>
-            <Plus size={13} /><TerminalSquare size={13} /> {t("New motion clip")}
+            <Plus size={13} /><Clapperboard size={13} /> {t("New motion clip")}
           </button>
         )}
       </div>

@@ -45,7 +45,7 @@ class LibraryTests(unittest.TestCase):
 
     def create(self, group, item_id, value):
         return self.library.save({"group": group, "id": item_id, "value": value,
-                                  "expected_hash": self.library.choices_hash(group)}, create=True)
+                                  "expected_hash": digest(self.library.group(group)[2])}, create=True)
 
     def test_edits_write_real_files_and_history_restores_them(self):
         for group, item_id, file in [("summary", "summary", None), ("writing_skills", "test_writer", None),

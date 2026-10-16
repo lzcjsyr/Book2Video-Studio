@@ -1,8 +1,10 @@
+use crate::claude_code::Mode;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{Read, Write},
+    path::Path,
     sync::{Arc, Mutex},
 };
 use tauri::{Emitter, Manager};
@@ -11,7 +13,6 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
-    project: String,
 }
 #[derive(Default)]
 pub struct Terminals {
@@ -94,35 +95,17 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
         .map_err(|e| e.to_string())?;
     let installation = crate::installation(&app)?;
     let mode = crate::claude_code::mode(&app);
-    let program = match mode {
-        crate::claude_code::Mode::ApiKey => installation.claude.clone(),
-        crate::claude_code::Mode::Subscription => {
-            crate::claude_code::local_program(&app, &installation)?
-        }
+    let (program, provider) = match mode {
+        Mode::ApiKey => (
+            installation.claude.clone(),
+            resolve_provider(&installation, &project_root, &trusted.step, crate::credentials::load()?)?,
+        ),
+        Mode::Subscription => (crate::claude_code::local_program(&app, &installation)?, HashMap::new()),
     };
-    let mut command = CommandBuilder::new(&program);
-    command.args(&trusted.args);
-    command.cwd(&trusted.cwd);
-    command.env("TERM", "xterm-256color");
-    for (name, value) in installation.environment() {
-        command.env(name, value);
-    }
-    for name in crate::Installation::CLEARED {
-        command.env_remove(name);
-    }
-    if mode == crate::claude_code::Mode::Subscription {
-        // The user's own login pays for the session; no provider endpoint or key may override it.
-        for name in crate::claude_code::PROVIDER_ENV {
-            command.env_remove(name);
-        }
-    } else {
-        apply_provider(&mut command, &installation, &project_root, &trusted.step)?;
-    }
+    let command = session_command(&installation, &program, &trusted, mode, &provider)?;
     let child = pair.slave.spawn_command(command).map_err(|e| match mode {
-        crate::claude_code::Mode::ApiKey => {
-            format!("Cannot launch Claude Code: {e}. Reinstall Book2Video Studio.")
-        }
-        crate::claude_code::Mode::Subscription => format!(
+        Mode::ApiKey => format!("Cannot launch Claude Code: {e}. Reinstall Book2Video Studio."),
+        Mode::Subscription => format!(
             "Cannot launch your Claude Code ({}): {e}. Check it in Settings → API keys.",
             program.display()
         ),
@@ -136,7 +119,6 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
             master: pair.master,
             writer,
             child,
-            project: trusted.project,
         },
     );
     let thread_id = id.clone();
@@ -148,33 +130,11 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     pending.extend_from_slice(&buffer[..n]);
-                    let valid = match std::str::from_utf8(&pending) {
-                        Ok(_) => pending.len(),
-                        Err(e) => e.valid_up_to(),
-                    };
-                    if valid > 0 {
-                        let data = String::from_utf8_lossy(&pending[..valid]).into_owned();
+                    if let Some(data) = take_text(&mut pending) {
                         let _ = app.emit(
                             "terminal-output",
-                            Output {
-                                id: thread_id.clone(),
-                                data,
-                                exited: false,
-                            },
+                            Output { id: thread_id.clone(), data, exited: false },
                         );
-                        pending.drain(..valid);
-                    }
-                    if pending.len() > 4 {
-                        let data = String::from_utf8_lossy(&pending).into_owned();
-                        let _ = app.emit(
-                            "terminal-output",
-                            Output {
-                                id: thread_id.clone(),
-                                data,
-                                exited: false,
-                            },
-                        );
-                        pending.clear();
                     }
                 }
             }
@@ -238,32 +198,60 @@ pub fn terminal_stop(state: tauri::State<Terminals>, id: String) -> Result<(), S
     }
     Ok(())
 }
-#[tauri::command]
-pub fn terminal_list(state: tauri::State<Terminals>) -> Vec<serde_json::Value> {
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(id, s)| serde_json::json!({"id":id,"project":s.project}))
-        .collect()
+/// The Claude Code command for a trusted launch: its arguments and folder, the bundled
+/// environment, and the connection the mode calls for.
+fn session_command(
+    installation: &crate::Installation,
+    program: &Path,
+    launch: &Launch,
+    mode: Mode,
+    provider: &HashMap<String, String>,
+) -> Result<CommandBuilder, String> {
+    let mut command = CommandBuilder::new(program);
+    command.args(&launch.args);
+    command.cwd(&launch.cwd);
+    command.env("TERM", "xterm-256color");
+    for (name, value) in installation.environment() {
+        command.env(name, value);
+    }
+    for name in crate::Installation::CLEARED {
+        command.env_remove(name);
+    }
+    crate::claude_code::configure_connection(&mut command, mode, provider)?;
+    Ok(command)
+}
+
+/// The complete UTF-8 text at the front of `pending`; a character split across reads waits
+/// for its remaining bytes, and bytes that can never form one are replaced.
+fn take_text(pending: &mut Vec<u8>) -> Option<String> {
+    let valid = match std::str::from_utf8(pending) {
+        Ok(_) => pending.len(),
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        Err(_) => pending.len(),
+    };
+    if valid == 0 {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&pending[..valid]).into_owned();
+    pending.drain(..valid);
+    Some(text)
 }
 
 /// Built-in mode: the engine resolves the step's provider endpoint and key. Credentials go
 /// straight to the child and are never emitted to the WebView or written into a manifest.
-fn apply_provider(
-    command: &mut CommandBuilder,
+fn resolve_provider(
     installation: &crate::Installation,
-    project_root: &std::path::Path,
+    project_root: &Path,
     step: &str,
-) -> Result<(), String> {
+    keys: std::collections::BTreeMap<String, String>,
+) -> Result<HashMap<String, String>, String> {
     let resolved = installation
         .command(&installation.python)
         .arg(installation.backend_script("agent_env.py"))
         .arg(&installation.engine)
         .arg(project_root)
         .arg(step)
-        .envs(crate::credentials::load()?)
+        .envs(keys)
         .output()
         .map_err(|e| e.to_string())?;
     if !resolved.status.success() {
@@ -274,8 +262,123 @@ fn apply_provider(
     }
     let env: HashMap<String, String> = serde_json::from_slice(&resolved.stdout)
         .map_err(|_| "The engine did not return a valid agent environment")?;
-    for (name, value) in env {
-        command.env(name, value);
+    Ok(env)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        path::PathBuf,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn split_characters_wait_for_their_remaining_bytes() {
+        let bytes = "写作 ok".as_bytes();
+        let mut pending = bytes[..2].to_vec();
+        assert_eq!(take_text(&mut pending), None);
+        pending.extend_from_slice(&bytes[2..]);
+        assert_eq!(take_text(&mut pending).as_deref(), Some("写作 ok"));
+        assert!(pending.is_empty());
+        let mut broken = vec![b'a', 0xff, b'b'];
+        assert_eq!(take_text(&mut broken).as_deref(), Some("a\u{fffd}b"));
     }
-    Ok(())
+
+    /// Screen text without terminal control sequences.
+    fn plain(raw: &str) -> String {
+        let (mut out, mut chars) = (String::new(), raw.chars().peekable());
+        while let Some(c) = chars.next() {
+            if c != '\x1b' {
+                out.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('[') => while chars.next().is_some_and(|c| !('@'..='~').contains(&c)) {},
+                Some(']') | Some('P') => while chars.next().is_some_and(|c| c != '\x07' && c != '\x1b') {},
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Talks to Claude Code exactly as an app session does: a launch prepared by the project
+    /// service (STUDIO_TEST_LAUNCH; its data folder is STUDIO_TEST_DATA, by default the
+    /// development one), the staged build, the mode's program and connection, a real
+    /// terminal. STUDIO_TEST_MODE=subscription uses the installed Claude Code and its login;
+    /// otherwise the built-in one is resolved for the step with a fixture key for every provider
+    /// and sent to STUDIO_TEST_PROVIDER_URL instead of the real endpoint:
+    /// `cargo test -- --ignored --nocapture interactive_session`.
+    #[test]
+    #[ignore]
+    fn interactive_session_answers_through_the_terminal() {
+        let path = std::env::var("STUDIO_TEST_LAUNCH").expect("STUDIO_TEST_LAUNCH names a launch.json");
+        let launch: Launch = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let build = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build");
+        // The data folder of the service that prepared the launch (its library holds the prompts).
+        let data = std::env::var("STUDIO_TEST_DATA").map(PathBuf::from).unwrap_or_else(|_| build.join("dev-data"));
+        let installation = crate::Installation::new(&build, data.clone(), data.join("projects")).unwrap();
+        // The launch's context is <project>/.studio/agent/<session>/context.md.
+        let project = Path::new(&launch.context).ancestors().nth(4).unwrap().to_path_buf();
+        let subscription = std::env::var("STUDIO_TEST_MODE").as_deref() == Ok("subscription");
+        let (mode, program, provider) = if subscription {
+            let program = crate::claude_code::find(&installation.claude).expect("Claude Code is installed");
+            (Mode::Subscription, program, HashMap::new())
+        } else {
+            let keys = crate::credentials::PROVIDERS.iter().map(|name| (name.to_string(), "fixture-key".to_string())).collect();
+            let mut provider = resolve_provider(&installation, &project, &launch.step, keys).unwrap();
+            println!("Resolved provider: {} · {}", provider["ANTHROPIC_BASE_URL"], provider["ANTHROPIC_MODEL"]);
+            provider.insert("ANTHROPIC_BASE_URL".into(), std::env::var("STUDIO_TEST_PROVIDER_URL").unwrap());
+            (Mode::ApiKey, installation.claude.clone(), provider)
+        };
+        let command = session_command(&installation, &program, &launch, mode, &provider).unwrap();
+        let pair = native_pty_system()
+            .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+            .unwrap();
+        let mut child = pair.slave.spawn_command(command).unwrap();
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut writer = pair.master.take_writer().unwrap();
+        let screen = Arc::new(Mutex::new(String::new()));
+        let output = screen.clone();
+        std::thread::spawn(move || {
+            let (mut buffer, mut pending) = ([0u8; 8192], Vec::new());
+            while let Ok(n) = reader.read(&mut buffer) {
+                if n == 0 { break; }
+                pending.extend_from_slice(&buffer[..n]);
+                if let Some(text) = take_text(&mut pending) { output.lock().unwrap().push_str(&text); }
+            }
+        });
+        let wait_for = |what: &[&str], seconds: u64| {
+            let deadline = Instant::now() + Duration::from_secs(seconds);
+            while Instant::now() < deadline {
+                let text = plain(&screen.lock().unwrap()).replace(' ', "");
+                if let Some(found) = what.iter().find(|w| text.contains(&w.replace(' ', ""))) { return Some(found.to_string()); }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            None
+        };
+        let mut send = |keys: &str| { writer.write_all(keys.as_bytes()).unwrap(); writer.flush().unwrap(); };
+        // Claude Code's own trust question comes first in a folder it has not seen.
+        let started = wait_for(&["trust this folder", "shift+tab", "for shortcuts"], 60);
+        if started.as_deref() == Some("trust this folder") {
+            send("\x1b[B");
+            std::thread::sleep(Duration::from_millis(500));
+            send("\r");
+            assert!(wait_for(&["shift+tab", "for shortcuts"], 60).is_some(), "{}", plain(&screen.lock().unwrap()));
+        }
+        assert!(started.is_some(), "Claude Code did not start:\n{}", plain(&screen.lock().unwrap()));
+        std::thread::sleep(Duration::from_secs(2));
+        screen.lock().unwrap().clear();
+        send("What is 17+25? Reply with only the number.");
+        std::thread::sleep(Duration::from_millis(800));
+        send("\r");
+        let expected = std::env::var("STUDIO_TEST_EXPECT").unwrap_or_else(|_| "42".into());
+        let answered = wait_for(&[&expected], 120);
+        let transcript = plain(&screen.lock().unwrap());
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(answered.is_some(), "No answer through the terminal:\n{transcript}");
+        println!("Answered through the terminal: {expected}");
+    }
 }
