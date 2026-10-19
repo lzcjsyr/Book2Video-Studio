@@ -39,7 +39,9 @@ def capture(work, payload, *, mode='check', fps=30, destination=None, times=None
     if not math.isfinite(duration) or duration <= 0 or not 1 <= int(fps) <= 120:
         raise ValueError('Duration must be positive and fps between 1 and 120.')
     destination = Path(destination or work / 'snapshots').resolve()
-    report = work / ('capture-report.json' if mode == 'render' else 'check-report.json')
+    # One report per page, so renders of different pages in the same folder never read each other's.
+    stem = 'capture-report' if mode == 'render' else 'check-report'
+    report = work / (f'{stem}.json' if entry == 'index.html' else f"{entry.replace('/', '_')}.{stem}.json")
     last_frame = (math.ceil(duration * fps - 1e-9) - 1) / fps
     samples = times if times is not None else [i * last_frame / 4 for i in range(5)]
     if any(not math.isfinite(t) or t < 0 or t >= duration for t in samples):
@@ -59,8 +61,11 @@ def capture(work, payload, *, mode='check', fps=30, destination=None, times=None
     return json.loads(report.read_text())
 
 
-def render_clip(work, payload, output, *, fps=30, caption_zone=True, entry='index.html', strict_duration=False, force=False):
-    """Keep the prior video until browser capture, encoding and FFprobe all succeed."""
+def render_clip(work, payload, output, *, fps=30, caption_zone=True, entry='index.html', strict_duration=False, force=False, ignore_media=False):
+    """Keep the prior video until browser capture, encoding and FFprobe all succeed.
+
+    ignore_media: other renders may write videos into the same folder meanwhile, so media files are not
+    treated as this page's sources."""
     work, output = Path(work).resolve(), Path(output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     width, height = parse_size(f"{payload['width']}x{payload['height']}")
@@ -68,7 +73,7 @@ def render_clip(work, payload, output, *, fps=30, caption_zone=True, entry='inde
     verify_sources(payload)
     prepare_assets(work)
     def reusable(path):
-        if not current(work,payload,path,entry=entry,fps=fps):return False
+        if not current(work,payload,path,entry=entry,fps=fps,ignore_media=ignore_media):return False
         report=json.loads(Path(path).with_suffix('.render.json').read_text())
         mode=os.environ.get('AIGC_BROWSER_MODE','auto');encoder=os.environ.get('AIGC_VIDEO_ENCODER','auto')
         if mode!='auto' and report.get('browserMode')!=mode:return False
@@ -89,7 +94,7 @@ def render_clip(work, payload, output, *, fps=30, caption_zone=True, entry='inde
             (work/'render-report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
             print(f'Reusing verified preview: {cached}',flush=True)
             return str(output)
-    revision=signature(work,payload,entry=entry,fps=fps,output=output)
+    revision=signature(work,payload,entry=entry,fps=fps,output=output,ignore_media=ignore_media)
     # Validate actual browser behavior, including backward seeking, before encoding.
     checked=capture(work, payload, fps=fps, caption_zone=caption_zone,entry=entry)
     if strict_duration and abs(checked['authoredDuration']-duration)>.5/fps:
@@ -126,7 +131,7 @@ def render_clip(work, payload, output, *, fps=30, caption_zone=True, entry='inde
                 or abs(float(video['avg_frame_rate'].split('/')[0]) / float(video['avg_frame_rate'].split('/')[1]) - fps) > .001
                 or any(s['codec_type'] == 'audio' for s in metadata['streams'])):
             raise RuntimeError('Export failed dimensions, frame count, duration or silent-video validation.')
-        if revision!=signature(work,payload,entry=entry,fps=fps,output=output):
+        if revision!=signature(work,payload,entry=entry,fps=fps,output=output,ignore_media=ignore_media):
             raise RuntimeError('Composition sources changed during rendering; render again.')
         verify_sources(payload)
         candidate.replace(output)

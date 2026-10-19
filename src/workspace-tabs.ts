@@ -16,6 +16,10 @@ export interface WorkspaceStatus {
   dirty: boolean;
   running: boolean;
   closeReason: string;
+  /** Edits a closing question's Save stores, one per line ("" when none). */
+  unsaved?: string;
+  /** An open editor with changes that must be saved where it is ("" when none). */
+  manual?: string;
 }
 
 let nextKey = 0;

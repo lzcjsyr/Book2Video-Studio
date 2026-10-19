@@ -14,6 +14,13 @@ export default function App() {
   });
   const [status, setStatus] = useState<Record<string, WorkspaceStatus>>({});
   const [notice, setNotice] = useState("");
+  // The question asked before closing Studio (or one tab) with unsaved edits or running work.
+  const [closing, setClosing] = useState<{ tab?: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savers = useRef<Record<string, () => Promise<boolean>>>({});
+  const registerSaver = useCallback((key: string, save: (() => Promise<boolean>) | null) => {
+    if (save) savers.current[key] = save; else delete savers.current[key];
+  }, []);
   const current = useRef(workspace), statuses = useRef(status);
   statuses.current = status;
   const update = useCallback((next: WorkspaceTabs) => { current.current = next; setWorkspace(next); }, []);
@@ -49,11 +56,46 @@ export default function App() {
   const removed = useCallback((ids: string[]) => {
     update(closeProjectTabs(current.current, current.current.tabs.filter(t => t.projectId && ids.includes(t.projectId)).map(t => t.key)));
   }, [update]);
-  function close(key: string) {
-    const reason = statuses.current[key]?.closeReason;
-    if (reason) { update({ ...current.current, active: key }); setNotice(reason); return; }
+  const unsavedIn = (key: string) => Boolean(statuses.current[key]?.unsaved || statuses.current[key]?.manual);
+  function closeTab(key: string) {
     update(closeProjectTabs(current.current, [key]));
     setStatus(s => { const next = { ...s }; delete next[key]; return next; });
+  }
+  function close(key: string) {
+    // Unsaved edits get the usual question; a running session or action still keeps the tab open.
+    const state = statuses.current[key];
+    if (unsavedIn(key) && !state?.running) { update({ ...current.current, active: key }); setClosing({ tab: key }); return; }
+    const reason = state?.closeReason;
+    if (reason) { update({ ...current.current, active: key }); setNotice(reason); return; }
+    closeTab(key);
+  }
+  async function closeWindow() {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().destroy();
+  }
+  /** Save every listed tab's edits, then close. A tab that cannot save is shown and nothing closes. */
+  async function saveAndClose() {
+    if (!closing) return;
+    const keys = closing.tab ? [closing.tab] : current.current.tabs.map(t => t.key).filter(unsavedIn);
+    setSaving(true);
+    try {
+      for (const key of keys) {
+        if (!(await savers.current[key]?.())) {
+          update({ ...current.current, active: key });
+          setClosing(null);
+          return;
+        }
+      }
+    } finally {
+      setSaving(false);
+    }
+    discardAndClose();
+  }
+  function discardAndClose() {
+    const target = closing;
+    setClosing(null);
+    if (target?.tab) closeTab(target.tab);
+    else closeWindow().catch(error => setNotice(String(error)));
   }
   useEffect(() => {
     try {
@@ -72,10 +114,13 @@ export default function App() {
   useEffect(() => {
     if (!isTauri()) return;
     let disposed = false, unlisten: (() => void) | undefined;
+    // With a listener, closing is left to this page: the API destroys the window unless it is
+    // prevented, which needs core:window:allow-destroy in src-tauri/capabilities/main.json.
     import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(event => {
-      if (!Object.values(statuses.current).some(s => s.dirty)) return;
+      const all = Object.values(statuses.current);
+      if (!all.some(s => s.unsaved || s.manual || s.running)) return;
       event.preventDefault();
-      setNotice("Save edits in all project tabs before closing Studio.");
+      setClosing({});
     })).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
     return () => { disposed = true; unlisten?.(); };
   }, []);
@@ -120,9 +165,41 @@ export default function App() {
     </div>
     {workspace.tabs.map(tab => <div className="project-workspace" role="tabpanel" id={`workspace-${tab.key}`}
       aria-labelledby={`tab-${tab.key}`} hidden={workspace.active !== tab.key} key={tab.key}>
-      <ProjectWorkspace tab={tab} active={workspace.active === tab.key} onStatus={report}
+      <ProjectWorkspace tab={tab} active={workspace.active === tab.key} onStatus={report} onSaver={registerSaver}
         onOpenProject={openProject} onNewTab={addTab} mayRemove={mayRemove} onRemoved={removed} />
     </div>)}
+    {closing && (() => {
+      const tabs = closing.tab ? workspace.tabs.filter(t => t.key === closing.tab) : workspace.tabs;
+      const name = (key: string, fallback?: string) => status[key]?.title || fallback || t("New project");
+      const edited = tabs.filter(tab => status[tab.key]?.unsaved || status[tab.key]?.manual);
+      const running = closing.tab ? [] : tabs.filter(tab => status[tab.key]?.running);
+      return <div className="modal-backdrop" onKeyDown={event => { if (event.key === "Escape" && !saving) setClosing(null); }}>
+        <section className="modal closing-question" role="alertdialog" aria-modal="true" aria-labelledby="closing-title" aria-describedby="closing-body">
+          <div className="modal-heading"><h2 id="closing-title">{edited.length
+            ? closing.tab ? t("Save changes to {name} before closing it?", { name: name(edited[0].key, edited[0].title) }) : t("Save changes before closing Studio?")
+            : t("Close Studio while work is running?")}</h2></div>
+          <div className="modal-content" id="closing-body">
+            {edited.length > 0 && <>
+              <p className="muted">{t("Your changes will be lost if you don't save them.")}</p>
+              <ul className="closing-list">
+                {edited.map(tab => <li key={tab.key}><strong>{name(tab.key, tab.title)}</strong>
+                  <span>{[...(status[tab.key]?.unsaved || "").split("\n").filter(Boolean).map(item => t(item)),
+                    ...(status[tab.key]?.manual ? [t("{editor} (save it in its window)", { editor: t(status[tab.key]!.manual!) })] : [])].join(" · ")}</span></li>)}
+              </ul>
+            </>}
+            {running.length > 0 && <p className="closing-running">{t("Closing Studio stops the running work in: {names}.", { names: running.map(tab => name(tab.key, tab.title)).join(", ") })}</p>}
+          </div>
+          <div className="modal-actions">
+            {edited.length > 0 && <button className="button closing-discard" disabled={saving} onClick={discardAndClose}>{t("Don't save")}</button>}
+            <button className="button" disabled={saving} autoFocus={!edited.length} onClick={() => setClosing(null)}>{t("Cancel")}</button>
+            {edited.length > 0
+              ? <button className="button primary" disabled={saving} autoFocus onClick={saveAndClose}>
+                  {saving && <Loader2 size={13} className="spin" />}{t("Save")}</button>
+              : <button className="button primary" onClick={discardAndClose}>{t("Close Studio")}</button>}
+          </div>
+        </section>
+      </div>;
+    })()}
     {notice && <div className="toast workspace-notice" role="status"><span>{t(notice)}</span>
       <button className="icon-button" aria-label={t("Dismiss notification")} onClick={() => setNotice("")}><X size={14} /></button></div>}
   </div>;

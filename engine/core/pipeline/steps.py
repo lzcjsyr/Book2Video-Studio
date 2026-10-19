@@ -35,7 +35,6 @@ from core.domain.summarizer import generate_description_summary, process_raw_to_
 from core.infra.ai.tts_client import text_to_audio_bytedance
 from core.infra.project_paths import ProjectPaths
 from core.prompts import OPENING_BG_PROMPT_TEMPLATE
-from core.infra.motion.opening_renderer import render_opening_video
 from core.infra.motion.segment_renderer import render_motion_segments_with_agent
 from core.shared import load_json_file, logger
 
@@ -473,9 +472,8 @@ def run_step_4(
     if description_data is None:
         return {"success": False, "message": "未找到描述小结，请先执行步骤2生成描述"}
 
+    # Visuals make only the opening's background; assembly renders the quote over it.
     opening_image_path = None
-    opening_image_file = paths.opening_image()
-    opening_previously_exists = os.path.exists(opening_image_file)
     opening_regenerated = False
 
     # 1. 尝试生成/刷新开场背景图 (opening_bg.png)
@@ -564,33 +562,19 @@ def run_step_4(
                             pass
                     try:
                         os.rename(temp_path, opening_bg_file)
+                        opening_regenerated = True
                         logger.info(f"开场背景图生成并保存至: {opening_bg_file}")
                     except Exception as e:
                         logger.warning(f"重命名开场背景图失败: {e}")
             else:
                 logger.warning("开场背景图生成失败")
+        if os.path.exists(opening_bg_file):
+            opening_image_path = opening_bg_file
 
     # 2. 并行调度任务：开场视频渲染与段落画面生成
     mode = (visual_mode or getattr(config, "VISUAL_MODE", "static_image") or "static_image").strip().lower()
     if mode not in {"static_image", "motion_agent", "mixed"}:
         return {"success": False, "message": f"不支持的画面生成模式: {visual_mode}"}
-
-    def render_opening_task() -> Optional[str]:
-        if not opening_quote:
-            return None
-        need_refresh = regenerate_opening or not opening_previously_exists
-        if need_refresh:
-            bg_path_for_render = opening_bg_file if os.path.exists(opening_bg_file) else None
-            return render_opening_video(
-                image_size=image_size,
-                output_dir=paths.images,
-                script_data=script_data,
-                opening_quote=opening_quote,
-                opening_bg_path=bg_path_for_render,
-            )
-        elif opening_previously_exists:
-            return opening_image_file
-        return None
 
     def run_static(targets: Optional[List[int]]) -> Dict[str, Any]:
         return generate_images_for_segments(
@@ -664,23 +648,7 @@ def run_step_4(
 
             return _merge_visual_generation_results(paths, total_segments, results)
 
-    # 提交到外层线程池并行执行
-    logger.info("🎬 开始并行执行开场视频渲染与段落画面生成...")
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        opening_future = executor.submit(render_opening_task)
-        segments_future = executor.submit(generate_segments_task)
-
-        # 等待完成并收集结果
-        image_result = segments_future.result()
-        opening_image_path = opening_future.result()
-
-    # 处理开场重新生成状态标记
-    if opening_quote:
-        need_refresh = regenerate_opening or not opening_previously_exists
-        if need_refresh and opening_image_path:
-            opening_regenerated = True
-        elif opening_previously_exists and not need_refresh:
-            print(f"保持现有开场视频: {opening_image_path}")
+    image_result = generate_segments_task()
 
     failed_segments = image_result.get("failed_segments", [])
     if failed_segments:
@@ -708,20 +676,21 @@ def run_step_4(
     if selected_segments is None:
         message = "段落画面生成完成"
         if opening_regenerated:
-            message += "，开场视频已更新"
+            message += "，开场背景已更新"
     elif processed_segments:
         seg_text = "、".join(str(idx) for idx in processed_segments)
         message = f"已生成第 {seg_text} 段画面"
         if opening_regenerated:
-            message += " 并刷新开场视频"
+            message += " 并刷新开场背景"
     else:
         message = "未生成新的段落画面"
         if opening_regenerated:
-            message = "已重新生成开场视频"
+            message = "已重新生成开场背景"
 
     payload = {
         "success": True,
         "opening_image_path": opening_image_path,
+        "opening_generated": opening_regenerated,
         "processed_segments": processed_segments,
         "message": message,
     }
@@ -748,6 +717,7 @@ def run_step_5(
     mute_cut_threshold: int = 400,
     mute_cut_min_silence_ms: int = 200,
     mute_cut_remain_ms: int = 100,
+    opening_image_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     project_root = _get_project_root()
     paths = ProjectPaths(project_output_dir)
@@ -788,7 +758,9 @@ def run_step_5(
             audio_paths.append(audio_path)
 
     bgm_audio_path = _resolve_bgm_audio_path(bgm_filename, project_root)
-    opening_image_candidate = paths.opening_image() if os.path.exists(paths.opening_image()) else None
+    # The opening clip assembly rendered for this video, else whatever sits in the opening's place.
+    opening_image_candidate = opening_image_path if opening_image_path and os.path.exists(opening_image_path) else (
+        paths.opening_image() if os.path.exists(paths.opening_image()) else None)
     opening_narration_audio_path = _ensure_opening_narration(
         script_data,
         paths.voice,

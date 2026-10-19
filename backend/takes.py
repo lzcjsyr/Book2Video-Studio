@@ -6,9 +6,9 @@ still-<id>.<ext>, motion clips as motion-<id>/ folders holding Claude Code's ind
 snapshots/ and the rendered video.mp4. Studio copies the selected take into the engine's place,
 and new output the engine writes there becomes a take, so nothing a segment had is lost.
 
-The opening is a clip the engine renders from a background picture (images/opening_bg.png) and
-the opening quote. Every background is kept as background-<id>.<ext>; it is never placed itself,
-since the quote is drawn over it: choosing one renders a new opening clip with it.
+The opening's visual is its background picture (images/opening_bg.png); Assembly draws the opening
+quote over it. Every background is kept as background-<id>.<ext>, and choosing one places it. Clips
+and images that earlier versions rendered for the opening stay in its folder but are not listed.
 """
 from __future__ import annotations
 import json
@@ -55,7 +55,9 @@ def same(a: Path, b: Path) -> bool:
 
 
 def placed(p: Path, index: int, extensions) -> list[Path]:
-    """The files in the engine's place for this part."""
+    """The files in the engine's place for this part (the opening's: its background)."""
+    if index == 0:
+        return [f] if (f := p / BACKGROUND).is_file() else []
     return [f for ext in extensions if (f := p / "images" / (stem(index) + ext)).is_file()]
 
 
@@ -66,12 +68,13 @@ def video_in(work: Path) -> Path | None:
 def listing(p: Path, index: int) -> list[dict]:
     takes = []
     d = folder(p, index)
-    if d.is_dir():
+    if d.is_dir() and index == 0:
+        takes = [{"id": entry.stem, "kind": "background", "file": entry, "dir": None} for entry in d.iterdir()
+                 if entry.is_file() and entry.name.startswith("background-") and entry.suffix.lower() in STILLS]
+    elif d.is_dir():
         for entry in d.iterdir():
             if entry.is_file() and entry.name.startswith("still-") and entry.suffix.lower() in STILLS:
                 takes.append({"id": entry.stem, "kind": "still", "file": entry, "dir": None})
-            elif entry.is_file() and entry.name.startswith("background-") and entry.suffix.lower() in STILLS:
-                takes.append({"id": entry.stem, "kind": "background", "file": entry, "dir": None})
             elif entry.is_dir() and entry.name.startswith("motion-"):
                 takes.append({"id": entry.name, "kind": "motion", "file": video_in(entry), "dir": entry})
     return sorted(takes, key=lambda t: (made(t["id"]), t["id"]))
@@ -174,7 +177,7 @@ def keep_background(p: Path) -> None:
 
 
 def current_background(p: Path) -> str | None:
-    """The background the engine renders the next opening with."""
+    """The background the opening uses: the take matching the one in its place."""
     current = p / BACKGROUND
     if not current.is_file():
         return None
@@ -191,6 +194,10 @@ def keep(p: Path, index: int, file: Path, takes: list[dict]) -> None:
 def sync(p: Path, index: int, selection: str | None) -> str | None:
     """Adopt new engine output as a take, then put the selected take in the engine's place."""
     folder(p, index).mkdir(parents=True, exist_ok=True)
+    if index == 0:
+        # The background in the opening's place is the one in use; a new one from the engine becomes a take.
+        keep_background(p)
+        return current_background(p)
     takes = listing(p, index)
     still = next(iter(placed(p, index, STILLS)), None)
     video = next(iter(placed(p, index, VIDEOS)), None)
@@ -211,6 +218,14 @@ def sync(p: Path, index: int, selection: str | None) -> str | None:
 def place(p: Path, index: int, selection: str | None) -> None:
     """Put the selected take's file in the engine's place; nothing there when it has none yet."""
     takes = listing(p, index)
+    if index == 0:
+        chosen = next((t for t in takes if t["id"] == selection), None)
+        target = p / BACKGROUND
+        if chosen and not (target.is_file() and same(chosen["file"], target)):
+            keep_background(p)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(chosen["file"], target)
+        return
     chosen = next((t for t in takes if t["id"] == selection), None)
     source = chosen["file"] if chosen else None
     target = p / "images" / (stem(index) + source.suffix.lower()) if source else None
@@ -243,7 +258,7 @@ def ready(p: Path, index: int, selection: str | None) -> bool:
     chosen = find(p, index, selection) if selection else None
     if not chosen or not chosen["file"]:
         return False
-    return chosen["kind"] == "still" or motion(p, chosen["dir"])["video_current"]
+    return chosen["kind"] in {"still", "background"} or motion(p, chosen["dir"])["video_current"]
 
 
 def find(p: Path, index: int, take: str) -> dict | None:

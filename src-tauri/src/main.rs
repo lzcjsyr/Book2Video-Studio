@@ -409,9 +409,39 @@ async fn reveal_project_path(
     .await
 }
 
+/// The standard menu, with Quit (⌘Q) closing the window instead of ending the app at once: macOS's own
+/// Quit exits without asking the window, so unsaved edits and running work would get no question.
+fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind};
+    let menu = Menu::default(app)?;
+    for item in menu.items()? {
+        let MenuItemKind::Submenu(submenu) = item else { continue };
+        for entry in submenu.items()? {
+            let MenuItemKind::Predefined(predefined) = entry else { continue };
+            if predefined.text()?.starts_with("Quit") {
+                submenu.remove(&predefined)?;
+                submenu.append(&MenuItem::with_id(app, QUIT_MENU_ID, "Quit Book2Video Studio", true, Some("CmdOrCtrl+Q"))?)?;
+            }
+        }
+    }
+    Ok(menu)
+}
+
+const QUIT_MENU_ID: &str = "studio-quit";
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .menu(app_menu)
+        .on_menu_event(|app, event| {
+            if event.id() == QUIT_MENU_ID {
+                // The window asks about unsaved edits and running work, then closes; the app ends with it.
+                match app.get_webview_window("main") {
+                    Some(window) => { let _ = window.close(); }
+                    None => app.exit(0),
+                }
+            }
+        })
         .manage(Runtime::default())
         .manage(terminal::Terminals::default())
         .invoke_handler(tauri::generate_handler![

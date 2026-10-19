@@ -268,8 +268,31 @@ function smokeTest() {
   console.log("FFprobe:", version("ffprobe", ["-version"]));
 }
 
+// Tauri copies the bundled folders into target/<profile> but never removes what the source no longer has,
+// so a removed prompt or module would still ship. Drop those leftovers (the runtime is pinned and left alone).
+function pruneStaleResources() {
+  for (const profile of ["debug", "release"]) {
+    for (const folder of ["engine", "backend"]) {
+      const copy = path.join(root, "src-tauri/target", profile, folder);
+      if (!fs.existsSync(copy)) continue;
+      const prune = (dir) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+          const staged = path.join(build, folder, path.relative(copy, full));
+          if (!fs.existsSync(staged)) {
+            fs.rmSync(full, { recursive: true, force: true });
+            console.log(`Removed stale ${path.relative(root, full)}`);
+          } else if (entry.isDirectory()) prune(full);
+        }
+      };
+      prune(copy);
+    }
+  }
+}
+
 // The quick, local parts first, so a broken source fails before any download.
 stageEngine();
 stageBackend();
 await stageRuntime();
 smokeTest();
+pruneStaleResources();

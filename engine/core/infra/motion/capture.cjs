@@ -33,7 +33,8 @@ const puppeteer = createRequire(path.join(spec.modules, 'package.json'))('puppet
   const errors = [];
   const report = {success:false, width:spec.width, height:spec.height, fps:spec.fps, frames:0, errors};
   const status = (phase, completed=0, total=0) => {
-    const target=path.join(root,'render-status.json'), temporary=target+'.tmp';
+    // Renders of other pages may share this folder; each writes through its own temporary file.
+    const target=path.join(root,'render-status.json'), temporary=`${target}.${process.pid}.tmp`;
     fs.writeFileSync(temporary,JSON.stringify({phase,completed,total,updatedAt:Date.now()}));fs.renameSync(temporary,target);
   };
   try {

@@ -3,6 +3,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -317,7 +318,7 @@ class ProjectTests(unittest.TestCase):
         return job
     def enable_opening(self):
         state=self.studio.state(self.p);state.setdefault('settings',{})['global']={'opening_quote':True};state['stale']={};self.studio.persist(self.p,state)
-    def test_source_name_edit_reaches_the_script_and_outdates_only_the_opening(self):
+    def test_source_name_edit_reaches_the_script_and_outdates_only_the_assembly(self):
         synced={k:RAW[k] for k in ['source_name','video_titles','cover_titles','cover_subtitles','golden_quotes']}
         atomic_json(self.p/'text/script.json',{**copy.deepcopy(SCRIPT),**synced})
         self.enable_opening()
@@ -326,9 +327,8 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(after['raw']['source_name'],'《新书名》')
         self.assertEqual(after['script']['source_name'],'《新书名》')
         stale=after['state']['stale']
-        # The opening clip shows the name; nothing speaks it, and the segments keep their visuals.
-        self.assertEqual(stale['4'],{'reason':'Source name changed','segments':[0]})
-        self.assertEqual(sorted(stale),['4','5'])
+        # Assembly draws the name under the quote; nothing speaks it, and every visual (the opening's background too) is kept.
+        self.assertEqual(sorted(stale),['5'])
     def test_blank_source_name_does_not_save(self):
         d=self.studio.detail(self.p.name);value=copy.deepcopy(RAW);value['source_name']='  '
         with self.assertRaisesRegex(ValueError,'source name cannot be empty'):
@@ -877,7 +877,13 @@ class PipelineTests(unittest.TestCase):
         atomic_json(self.p/'text/script.json',script)
         for i in [1,2]:
             Image.new('RGB',(320,180),(30*i,80,100)).save(self.p/f'images/segment_{i}.png');recording(self.p/f'voice/voice_{i}.wav')
-        Image.new('RGB',(320,180),(210,45,30)).save(self.p/'images/opening.png'); recording(self.p/'voice/opening.wav')
+        Image.new('RGB',(320,180),(210,45,30)).save(self.p/'images/opening_bg.png'); recording(self.p/'voice/opening.wav')
+        # The opening clip a previous assembly rendered from this background; this one reuses it.
+        import yaml, opening
+        clip=self.p/opening.CLIP;clip.parent.mkdir(parents=True)
+        subprocess.run([shutil.which('ffmpeg'),'-v','error','-f','lavfi','-i','color=c=0xd22d1e:s=320x180:d=2:r=12','-pix_fmt','yuv420p',str(clip)],check=True)
+        motion=yaml.safe_load((ENGINE/'config.example.yaml').read_text())['motion_opening']
+        (self.p/opening.RECORD).write_text(json.dumps({'signature':opening.signature(self.p,motion)}))
         for enabled in [True, False]:
             with self.subTest(opening=enabled):
                 self.run_worker('5',{'global':{'opening_quote':enabled},'step5':{'video_size':'320x180','video_output_fps':12,'video_codec':'h264','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0}})
@@ -887,7 +893,7 @@ class PipelineTests(unittest.TestCase):
                     red, green, blue = video.get_frame(.2)[20,20]
                     self.assertEqual(bool(red > blue), enabled)
                 self.assertTrue((self.p/'voice/opening.wav').exists())
-                self.assertTrue((self.p/'images/opening.png').exists())
+                self.assertTrue((self.p/'images/opening_bg.png').exists())
     def test_three_by_four_copy_is_optional_rebuildable_and_previewable(self):
         from PIL import Image
         atomic_json(self.p/'text/script.json',{**copy.deepcopy(SCRIPT),'cover_titles':['封面'],'golden_quotes':['开场金句']})
@@ -998,23 +1004,25 @@ class MotionRenderTests(unittest.TestCase):
         payload=calls[0][1];self.assertEqual(payload['durationSeconds'],1.0);self.assertEqual(payload['content'],script['segments'][0]['content'])
         # The clip keeps its own video; the still in the engine's place is left to Studio.
         self.assertEqual((work/'video.mp4').read_bytes(),b'rendered media');self.assertEqual((self.p/'images/segment_1.png').read_bytes(),b'previous image')
-    def test_the_opening_is_rendered_over_the_chosen_background(self):
+    def test_assembly_renders_the_opening_over_the_chosen_background_and_reuses_it(self):
         from unittest.mock import patch
-        import runner
+        import opening
         if str(ENGINE) not in sys.path:sys.path.insert(0,str(ENGINE))
-        chosen=self.p/'images/takes/opening/background-20260101-000000-000-abcd.png';chosen.parent.mkdir(parents=True)
-        chosen.write_bytes(b'older background');(self.p/'images/opening_bg.png').write_bytes(b'newest background')
-        atomic_json(self.p/'text/script.json',copy.deepcopy(SCRIPT))
-        calls={}
+        (self.p/'images/opening_bg.png').write_bytes(b'chosen background')
+        atomic_json(self.p/'text/script.json',{**copy.deepcopy(SCRIPT),'golden_quotes':['开场金句']})
+        calls=[]
         def render(**kwargs):
-            calls.update(kwargs);(self.p/'images/opening.mp4').write_bytes(b'opening video');return str(self.p/'images/opening.mp4')
-        original=Path.cwd()
-        try:
-            with patch('core.infra.motion.opening_renderer.render_opening_video',side_effect=render):
-                result=runner.run({'engine':str(ENGINE),'project':str(self.p),'step':'4','mode':'opening_render','background':str(chosen),'settings':{}})
-        finally:os.chdir(original)
-        self.assertTrue(result['success']);self.assertEqual(calls['opening_bg_path'],str(self.p/'images/opening_bg.png'))
-        self.assertEqual((self.p/'images/opening_bg.png').read_bytes(),b'older background')
+            calls.append(kwargs);target=Path(kwargs['output_dir'])/'opening.mp4';target.write_bytes(b'opening video');return str(target)
+        motion={'duration_seconds':5.0}
+        with patch('core.infra.motion.opening_renderer.render_opening_video',side_effect=render):
+            for _ in range(2):self.assertEqual(opening.ensure(self.p,motion,'1280x720'),self.p/opening.CLIP)
+            # A new background, or other opening timing, makes the next assembly render it again.
+            (self.p/'images/opening_bg.png').write_bytes(b'another background');opening.ensure(self.p,motion,'1280x720')
+            opening.ensure(self.p,{'duration_seconds':4.0},'1280x720')
+        self.assertEqual(len(calls),3);self.assertEqual(calls[0]['opening_bg_path'],str(self.p/'images/opening_bg.png'))
+        self.assertEqual(Path(calls[0]['output_dir']),self.p/'.studio/opening')
+        # Visuals' outputs stay as they were: the clip is assembly's working file.
+        self.assertFalse((self.p/'images/opening.mp4').exists())
     def test_a_clip_without_a_composition_is_refused(self):
         import runner
         script=copy.deepcopy(SCRIPT);script['segments'][0]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
@@ -1260,12 +1268,12 @@ class SegmentTakeTests(unittest.TestCase):
         # Revision history brings it back.
         restored=self.studio.restore(self.p.name,{'revision':event['id']})
         self.assertIn(work.name,[t['id'] for t in restored['segments'][0]['takes']])
-    def test_the_version_in_use_and_the_current_background_cannot_be_deleted(self):
+    def test_the_version_in_use_and_the_opening_background_in_use_cannot_be_deleted(self):
         still=self.takes()[0]['id']
         with self.assertRaisesRegex(Conflict,'in use'):self.studio.delete_take(self.p.name,{'index':1,'take':still})
         (self.p/'images/opening_bg.png').write_bytes(b'background')
         background=next(t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background')
-        with self.assertRaisesRegex(Conflict,'next opening'):self.studio.delete_take(self.p.name,{'index':0,'take':background['id']})
+        with self.assertRaisesRegex(Conflict,'in use'):self.studio.delete_take(self.p.name,{'index':0,'take':background['id']})
         with self.assertRaisesRegex(ValueError,'no longer in the project'):self.studio.delete_take(self.p.name,{'index':1,'take':'still-19990101-000000-000-dead'})
         work=self.clip(video=b'video')
         state=self.studio.state(self.p);state['agent_active']={'step':'4','indices':[1]};self.studio.persist(self.p,state)
@@ -1346,44 +1354,31 @@ class SegmentTakeTests(unittest.TestCase):
         state['agent_active']={'step':'4','indices':[1],'launch':'x','owner':999999,'raw_before':'','takes':{'1':empty.name},'created':[1],'previous':{'1':still}};self.studio.persist(self.p,state)
         self.open()
         self.assertFalse(empty.exists());self.assertEqual(self.studio.state(self.p)['takes']['1'],still)
-    def test_a_rendered_opening_shows_a_frame_of_its_video(self):
-        import shutil as tools
-        if not tools.which('ffmpeg'):self.skipTest('FFmpeg is not on PATH')
-        subprocess.run([tools.which('ffmpeg'),'-v','error','-f','lavfi','-i','color=c=orange:s=320x180:d=2','-pix_fmt','yuv420p',str(self.p/'images/opening.mp4')],check=True)
-        opening=self.studio.detail(self.p.name)['opening']
-        self.assertEqual(opening['visual'],'images/opening.mp4');self.assertTrue(opening['poster'].endswith('/poster.jpg'))
-        self.assertTrue((self.p/opening['poster']).stat().st_size>0)
-        # Made once: later views reuse the saved frame.
-        made=(self.p/opening['poster']).stat().st_mtime_ns
-        self.assertEqual((self.p/self.studio.detail(self.p.name)['opening']['poster']).stat().st_mtime_ns,made)
-    def test_every_opening_background_is_kept_and_the_current_one_marked(self):
+    def test_every_opening_background_is_kept_and_the_newest_is_used(self):
         (self.p/'images/opening_bg.png').write_bytes(b'first background');os.utime(self.p/'images/opening_bg.png',(1000,1000))
-        first=[t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background']
+        first=self.studio.detail(self.p.name)['opening']
         (self.p/'images/opening_bg.png').write_bytes(b'second background')
-        backgrounds=[t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background']
-        self.assertEqual(len(first),1);self.assertEqual(len(backgrounds),2)
-        self.assertEqual([t['current'] for t in backgrounds],[False,True])
-        # A background is never put in the engine's place as the opening itself.
-        self.assertFalse((self.p/'images/opening.png').exists());self.assertIsNone(self.studio.detail(self.p.name)['opening']['take'])
-    def test_rendering_the_opening_with_a_kept_background(self):
-        from unittest.mock import patch
-        (self.p/'images/opening_bg.png').write_bytes(b'background')
-        background=next(t for t in self.studio.detail(self.p.name)['opening']['takes'] if t['kind']=='background')
-        with patch('server.subprocess.Popen') as spawn, patch('server.threading.Thread'):
-            job=self.studio.run_job(self.p.name,{'step':'4','mode':'opening_render','take':background['id']})
-            request=json.loads(spawn.call_args.args[0][-1])
-        self.studio.jobs.clear()
-        self.assertTrue(job['opening']);self.assertEqual(job['scope'],[]);self.assertFalse(request['summary'])
-        self.assertEqual(request['background'],str(self.p/background['path']))
-        with self.assertRaisesRegex(ValueError,'no longer in the project'):
-            self.studio.run_job(self.p.name,{'step':'4','mode':'opening_render','take':'background-19990101-000000-000-dead'})
-    def test_the_opening_keeps_its_images_too(self):
-        (self.p/'images/opening.png').write_bytes(b'first opening');first=self.studio.detail(self.p.name)['opening']['take']
-        (self.p/'images/opening.png').write_bytes(b'second opening')
         opening=self.studio.detail(self.p.name)['opening']
-        self.assertEqual(len(opening['takes']),2);self.assertNotEqual(opening['take'],first)
-        self.select(first,index=0)
-        self.assertEqual((self.p/'images/opening.png').read_bytes(),b'first opening')
+        self.assertEqual([t['kind'] for t in opening['takes']],['background','background'])
+        self.assertEqual(opening['take'],opening['takes'][1]['id']);self.assertEqual(opening['visual'],'images/opening_bg.png')
+        self.assertEqual(opening['poster'],opening['takes'][1]['path']);self.assertEqual(first['take'],first['takes'][0]['id'])
+    def test_choosing_a_kept_background_places_it_without_a_render(self):
+        (self.p/'images/opening_bg.png').write_bytes(b'first background');os.utime(self.p/'images/opening_bg.png',(1000,1000))
+        first=self.studio.detail(self.p.name)['opening']['take']
+        (self.p/'images/opening_bg.png').write_bytes(b'second background');self.studio.detail(self.p.name)
+        state=self.studio.state(self.p);state['stale']={};self.studio.persist(self.p,state)
+        after=self.select(first,index=0)
+        self.assertEqual((self.p/'images/opening_bg.png').read_bytes(),b'first background');self.assertEqual(after['opening']['take'],first)
+        self.assertEqual(self.studio.jobs,{});self.assertIn('5',after['state']['stale'])
+        self.assertEqual(len(after['opening']['takes']),2)
+    def test_an_earlier_rendered_opening_is_not_a_version_of_the_opening(self):
+        # Projects from before Assembly rendered the opening keep their clips, but the opening's visual is its background.
+        (self.p/'images/opening_bg.png').write_bytes(b'background')
+        old=self.p/'images/takes/opening/motion-20260101-000000-000-abcd';old.mkdir(parents=True);(old/'video.mp4').write_bytes(b'old clip')
+        (self.p/'images/opening.mp4').write_bytes(b'old clip')
+        opening=self.studio.detail(self.p.name)['opening']
+        self.assertEqual([t['kind'] for t in opening['takes']],['background']);self.assertEqual(opening['visual'],'images/opening_bg.png')
+        self.assertTrue(old.is_dir());self.assertTrue((self.p/'images/opening.mp4').is_file())
 
 class WorkspaceTests(unittest.TestCase):
     """Projects live in the workspace folder or at any location picked at creation."""

@@ -1,5 +1,5 @@
 import { Check, Clapperboard, Image, ListPlus, ListX, Loader2, Maximize2, Plus, Sparkles, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useI18n } from "../i18n";
 import { media } from "../api";
 import { clipState, clipStateLabel, numbers } from "../takes";
@@ -16,8 +16,8 @@ export interface PickerAnchor {
 const WIDTH = 456;
 
 /**
- * Every still image and motion clip of one part of the video. The one in use is marked; choosing
- * a still uses it, choosing a clip uses it and opens its preview.
+ * Every still image and motion clip of one part of the video (the opening: its backgrounds). The one in
+ * use is marked; choosing a still or background uses it, choosing a clip uses it and opens its preview.
  */
 export default function TakePicker({
   project,
@@ -29,7 +29,6 @@ export default function TakePicker({
   opening,
   locked,
   lockReason,
-  renderLock,
   generating,
   newImageLock,
   queue,
@@ -39,7 +38,6 @@ export default function TakePicker({
   onOpenClip,
   onNewImage,
   onNewClip,
-  onUseBackground,
   onDelete,
   deleteLock,
   onClose,
@@ -50,12 +48,10 @@ export default function TakePicker({
   takes: Take[];
   selected: string | null;
   version: number;
-  /** The opening: a clip of the quote over a background; its clips are rendered, not designed by Claude Code. */
+  /** The opening: its versions are backgrounds; Assembly draws the quote over the one in use. */
   opening: boolean;
   locked: boolean;
   lockReason: string;
-  /** Why a new opening cannot be rendered now, or "". */
-  renderLock: string;
   generating: boolean;
   /** Why a new image cannot be made or queued now, or "". */
   newImageLock: string;
@@ -67,16 +63,13 @@ export default function TakePicker({
   onOpenClip: (take: Take) => void;
   onNewImage: () => void;
   onNewClip: () => void;
-  onUseBackground: (take: Take) => void;
-  /** Delete a version that is neither in use nor the opening's current background. */
+  /** Delete a version that is not in use. */
   onDelete: (take: Take) => void;
   deleteLock: string;
   onClose: () => void;
 }) {
   const { t, locale } = useI18n();
   const box = useRef<HTMLDivElement>(null);
-  // Rendering a new opening is a real job, so a background asks before it starts one.
-  const [asking, setAsking] = useState<string | null>(null);
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     // A press outside closes the list; the thumbnail that opened it reopens it on its own click.
@@ -106,28 +99,26 @@ export default function TakePicker({
       : { left, top: anchor.rect.bottom + 6, maxHeight: window.innerHeight - anchor.rect.bottom - 20 };
 
   function tile(take: Take) {
-    const background = take.kind === "background";
-    // A background is never the visual itself; the one the opening renders with is "current".
-    const inUse = background ? Boolean(take.current) : take.id === selected;
+    const inUse = take.id === selected;
     const state = take.kind === "motion" ? clipState(take.motion) : null;
     const name = t({ still: "Image {index}", motion: "Clip {index}", background: "Background {index}" }[take.kind], { index: number.get(take.id)! });
-    // Click uses a version; double-click also opens it: an image is used and the list closes, a clip opens its preview.
-    const blocked = background ? renderLock : locked ? lockReason : "";
+    // Click uses a version; double-click also opens it: an image or background is used and the list closes, a clip opens its preview.
+    const blocked = locked ? lockReason : "";
     const hint = {
       still: "Click to use this image · double-click to use it and close",
       motion: "Click to use this clip · double-click to preview it",
-      background: "Render a new opening with this background",
+      background: "Click to use this background · double-click to use it and close",
     }[take.kind];
     return (
       <li key={take.id}>
         <button className={`take-tile${inUse ? " in-use" : ""}`} aria-pressed={inUse} disabled={Boolean(blocked)}
           title={t(blocked || hint)}
-          onClick={() => (background ? setAsking(take.id) : onSelect(take))}
-          onDoubleClick={() => (take.kind === "still" ? onClose() : take.kind === "motion" ? onOpenClip(take) : undefined)}>
+          onClick={() => onSelect(take)}
+          onDoubleClick={() => (take.kind === "motion" ? onOpenClip(take) : onClose())}>
           <span className="take-thumb">
             {take.poster ? <img loading="lazy" src={media(project, take.poster, version)} alt="" />
               : <span className="take-thumb-empty">{take.kind === "motion" ? <Clapperboard size={16} /> : <Image size={16} />}</span>}
-            {inUse && <span className="take-in-use"><Check size={11} strokeWidth={3} /> {t(background ? "Current" : "In use")}</span>}
+            {inUse && <span className="take-in-use"><Check size={11} strokeWidth={3} /> {t("In use")}</span>}
             {state && <span className={`take-state ${state}`}>{t(clipStateLabel[state])}</span>}
           </span>
           <span className="take-caption">
@@ -144,15 +135,6 @@ export default function TakePicker({
           )}
           {!inUse && <DeleteControl item={name} blocked={deleteLock} onDelete={() => onDelete(take)} />}
         </div>
-        {asking === take.id && (
-          <div className="delete-confirm render-confirm" role="group" aria-label={t("Render a new opening with {item}?", { item: name })}>
-            <span>{t("Render a new opening with {item}?", { item: name })}</span>
-            <div>
-              <button className="button small primary" onClick={() => { setAsking(null); onUseBackground(take); }}>{t("Render")}</button>
-              <button className="button small" onClick={() => setAsking(null)}>{t("Cancel")}</button>
-            </div>
-          </div>
-        )}
       </li>
     );
   }
@@ -164,7 +146,7 @@ export default function TakePicker({
         <div>
           <strong>{label}</strong>
           <span>{t(opening
-            ? "The opening is the quote rendered over a background. Choose a clip to use it, or a background to render a new clip with it."
+            ? "Choose the opening's background. Assembly draws the opening quote over it. Every version is kept."
             : "Choose the visual this part uses. Every version is kept.")}</span>
         </div>
         <button className="icon-button" aria-label={t("Close")} onClick={onClose}><X size={15} /></button>
@@ -174,21 +156,21 @@ export default function TakePicker({
           <section>
             <h4><Image size={12} /> {t("Backgrounds")} <span>{backgrounds.length}</span></h4>
             {backgrounds.length ? <ul className="take-grid">{backgrounds.map(tile)}</ul>
-              : <p className="take-empty">{t("No backgrounds yet. New opening generates one.")}</p>}
+              : <p className="take-empty">{t("No backgrounds yet. New background generates one.")}</p>}
           </section>
         )}
-        {(!opening || stills.length > 0) && (
+        {!opening && <>
           <section>
             <h4><Image size={12} /> {t("Images")} <span>{stills.length}</span></h4>
             {stills.length ? <ul className="take-grid">{stills.map(tile)}</ul>
               : <p className="take-empty">{t("No images yet.")}</p>}
           </section>
-        )}
-        <section>
-          <h4><Clapperboard size={12} /> {t(opening ? "Opening clips" : "Motion clips")} <span>{clips.length}</span></h4>
-          {clips.length ? <ul className="take-grid">{clips.map(tile)}</ul>
-            : <p className="take-empty">{t(opening ? "No opening clips yet." : "No motion clips yet. Claude Code designs them with HTML / Three.js.")}</p>}
-        </section>
+          <section>
+            <h4><Clapperboard size={12} /> {t("Motion clips")} <span>{clips.length}</span></h4>
+            {clips.length ? <ul className="take-grid">{clips.map(tile)}</ul>
+              : <p className="take-empty">{t("No motion clips yet. Claude Code designs them with HTML / Three.js.")}</p>}
+          </section>
+        </>}
       </div>
       <div className="take-picker-actions">
         <button className="button small" disabled={Boolean(newImageLock)} aria-pressed={queue === "queued" || undefined}

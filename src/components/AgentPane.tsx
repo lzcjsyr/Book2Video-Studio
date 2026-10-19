@@ -202,7 +202,7 @@ export default function AgentPane({
             <p>
               {t(
                 step === "5"
-                  ? "Your recordings, visuals and editing skill are prepared. Direct Claude Code to polish the video here."
+                  ? "Claude Code starts editing the whole video, opening included, as soon as it opens. Guide it here at any time."
                   : step === "6"
                   ? "Your cover copy, sizes and style are prepared. Direct Claude Code to design covers in HTML and Three.js here."
                   : step === "1" && noWritingSkill

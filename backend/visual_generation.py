@@ -89,7 +89,7 @@ def run(request, params, steps, call):
 
     processed, failed, errors = [], [], []
     opening_done = False
-    # One image pipeline owns the opening and the image pool, so the provider cap also covers the opening.
+    # One image pipeline owns the opening background and the image pool, so the provider cap covers both.
     if images or request.get("opening"):
         from runner import check_image_model
         check_image_model(params["image_server"], params["image_model"])
@@ -104,7 +104,7 @@ def run(request, params, steps, call):
                 failed_images = set(images)
             processed.extend(i for i in images if i not in failed_images)
             failed.extend(sorted(failed_images))
-            opening_done = bool(request.get("opening") and result.get("opening_image_path"))
+            opening_done = bool(request.get("opening") and result.get("opening_generated"))
             if not result.get("success"):
                 errors.append(result.get("message", "Image generation failed."))
         except Exception as exc:
@@ -125,4 +125,4 @@ def run(request, params, steps, call):
     success = not failed and not errors and (not request.get("opening") or opening_done)
     return {"success": success, "processed_segments": sorted(processed), "failed_segments": sorted(failed),
             "opening_generated": opening_done,
-            "message": f"Generated {len(processed)} segment(s)." if success else " ".join(errors) or "The opening could not be generated."}
+            "message": f"Generated {len(processed)} segment(s)." if success else " ".join(errors) or "The opening background could not be generated."}

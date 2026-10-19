@@ -68,7 +68,7 @@ import MetadataCandidates, {
 import LibraryPanel from "./components/LibraryPanel";
 import BrandMark from "./components/BrandMark";
 import WritingSetup from "./components/WritingSetup";
-import VisualDirection from "./components/VisualDirection";
+import VisualDirection, { type DirectionHandle } from "./components/VisualDirection";
 import VisualImageControls from "./components/VisualImageControls";
 import CoverSetup from "./components/CoverSetup";
 import AssemblyEditing from "./components/AssemblyEditing";
@@ -137,7 +137,7 @@ const projectDestination = (location: string, name: string) => {
   return base + separator + (title || "Untitled");
 };
 
-export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject, onNewTab, mayRemove, onRemoved }: {
+export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpenProject, onNewTab, mayRemove, onRemoved }: {
   tab: ProjectTab;
   active: boolean;
   onStatus: (key: string, status: WorkspaceStatus) => void;
@@ -145,6 +145,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
   onNewTab: (create?: boolean) => void;
   mayRemove: (ids: string[]) => string;
   onRemoved: (ids: string[]) => void;
+  /** Registers this tab's "save every edit" action for closing questions; null when the tab goes away. */
+  onSaver: (key: string, save: (() => Promise<boolean>) | null) => void;
 }) {
   const { t, locale } = useI18n();
   const uid = useId(), shell = useRef<HTMLDivElement>(null);
@@ -251,10 +253,17 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
   const closeReason = hasDraft ? "Save your edits before closing this project tab."
     : activeAgent ? "Finish the Claude Code session before closing this project tab."
     : busy ? "Wait for the current action before closing this project tab." : "";
+  // What a closing question lists: edits Save can store, and an open editor it cannot (one per line).
+  const unsavedItems = [
+    dirty && (draftKind === "raw" ? "Manuscript" : step === "2" ? "Segments" : "Narration"),
+    writingPending && "Writing setup",
+    directionDirty && "Content summary",
+  ].filter(Boolean).join("\n");
+  const manualItem = modalDirty ? (modal === "settings" ? "Settings" : "Skills & templates") : "";
   useEffect(() => {
     onStatus(tab.key, { projectId: detail?.id, title: projectTitle, dirty: hasDraft,
-      running: Boolean(runningJobs.length || activeAgent), closeReason });
-  }, [tab.key, detail?.id, projectTitle, hasDraft, runningJobs.length, activeAgent, closeReason, onStatus]);
+      running: Boolean(runningJobs.length || activeAgent), closeReason, unsaved: unsavedItems, manual: manualItem });
+  }, [tab.key, detail?.id, projectTitle, hasDraft, runningJobs.length, activeAgent, closeReason, unsavedItems, manualItem, onStatus]);
   useEffect(() => {
     if (!active) {
       shell.current?.querySelectorAll<HTMLMediaElement>("audio,video").forEach(media => media.pause());
@@ -406,12 +415,15 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
     }, 4000);
     return () => clearInterval(timer);
   }, [bootstrap]);
+  /** Run a change with the busy state; failures become a notice. True when it completed. */
   async function action(fn: () => Promise<void>) {
     setBusy(true);
     try {
       await fn();
+      return true;
     } catch (e) {
       notice(String(e));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -466,8 +478,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
       .map((s) => s.index);
   }
   async function save() {
-    if (!detail) return;
-    await action(async () => {
+    if (!detail) return false;
+    return action(async () => {
       const updated = await api<Detail>(projectRoute(detail.id) + "/save", {
         kind: draftKind,
         value: draft,
@@ -480,6 +492,24 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
       notice("Saved. Affected outputs are marked for generation.");
     });
   }
+  const directionHandle = useRef<DirectionHandle>(null);
+  /** Save every edit in this tab, as a closing question's Save does. False when one could not be saved. */
+  async function saveEverything() {
+    if (modalDirty) {
+      notice(modal === "settings" ? "Save or close Settings in this project, then close again." : "Save or close Skills & templates in this project, then close again.");
+      return false;
+    }
+    if (writingPending && !(await action(() => saveWriting()))) return false;
+    if (directionDirty && !(await directionHandle.current?.save())) return false;
+    if (dirty && !(await save())) return false;
+    return true;
+  }
+  const saver = useRef(saveEverything);
+  saver.current = saveEverything;
+  useEffect(() => {
+    onSaver(tab.key, () => saver.current());
+    return () => onSaver(tab.key, null);
+  }, [tab.key, onSaver]);
   const segment = detail?.segments.find((s) => s.index === selected),
     scriptSegment = (
       draftKind === "script" ? draft.segments : detail?.script.segments
@@ -553,6 +583,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
   const step5Settings = effectiveSettings("step5"),
     panelSettings = effectiveSettings("three_by_four");
   const portraitEnabled = panelSettings.enabled !== false;
+  // Assembly renders the opening clip from the quote and the background chosen in Visuals.
+  const openingStatus = { enabled: openingEnabled, rendered: Boolean(detail?.opening.clip) };
   const landscapeFile = detail?.exports.includes("final_video.mp4") ? "final_video.mp4" : null,
     portraitFile = detail?.exports.includes("final_video_3x4.mp4") ? "final_video_3x4.mp4" : null;
   const assemblyStale = Boolean(detail?.state.stale["5"]),
@@ -755,14 +787,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
     return saved;
   }
   const saveCoverSetting = (key: string, value: string | number | string[]) => saveSettings("step6", { [key]: value });
-  async function startEditingJob(mode: "edit_render" | "edit_preview") {
-    if (!detail) return;
-    await action(async () => {
-      const job = await api<Job>(projectRoute(detail.id) + "/job", { step: "5", mode });
-      setJobs((jobs) => [...jobs, job]);
-      notice(mode === "edit_preview" ? "Rendering an editing preview…" : "Rendering the polished video from the saved edit…");
-    });
-  }
   /** Redraw only the 3:4 copy around the current 16:9 video. */
   async function buildPortrait() {
     if (!detail) return;
@@ -825,11 +849,11 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
   }
   async function startVisualJob(body: { mode: string; batch?: string; indices?: number[]; opening?: boolean; take?: string; visualizer?: "hf" }, message: string) {
     if (!detail) return;
-    // Rendering (a saved composition, or the opening over a kept background) runs locally and needs no provider key.
+    // Rendering a saved composition runs locally and needs no provider key.
     const needs: NeedId[] = body.visualizer === "hf"
       ? ["motion_agent", ...(!String(detail.summary.summary || "").trim() || detail.state.summary_stale ? ["direction" as const] : [])]
       : body.mode === "summary" ? ["direction"] : visualNeeds();
-    if (!["render", "opening_render"].includes(body.mode) && !keysReady(needs)) return;
+    if (body.mode !== "render" && !keysReady(needs)) return;
     await action(async () => {
       if (unsaved) throw new Error(t("Save changes before generating."));
       const job = await api<Job>(projectRoute(detail.id) + "/job", { step: "4", ...body });
@@ -896,7 +920,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
     setPicker(null);
     // While a job runs, the image waits in the queue instead.
     if (activeJob || queuedJob) queueImage(index);
-    else if (index === 0) startVisualJob({ mode: "opening", opening: true, indices: [] }, "Generating a new opening.");
+    else if (index === 0) startVisualJob({ mode: "opening", opening: true, indices: [] }, "Generating a new opening background.");
     else startVisualJob({ mode: "static", indices: [index] }, `Generating a new image for segment ${index}.`);
   }
   /** Add a part's new image to the queue, or take it out again. */
@@ -1512,9 +1536,11 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
                     {step === "5" && <AssemblyEditing settings={step5Settings} edit={detail.assembly_edit} library={bootstrap?.library}
                       active={detail.state.agent_active?.step === "5"} locked={busy || unsaved || Boolean(activeJob) || (activeAgent && detail.state.agent_active?.step !== "5")}
                       onChange={(patch) => saveSettings("step5", patch)} onDesign={(revise) => activateFor(undefined, undefined, revise)}
-                      onFinish={() => agentHandle.current?.stop()} onLibrary={() => openLibrary("assembly_skills")}
-                      mediaUrl={(path) => media(detail.id, path, version)}
-                      onPreview={() => startEditingJob("edit_preview")} onRender={() => startEditingJob("edit_render")} />}
+                      onFinish={() => agentHandle.current?.stop()} onLibrary={() => openLibrary("assembly_skills")}>
+                      {assemblyAgent && <AssemblySetup key={detail.id} variant="brief" step5={step5Settings} panels={panelSettings}
+                        music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []} copy={coverCopy} opening={openingStatus}
+                        disabled={busy || Boolean(activeJob) || activeAgent} musicUrl={musicUrl} onChange={saveSettings} onAddMusic={addMusic} />}
+                    </AssemblyEditing>}
                     {step === "6" && <>
                       <CoverSetup key={detail.id} settings={keySettings.step6 || {}} library={bootstrap?.library}
                         disabled={busy || activeAgent || Boolean(activeJob)} copy={coverCopy}
@@ -1549,7 +1575,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
                       </section>}
                     </>}
                     {step === "4" && <>
-                      <VisualDirection key={detail.id} summary={String(detail.summary.summary || "")}
+                      <VisualDirection key={detail.id} handle={directionHandle} summary={String(detail.summary.summary || "")}
                         hash={detail.hashes.summary} outdated={Boolean(detail.state.summary_stale)}
                         disabled={busy || activeAgent || Boolean(activeJob)} onSave={saveDirection}
                         generating={Boolean(activeJob?.mode === "summary")} generationBlocked={unsaved}
@@ -1622,7 +1648,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
                                   count: detail.covers.length,
                                 })
                               : selected === 0
-                                ? t("Opening quote")
+                                ? t(step === "4" ? "Background · Assembly adds the quote" : "Opening quote")
                                 : step === "3"
                                   ? t("Recording")
                                   : visualLabel}
@@ -1825,6 +1851,9 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
                       {motionPreview?.note && previewMedia && (
                         <span className="preview-note">{motionPreview.note}</span>
                       )}
+                      {step === "4" && selected === 0 && previewMedia && (
+                        <span className="preview-note">{t("Opening background · Assembly draws the opening quote over it")}</span>
+                      )}
                       {showingLayout && previewMedia && (
                         <span className="preview-note">
                           {layoutBusy && <Loader2 size={11} className="spin" />}
@@ -1853,10 +1882,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
                               : t("Estimated")}
                       </span>
                     </div>
-                        {step === "5" && assemblyAgent && <details className="agent-assembly-settings"><summary>{t("Assembly setup")}</summary>
-                      <AssemblySetup key={detail.id} step5={step5Settings} panels={panelSettings} music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []}
-                        copy={coverCopy} disabled={Boolean(activeJob) || activeAgent} musicUrl={musicUrl} onChange={saveSettings} onAddMusic={addMusic} />
-                    </details>}
                     {["3", "4"].includes(step) && (
                       <div className="narration-inspector">
                         <div className="narration-heading">
@@ -2005,7 +2030,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
         </main>
         {detail && step === "5" && !assemblyAgent && <aside className="cover-inspector" aria-label={t("Assembly setup")}>
           <AssemblySetup key={detail.id} step5={step5Settings} panels={panelSettings}
-            music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []} copy={coverCopy}
+            music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []} copy={coverCopy} opening={openingStatus}
             disabled={Boolean(activeJob) || activeAgent} musicUrl={musicUrl}
             onChange={saveSettings} onAddMusic={addMusic} />
         </aside>}
@@ -2120,18 +2145,17 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
         <TakePicker key={picker.index} project={detail.id} anchor={picker} label={partName(picker.index)}
           takes={takesOf(picker.index)} selected={takeOf(picker.index)} version={version}
           opening={picker.index === 0} locked={Boolean(takeLock(picker.index))} lockReason={takeLock(picker.index)}
-          renderLock={makeLock()}
-          generating={jobCovers("static") || jobCovers("opening") || jobCovers("opening_render")}
+          generating={jobCovers("static") || jobCovers("opening")}
           newImageLock={imageLock()}
           queue={queuedParts.includes(picker.index) ? "queued" : activeJob || queuedJob ? "add" : ""}
           newImageLabel={queuedParts.includes(picker.index) ? "Remove from queue"
-            : activeJob || queuedJob ? (picker.index === 0 ? "Queue new opening" : "Queue new image")
-            : picker.index === 0 ? "New opening" : "New image"}
+            : activeJob || queuedJob ? (picker.index === 0 ? "Queue new background" : "Queue new image")
+            : picker.index === 0 ? "New background" : "New image"}
           newImageHint={queuedParts.includes(picker.index)
             ? "Queued: a new image starts when the running job finishes. Click to take it out of the queue"
             : activeJob || queuedJob ? "Starts when the running job finishes; every queued image is generated together"
             : picker.index === 0
-            ? "Renders a new opening from a new background image; earlier openings are kept"
+            ? "Generates a new background for the opening; earlier backgrounds are kept"
             : "Generated by the image service, guided by the content summary"}
           onSelect={(take) => selectTake(picker.index, take)}
           onOpenClip={(take) => openClip(picker.index, take)}
@@ -2143,11 +2167,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onOpenProject,
           onNewClip={() => (makeLock() ? notice(makeLock()) : newClip(picker.index))}
           deleteLock={takeLock(picker.index) === "Save your narration edit first." ? "" : takeLock(picker.index)}
           onDelete={(take) => deleteTake(picker.index, take)}
-          onUseBackground={(take) => {
-            setPicker(null);
-            startVisualJob({ mode: "opening_render", take: take.id },
-              `Rendering a new opening with background ${numbers(detail.opening.takes).get(take.id)}…`);
-          }}
           onClose={closePicker} />
       )}
       {detail && step === "4" && clipView && (() => {

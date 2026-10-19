@@ -49,14 +49,12 @@ PROMPTS = {
     "step4_studio.md": ("Visuals Studio instructions", True, {"agent_prompt", "segment_index", "work_dir", "snapshots_dir", "segment_count", "task_number", "target_path", "tasks", "segments"}),
     "step4_skill_context.md": ("Motion reference instructions", True, {"skills_root", "reference_limit", "recipe_paths", "reference_paths", "skill_entries"}),
     "step4_style_context.md": ("Motion style instructions", True, {"style_id", "label", "official_style", "palette", "best_for", "style_definition", "palette_definition", "references"}),
-    "step5_editing_agent.md": ("Claude Code assembly template", True, {"skill_path", "work_dir", "contract_path", "motion_skills_dir"}),
-    "step5_editing_contract.md": ("Assembly editing contract", None, set()),
+    "step5_editing_agent.md": ("Claude Code assembly template", None, {"style", "skill_path", "materials", "video_size", "narration_speed", "subtitles", "music", "opening", "session", "work_dir", "delivery"}),
 }
 TEXT_EXTENSIONS = {".md", ".txt", ".yaml", ".yml", ".json", ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".toml"}
 TEMPLATE_SECTIONS = {
     "step1_studio.md": {"direct", "shared"},
     "step4_studio.md": {"segment", "new", "single", "multi", "target", "task", "finish"},
-    "step5_editing_agent.md": {"main", "invalid"},
     "step6_cover_agent.md": {"main", "revise"},
 }
 MAX_TEXT = 2_000_000
@@ -346,6 +344,22 @@ class Library:
         event = {"id": event_id, "group": group, "item": item_id, "time": datetime.now().isoformat(),
                  "target": path.relative_to(self.root).as_posix(), "kind": kind, "before_exists": path.exists(), "after_hash": None}
         return event, backup
+
+    def retire_invalid(self, item_id, bundled):
+        """Replace an edited template the app can no longer use (it fails the current variable and section
+        rules) with the bundled one. The edited text stays in revision history, to restore or copy from."""
+        path = self.confined(self.root / "prompts" / item_id)
+        if not path.is_file():
+            return False
+        try:
+            self.validate("templates", item_id, path.read_text(encoding="utf-8", errors="replace"))
+            return False
+        except ValueError:
+            pass
+        event, _ = self.snapshot("templates", item_id, path)
+        write_bytes(path, bundled.read_bytes())
+        self.record(event, path)
+        return True
 
     def record(self, event, path):
         event["after_hash"] = digest(path)

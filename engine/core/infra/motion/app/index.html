@@ -375,6 +375,9 @@
     const width = parseInt(vars.width || 2560);
     const height = parseInt(vars.height || 1440);
     const durationSeconds = parseFloat(vars.durationSeconds || 4);
+    // The layout is authored at width × height; a page of another size scales it to fit.
+    const outputWidth = parseInt(vars.outputWidth || width);
+    const outputHeight = parseInt(vars.outputHeight || height);
 
     // 2. 动态自适应尺寸计算 (完全还原 Remotion 的适应性逻辑)
     const lineCount = Math.max(quoteLines.length, 1);
@@ -403,11 +406,15 @@
     }
     root.style.width = width + "px";
     root.style.height = height + "px";
+    if (outputWidth !== width || outputHeight !== height) {
+      root.style.transformOrigin = "0 0";
+      root.style.transform = `scale(${outputWidth / width}, ${outputHeight / height})`;
+    }
 
-    document.documentElement.style.width = width + "px";
-    document.documentElement.style.height = height + "px";
-    document.body.style.width = width + "px";
-    document.body.style.height = height + "px";
+    document.documentElement.style.width = outputWidth + "px";
+    document.documentElement.style.height = outputHeight + "px";
+    document.body.style.width = outputWidth + "px";
+    document.body.style.height = outputHeight + "px";
 
     document.querySelector(".ip-name").textContent = ipName;
     // Without a channel name the badge stays out of the frame; the layout does not move.
@@ -582,7 +589,7 @@
     }, lastLineAppearTime + 0.55);
 
     // 注册主时间轴
-    window.clip = {width, height, durationSeconds,
+    window.clip = {width: outputWidth, height: outputHeight, durationSeconds,
       ready: document.fonts.ready,
       renderAt(t) { tl.totalTime(t, false); }
     };

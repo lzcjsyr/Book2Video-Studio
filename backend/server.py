@@ -25,6 +25,7 @@ from library import Library, LibraryConflict, install_bundled
 import takes
 import covers as cover_designs
 import editing
+import opening
 import exports
 
 STAGES = ["1", "2", "3", "4", "5", "6"]
@@ -34,7 +35,7 @@ ENGINE_SECTIONS = {"step2": "step1_5", "step4_summary": "step2"}
 DESKTOP_SECTIONS = {engine: desktop for desktop, engine in ENGINE_SECTIONS.items()}
 SETTINGS_SECTIONS = {"global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "motion_opening"}
 # Which service or model makes the next output. Changing one leaves finished work current.
-PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill"}
+PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill", "agent_music_mix"}
 LINKS_FILE = "projects.json"
 HIDDEN_FILE = "hidden-projects.json"
 GOOGLE_CHECK_FILE = "google-adc-check.json"
@@ -53,7 +54,7 @@ TYPE_REASONS = {"Visual type changed", RENDER_REASON}
 TEXT_FILES = {"raw": "raw.json", "script": "script.json", "summary": "mini_summary.json"}
 METADATA_FIELDS = ("video_titles", "cover_titles", "cover_subtitles", "golden_quotes")
 # Settings the desktop keeps for itself; the engine's configuration rejects unknown keys.
-DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step6": {"cover_method"}, "step5": {"assembly_method", "agent_skill"}}
+DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step6": {"cover_method"}, "step5": {"assembly_method", "agent_skill", "agent_music_mix"}}
 # Covers are drawn by an image service from the text alone and write only cover files, so a cover job
 # runs beside the jobs that leave the text as it is: recordings, visuals and assembly.
 BESIDE_COVERS = {"3", "4", "5"}
@@ -204,6 +205,9 @@ class Studio:
         # The native host also gives this path to the service and agents as AIGC_VIDEO_LIBRARY_DIR.
         self.library_root = self.data / "library"
         install_bundled(self.engine, self.library_root)
+        # Step 5's template changed shape; an edited copy the app can no longer use moves to history.
+        if (self.engine / "prompts/step5_editing_agent.md").is_file():
+            self.library.retire_invalid("step5_editing_agent.md", self.engine / "prompts/step5_editing_agent.md")
         # Music the user adds; the bundled tracks stay in the read-only engine.
         self.music_root = self.data / "music"
         self.lock = threading.RLock()
@@ -243,6 +247,15 @@ class Studio:
                         if not previous_take:
                             state["takes"].pop(str(index))
                 stale = state.setdefault("stale", {})
+                # Assembly's Claude Code delivers the video itself; an interrupted session that delivered it is done.
+                edit = editing.detail(path.parents[1], state.get("assembly_edit")) if active["step"] == "5" else None
+                if edit and edit["delivered"]:
+                    stale.pop("5", None)
+                    state.setdefault("reviewed", {}).pop("5", None)
+                    if (path.parents[1] / "final_video_3x4.mp4").is_file():
+                        state["three_by_four_stale"] = True
+                    atomic_json(path, state)
+                    continue
                 previous, indices = stale.get(active["step"]), active.get("indices") or []
                 # Segments that were already outdated stay outdated (an empty list means all of them).
                 if not (previous and not previous["segments"]):
@@ -394,13 +407,10 @@ class Studio:
         opening = {**self.defaults().get("global", {}), **state.get("settings", {}).get("global", {})}.get("opening_quote", True)
         quote = opening and first_text(before.get("golden_quotes")) != first_text(after.get("golden_quotes"))
         if quote:
-            # The opening (0) speaks and shows the chosen golden quote.
+            # The opening (0) speaks the chosen golden quote; assembly draws it over the opening's background.
             self.mark_stale(state, "3", "Opening quote changed", [0])
-            self.mark_stale(state, "4", "Opening quote changed", [0])
         # The opening clip also shows the source name under the quote; it is not spoken.
         named = opening and str(before.get("source_name") or "").strip() != str(after.get("source_name") or "").strip()
-        if named:
-            self.mark_stale(state, "4", "Source name changed", [0])
         if spoken:
             self.mark_stale(state, "3", "Segment text changed", sorted(spoken))
         if shown:
@@ -460,7 +470,9 @@ class Studio:
         sections = {DESKTOP_SECTIONS.get(k, k): v for k, v in data.items() if isinstance(v, dict)}
         if "step5" in sections:
             sections["step5"].setdefault("assembly_method", "standard")
-            sections["step5"].setdefault("agent_skill", editing.STYLES[0])
+            sections["step5"].setdefault("agent_skill", "editorial-explainer")
+            # Claude Code editing may mix several library tracks instead of only the suggested one.
+            sections["step5"].setdefault("agent_music_mix", False)
             # Music is licensed and not always bundled; the engine silently skips a missing track,
             # so start new projects without one rather than with a track that cannot play.
             track = str(sections["step5"].get("bgm_filename") or "")
@@ -731,10 +743,6 @@ class Studio:
             parts = {}
             for index in [0] + [int(s["index"]) for s in script.get("segments", [])]:
                 listed = [takes.describe(p, t) for t in takes.listing(p, index)]
-                if index == 0 and (background := takes.current_background(p)):
-                    # The background the next opening render uses.
-                    for take in listed:
-                        take["current"] = take["id"] == background
                 chosen = next((t for t in listed if t["id"] == selections.get(str(index))), None)
                 placed = takes.placed(p, index, takes.STILLS + takes.VIDEOS)
                 parts[index] = {"takes": listed, "take": chosen["id"] if chosen else None, "visual": relative(placed[0]) if placed else None,
@@ -773,19 +781,19 @@ class Studio:
             settings = self.defaults()
             for section, fields in state.get("settings", {}).items():
                 settings.setdefault(section, {}).update(fields)
+            # Assembly renders the opening clip; it is reused while its quote, source name and background stay the same.
+            opening_clip = opening.current(p, settings.get("motion_opening", {}))
             cover_design = cover_designs.detail(p, state.get("cover_design"), settings, cover_copy(raw if raw.get("content") else script))
             assembly_edit = None
             if state.get("assembly_edit"):
                 try:
-                    edit_source = editing.source(self, p, settings)
+                    edit_source = editing.materials(self, p, settings)
                 except (ValueError, OSError, KeyError):
                     edit_source = {}
                 assembly_edit = editing.detail(p, state["assembly_edit"], edit_source)
-                if assembly_edit and assembly_edit.get('published'):
-                    state['stale'].pop('5',None)
-                    self.persist(p,state)
             revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design, assembly_edit], sort_keys=True).encode()).hexdigest()
-            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio)}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
+            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio),
+                                                  "clip": str(opening_clip.relative_to(p)) if opening_clip else None}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
 
     @staticmethod
     def beside(a, b):
@@ -932,9 +940,10 @@ class Studio:
             self.sync_takes(p, state, script)
             ready = takes.ready(p, index, take)
             self.invalidate(state, "4", [index])
-            if before != takes.kind_of(take):
+            # The opening's versions are all backgrounds, so only a segment can switch type.
+            if index and before != takes.kind_of(take):
                 self.mark_visual_switch(state, {index: ready})
-            elif not ready:
+            elif index and not ready:
                 self.mark_visual_switch(state, {index: False})
             self.persist(p, state)
         return self.detail(project_id)
@@ -959,8 +968,6 @@ class Studio:
                 raise ValueError("This image or motion clip is no longer in the project. Refresh and choose again.")
             if state["takes"].get(str(index)) == take:
                 raise Conflict("This version is in use. Choose another one before deleting it.")
-            if found["kind"] == "background" and takes.current_background(p) == take:
-                raise Conflict("The next opening renders with this background. Render the opening with another background before deleting it.")
             files = [f for f in found["dir"].rglob("*") if f.is_file()] if found["dir"] else [found["file"]]
             self.snapshot(p, files, "Before deleting a version of the opening" if index == 0 else f"Before deleting a version of segment {index}")
             if found["dir"]:
@@ -1176,7 +1183,9 @@ class Studio:
                     shutil.rmtree(folders[index], ignore_errors=True)
                 raise
             revised = [f for index, work in folders.items() if index not in created for f in work.rglob("*")]
-            self.snapshot(p, list((p / "text").glob("*")) if body["step"] == "1" else revised + [p / "text/script.json"], f"Before Claude Code · step {body['step']}")
+            # Assembly's Claude Code replaces the published video, so the current one is kept in history.
+            exports_before = [f for f in p.glob("final_video*") if f.is_file()] if body["step"] == "5" else []
+            self.snapshot(p, list((p / "text").glob("*")) if body["step"] == "1" else revised + exports_before + [p / "text/script.json"], f"Before Claude Code · step {body['step']}")
             state = self.state(p)
             if body["step"] == "5":
                 state["assembly_edit"] = launch["assembly_edit"]
@@ -1217,19 +1226,19 @@ class Studio:
                         atomic_json(target, raw)
                 state.pop("agent_active", None)
                 if active["step"] == "5":
+                    # Claude Code renders and delivers final_video.mp4 itself; the 3:4 copy is then drawn around it again.
                     info = editing.detail(p, state.get("assembly_edit"))
-                    warning = info.get("problem") if info else "Save an editing plan before rendering."
-                    if info and info.get("published"):
-                        state["stale"].pop("5",None)
-                    elif info and info["valid"] and info["changed"]:
-                        warning = "Ask the editing agent to render, review and publish the final video."
+                    if info and info["delivered"]:
+                        state["stale"].pop("5", None)
+                        state["reviewed"].pop("5", None)
+                        if (p / "final_video_3x4.mp4").is_file():
+                            state["three_by_four_stale"] = True
+                    else:
+                        warning = "Claude Code ended without delivering the final video. Start a new edit, or revise this one."
                 if active["step"] == "6":
                     info = cover_designs.detail(p, state.get("cover_design"))
                     warning = None if info and info["complete"] else "Save every cover HTML design with Claude Code before rendering."
-                if active["step"] == "5" and info and info["changed"] and not info.get("published"):
-                    state["stale"]["5"] = {"reason": warning or "Render the saved edit to review the polished video.", "segments": []}
-                    state["reviewed"].pop("5", None)
-                elif active["step"] == "6":
+                if active["step"] == "6":
                     state["stale"]["6"] = {"reason": warning or "Render the saved HTML designs to review the new covers.", "segments": []}
                     state["reviewed"].pop("6", None)
                 elif active["step"] != "5" and (active["step"] != "1" or active.get("raw_before") != fingerprint(p / "text/raw.json")):
@@ -1277,16 +1286,10 @@ class Studio:
                 raise Conflict("Finish the active project job or agent first.")
             if step not in STAGES or step == "1":
                 raise ValueError("Step 1 runs interactively through Activate Claude Code.")
-            if step == "4" and body.get("mode") not in {"segments", "static", "render", "opening", "opening_render", "summary"}:
+            if step == "4" and body.get("mode") not in {"segments", "static", "render", "opening", "summary"}:
                 raise ValueError("Unknown visual generation action.")
-            if step == "5" and body.get("mode") not in {None, "three_by_four", "edit_render", "edit_preview"}:
+            if step == "5" and body.get("mode") not in {None, "three_by_four"}:
                 raise ValueError("Unknown assembly action.")
-            if step == "5" and body.get("mode") in {"edit_render", "edit_preview"}:
-                info = self.detail(project_id).get("assembly_edit")
-                if not info or not info["valid"]:
-                    raise ValueError(info.get("problem") if info else "Save an editing plan before rendering.")
-                if not info["current"]:
-                    raise ValueError("Assembly sources or settings changed. Revise the edit before rendering.")
             if step == "5" and body.get("mode") is None and self.state(p).get("settings", {}).get("step5", {}).get("assembly_method") == "agent":
                 raise ValueError("Edit the video through the interactive Claude Code terminal.")
             if step == "6":
@@ -1310,12 +1313,6 @@ class Studio:
                 detail = self.detail(project_id)
                 if any(not detail["ready"][s] for s in ["2", "3", "4"]):
                     raise Conflict("Generate the segments, recordings and visuals before assembling this production.")
-            if step == "4" and body.get("mode") == "opening_render":
-                # Render a new opening clip over one of the kept backgrounds; nothing is generated.
-                background = takes.find(p, 0, str(body.get("take", "")))
-                if not background or background["kind"] != "background":
-                    raise ValueError("This background is no longer in the project. Refresh and choose again.")
-                body = {**body, "indices": [], "opening": True, "background": str(background["file"])}
             if step == "4" and body.get("mode") == "segments":
                 detail = self.detail(project_id)
                 if not detail["ready"]["2"]:
@@ -1363,7 +1360,7 @@ class Studio:
                 settings = self.defaults()
                 for section, fields in self.state(p).get("settings", {}).items():
                     settings.setdefault(section, {}).update(fields)
-                image_work = body.get("mode") not in {"render", "opening_render", "summary"}
+                image_work = body.get("mode") not in {"render", "summary"}
                 if body.get("mode") == "segments":
                     image_work = body["opening"] or any(s["index"] in body["indices"] and s.get("visualizer") != "hf" for s in candidates)
                 required = ([] if body.get("mode") == "cover_render" else [("cover_styles", "step6", "cover_image_style")]) if step == "6" else [
@@ -1376,7 +1373,7 @@ class Studio:
                         self.library.item(group, settings.get(section, {}).get(key, ""))
             job_id = uuid.uuid4().hex
             direction_only = body.get("mode") == "summary"
-            summary = step == "4" and body.get("mode") not in {"render", "opening_render"} and (direction_only or self.needs_summary(p, self.state(p)))
+            summary = step == "4" and body.get("mode") != "render" and (direction_only or self.needs_summary(p, self.state(p)))
             dirs = {"2": ["text"], "3": ["voice"], "4": [] if direction_only else ["images"], "5": [], "6": []}[step]
             # Takes are only ever added (a revised clip is snapshotted by its session), so jobs leave them out.
             paths = [f for d in dirs for f in (p / d).rglob("*") if not f.relative_to(p).as_posix().startswith(takes.ROOT + "/")]
@@ -1386,13 +1383,9 @@ class Studio:
                 paths += [p / "text/mini_summary.json"]
             if step == "5":
                 paths = [p / "final_video_3x4.mp4"] if body.get("mode") == "three_by_four" else list(p.glob("final_video*.mp4"))
-                if body.get("mode") == "edit_render":
-                    paths += [p / "final_video.srt", p / "final_video.qa.json"]
                 paths = [f for f in paths if f.is_file()]
             if step == "6":
                 paths = list(p.glob("cover_*"))
-            if step == "5" and body.get("mode") == "edit_preview":
-                paths = []
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
                        "music_dir": str(self.music_root)}
@@ -1404,8 +1397,6 @@ class Studio:
                 request.update(motion_folders={i: str(takes.folder(p, int(i)) / take) for i, take in motion_takes.items()},
                                studio_data=str(self.data), workspace=str(self.workspace),
                                claude=read_json(self.data / "claude-code.json", {"mode": "api_key"}))
-            if step == "5" and body.get("mode") in {"edit_render", "edit_preview"}:
-                request["assembly_edit"] = self.state(p)["assembly_edit"]
             if step == "6" and body.get("mode") == "cover_render":
                 request["cover_design"] = self.state(p)["cover_design"]
             if step == "4" and body.get("mode") == "render":
@@ -1479,9 +1470,6 @@ class Studio:
             if job.get("mode") == "summary":
                 if direction:
                     self.direction_changed(state)
-                self.persist(p, state)
-                return
-            if job.get("mode") == "edit_preview":
                 self.persist(p, state)
                 return
             generated = None
@@ -1769,7 +1757,7 @@ class Handler(BaseHTTPRequestHandler):
                                 effective.setdefault(section, {}).update(fields)
                             # The engine's step-2 settings write the content summary used by Visuals.
                             # Writing settings apply to the next writing session; the manuscript stays current (as in Writing setup).
-                            mapping = {"global": "3", "step2": "2", "step3": "3", "step4": "4", "step4_summary": "4", "step5": "5", "subtitles": "5", "step6": "6", "motion_opening": "4"}
+                            mapping = {"global": "3", "step2": "2", "step3": "3", "step4": "4", "step4_summary": "4", "step5": "5", "subtitles": "5", "step6": "6", "motion_opening": "5"}
                             # Fields that are sent replace saved ones; anything left out keeps its saved value.
                             settings = copy.deepcopy(old)
                             for section, fields in body["settings"].items():

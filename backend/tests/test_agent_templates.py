@@ -43,22 +43,33 @@ class AgentTemplateTests(unittest.TestCase):
 
     def test_each_agents_studio_instructions_are_editable_and_reload_without_restart(self):
         for step,name,section in [('1','step1_studio.md','shared'),('4','step4_studio.md','finish'),
-                                  ('5','step5_editing_agent.md','main'),('6','step6_cover_agent.md','main')]:
+                                  ('5','step5_editing_agent.md',None),('6','step6_cover_agent.md','main')]:
             with self.subTest(step=step):
                 marker=f'CUSTOM STEP {step} INSTRUCTIONS'
-                revision=self.save(name,lambda value:value.replace(f'<!-- section: {section} -->',f'<!-- section: {section} -->\n{marker}'))['revision']
+                revision=self.save(name,lambda value:value+'\n'+marker if section is None else
+                                   value.replace(f'<!-- section: {section} -->',f'<!-- section: {section} -->\n{marker}'))['revision']
                 first=self.launch(step);prompt=Path(first['context']).read_text();self.assertIn(marker,prompt)
                 self.studio.library.restore({'revision':revision})
                 second=self.launch(step);self.assertNotIn(marker,Path(second['context']).read_text())
                 self.assertEqual(Path(first['context']).read_text(),prompt)
 
-    def test_motion_reference_style_and_assembly_contract_instructions_are_editable(self):
-        for name in ['step4_skill_context.md','step4_style_context.md','step5_editing_contract.md']:
+    def test_motion_reference_and_style_instructions_are_editable(self):
+        for name in ['step4_skill_context.md','step4_style_context.md']:
             self.save(name,lambda value:value+'\nCUSTOM '+name+'\n')
         motion=self.launch('4');prompt=Path(motion['context']).read_text()
         for name in ['step4_skill_context.md','step4_style_context.md']:self.assertIn('CUSTOM '+name,prompt)
-        assembly=self.launch('5')
-        self.assertIn('CUSTOM step5_editing_contract.md',(Path(assembly['cwd'])/'EDITING.md').read_text())
+
+    def test_the_assembly_template_is_one_file_with_every_setting_filled_in(self):
+        from library import PROMPTS
+        assembly=self.launch('5');prompt=Path(assembly['context']).read_text()
+        work=Path(assembly['cwd'])/assembly['assembly_edit']['folder']
+        # Studio fills every variable: the materials, the person's choices, delivery and the GPU guide are all in this one prompt.
+        for field in PROMPTS['step5_editing_agent.md'][2]:self.assertNotIn('{'+field+'}',prompt)
+        for text in ['## 用户的选择','320×180','## 交付','## GPU 加速',str(work),str(work/'materials.json'),'editorial-explainer/SKILL.md']:self.assertIn(text,prompt)
+        for gone in ['EDITING.md','plan.json','studio-payload.json']:self.assertFalse((work/gone).exists())
+        # A template that loses one of its settings is refused rather than silently dropping it.
+        with self.assertRaisesRegex(ValueError,'required template variables'):
+            self.save('step5_editing_agent.md',lambda value:value.replace('{music}','music'))
 
     def test_no_skill_writing_keeps_output_contract_without_loading_skill_files(self):
         import shutil

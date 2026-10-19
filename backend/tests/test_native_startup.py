@@ -54,7 +54,8 @@ class NativeStartupTests(unittest.TestCase):
                         content = response.read().decode()
                         self.assertEqual(response.status, 200, content)
                         if path.endswith('/story'):
-                            self.assertFalse(json.loads(content)['assembly_edit']['valid'])
+                            edit = json.loads(content)['assembly_edit']
+                            self.assertEqual((edit['current'], edit['delivered']), (False, False))
                 finally:
                     connection.close()
             finally:

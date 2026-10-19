@@ -8,6 +8,8 @@ __pycache__/
 build/
 .env
 .env.*
+# Local Claude Code settings (machine-specific permissions)
+.claude/
 # Licensed background music stays local; the bundle ships whatever is here.
 engine/music/*
 !engine/music/.gitkeep

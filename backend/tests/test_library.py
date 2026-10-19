@@ -294,6 +294,10 @@ assert 'CUSTOM COVER TEMPLATE' in captured['cover'] and 'CUSTOM COVER STYLE' in 
 
 
 
+# A step 5 template in the current shape: every variable Studio fills in.
+BUNDLED_STEP5 = "".join("{" + v + "}" for v in ["style", "skill_path", "materials", "video_size", "narration_speed", "subtitles", "music", "opening", "session", "work_dir", "delivery"])
+
+
 class BundledLibraryTests(unittest.TestCase):
     """The editable library follows app updates without losing the person's changes."""
     def setUp(self):
@@ -312,6 +316,25 @@ class BundledLibraryTests(unittest.TestCase):
 
     def read(self, relative):
         return (self.root / relative).read_text()
+
+    def test_an_edited_template_the_app_cannot_use_moves_to_history(self):
+        from library import Library
+        self.write("prompts/step5_editing_agent.md", "<!-- section: main -->\nold layout")
+        install_bundled(self.bundled, self.root)
+        (self.root / "prompts/step5_editing_agent.md").write_text("<!-- section: main -->\nmy old edit")
+        self.write("prompts/step5_editing_agent.md", BUNDLED_STEP5)
+        install_bundled(self.bundled, self.root)
+        self.assertIn("my old edit", self.read("prompts/step5_editing_agent.md"))  # Kept as an edit until it is retired.
+        library = Library(self.root)
+        self.assertTrue(library.retire_invalid("step5_editing_agent.md", self.bundled / "prompts/step5_editing_agent.md"))
+        self.assertEqual(self.read("prompts/step5_editing_agent.md"), BUNDLED_STEP5)
+        event = library.history()[0]
+        self.assertEqual((event["item"], event["can_restore"]), ("step5_editing_agent.md", True))
+        library.restore({"revision": event["id"]})
+        self.assertIn("my old edit", self.read("prompts/step5_editing_agent.md"))
+        # Nothing to retire once the template is in the current layout.
+        (self.root / "prompts/step5_editing_agent.md").write_text(BUNDLED_STEP5 + "my edit")
+        self.assertFalse(library.retire_invalid("step5_editing_agent.md", self.bundled / "prompts/step5_editing_agent.md"))
 
     def test_first_launch_copies_everything_but_caches(self):
         self.assertEqual(self.read("prompts/step2_summary.md"), "v1 summary")

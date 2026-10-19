@@ -32,7 +32,7 @@ export interface Segment {
 /** One still image or motion clip of a segment (or of the opening). */
 export interface Take {
   id: string;
-  /** A background is the opening's: kept, and rendered under the quote into an opening clip. */
+  /** A background is the opening's visual; Assembly draws the opening quote over it. */
   kind: "still" | "motion" | "background";
   /** When it was made (seconds since the epoch). */
   created: number;
@@ -40,8 +40,6 @@ export interface Take {
   path: string | null;
   poster: string | null;
   motion?: Motion;
-  /** The opening background the next opening render uses. */
-  current?: boolean;
 }
 /** Where a segment's motion stands: Claude Code's composition, its keyframes, the rendered video. */
 export interface Motion {
@@ -92,9 +90,12 @@ export interface Detail {
     poster: string | null;
     audio: string | null;
     duration: number | null;
+    /** The opening clip Assembly rendered, while it still matches the quote and background. */
+    clip: string | null;
   };
   covers: string[];
-  assembly_edit?: { verified?: boolean; published?: boolean; candidate?: string | null; folder: string; skill: string; style: string; changed: boolean; valid: boolean; problem: string | null; current: boolean; duration: number | null; warnings: string[]; preview: string | null; contact_sheet: string | null } | null;
+  /** The last Claude Code edit: its folder and style, whether its materials are current and whether it delivered a video. */
+  assembly_edit?: { folder: string; skill: string; current: boolean; delivered: boolean } | null;
   cover_design?: { folder: string; entries: { html: string; width: number; height: number }[]; files: string[]; previews: string[]; complete: boolean; current: boolean } | null;
   exports: string[];
   state: {

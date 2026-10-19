@@ -147,17 +147,6 @@ def run(request):
             finally:
                 rendered.unlink(missing_ok=True)
         return {"success": True, "message": f"Rendered {len(selected)} saved composition(s)."}
-    if step == "5" and request.get("mode") in {"edit_render", "edit_preview"}:
-        import editing
-        from edit_render import render
-        work = editing.folder(project, request["assembly_edit"])
-        preview = request["mode"] == "edit_preview"
-        candidate, report = render(work, preview=preview, start=float(request.get("start", 0)), seconds=float(request.get("seconds", 8)))
-        if preview:
-            return {"success": True, "message": "Editing preview rendered.", "qa": report}
-        from edit_render import publish
-        publish(work)
-        return {"success": True, "message": "Polished video rendered and verified.", "qa": report}
     if step == "5" and request.get("mode") == "three_by_four":
         from core.domain.composer import VideoComposer
         master = project / "final_video.mp4"
@@ -169,20 +158,6 @@ def run(request):
     if step == "5" and request.get("mode") == "preview":
         return panel_preview(project, params, request["output"])
     # Studio's step 2 (Segments) is the engine's step 1.5.
-    if step == "4" and request.get("mode") == "opening_render":
-        # The engine draws the opening quote over its current background; that background is now the chosen one.
-        import shutil
-        from core.infra.motion.opening_renderer import render_opening_video
-        background = project / "images/opening_bg.png"
-        if Path(request["background"]).resolve() != background.resolve():
-            shutil.copy2(request["background"], background)
-        print("Rendering the opening with the chosen background…", flush=True)
-        script = json.loads((project / "text/script.json").read_text())
-        video = render_opening_video(image_size=str(params.get("image_size", "1280x720")), output_dir=str(project / "images"),
-                                     script_data=script, opening_quote=True, opening_bg_path=str(background))
-        if not video:
-            raise ValueError("The opening could not be rendered. Choose and save an opening quote in Writing first.")
-        return {"success": True, "message": "Opening rendered with the chosen background."}
     functions = {"2": steps.run_step_1_5, "3": steps.run_step_3, "4": steps.run_step_4, "5": steps.run_step_5, "6": steps.run_step_6}
     fn = functions[step]
     values = {**params, "project_output_dir": str(project), "target_segments": indices, "regenerate_opening": request.get("opening", False)}
@@ -198,6 +173,10 @@ def run(request):
             values["target_segments"] = [s["index"] for s in script["segments"] if s.get("visualizer") != "hf"]
     if step == "5":
         values["image_size"] = params.get("video_size") or params["image_size"]
+        if params.get("opening_quote", True):
+            # The opening clip is made here, from the background Visuals made and the chosen quote.
+            import opening
+            values["opening_image_path"] = str(opening.ensure(project, merged.get("motion_opening") or {}, values["image_size"]))
         # Music the user added lives in the app's data folder, not beside the bundled tracks.
         track = str(values.get("bgm_filename") or "")
         added = Path(request.get("music_dir") or "") / track

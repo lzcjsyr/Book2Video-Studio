@@ -77,13 +77,16 @@ def prepare(studio, project, body):
             raise ValueError("Choose Claude Code editing in Assembly first.")
         assembly_edit, cwd, prompt = editing.prepare(studio, project, settings, session, revise=body.get("revise", False))
         scope = "Assembly · edit and render"
-        skill_directories = [studio.library_root/'skills/step5'/assembly_edit['skill'],
-                             studio.library_root/'skills/step4/motion-core']
-        task = dict(objective='仅精剪当前项目，检查后通过 studio_edit.py publish 发布成片。',
-            inputs=[cwd/'studio-payload.json', cwd/'plan.json', cwd/'EDITING.md'], writable=[cwd, project/'final_video.mp4', project/'final_video.srt', project/'final_video.qa.json', project/'final_video_3x4.mp4'],
-            protected=[project/'text', project/'voice', project/'images', cwd/'studio-payload.json', cwd/'studio_edit.py', cwd/'vendor', studio.engine, studio.library_root],
-            done=['完整主片及所需字幕/3:4 通过检查，candidate.qa.json verified，通过 publish 写入输出；报告未听审等限制。'],
-            facts={'skill': assembly_edit['skill'], 'publishing': 'Only through python studio_edit.py publish; do not replace final exports by hand.'})
+        skill_directories = [studio.library_root/'skills/step5'/assembly_edit['skill']]
+        task = dict(objective='用素材自主设计并合成整部视频，交付 final_video.mp4。',
+            inputs=[cwd/'materials.json'], writable=[cwd, project/'final_video.mp4', project/'final_video.srt'],
+            protected=[project/'text', project/'voice', project/'images', cwd/'materials.json', cwd/'studio_render.py', studio.engine, studio.library_root],
+            done=['final_video.mp4 完整可播放，画面、口播和时长经过检查；汇报设计思路、检查结果和未验证项。'],
+            facts={'style': assembly_edit['skill']})
+        # Claude Code asks once per folder whether to trust it; starting in the project folder (as Writing
+        # does) means one answer covers every edit, instead of a question for each new edit folder.
+        kickoff = editing.KICKOFF[bool(body.get("revise"))]
+        cwd = project
     elif step == "6":
         import covers
         from server import cover_copy, read_json
@@ -188,7 +191,11 @@ def prepare(studio, project, body):
         directories.append(str(Path(source) if Path(source).is_dir() else Path(source).parent))
     # Projects can live anywhere; the launch names the project by its service id.
     launch = {"id": session, "project": studio.project_id(project), "step": step, "cwd": str(cwd), "context": str(prompt_path), "task": str(task_path), "context_chars": len(prompt), "scope": scope,
-              "args": ["--session-id", session, "--append-system-prompt-file", str(prompt_path), "--add-dir", *dict.fromkeys(directories)]}
+              "args": [*(["--allowedTools", *editing.ALLOWED_TOOLS] if step == "5" else []),
+                       "--session-id", session, "--append-system-prompt-file", str(prompt_path),
+                       # Assembly starts working at once; the first message sits between single-value options and the variadic --add-dir.
+                       *([kickoff] if step == "5" else []),
+                       "--add-dir", *dict.fromkeys(directories)]}
     if step == "5":
         launch["assembly_edit"] = assembly_edit
     if step == "6":

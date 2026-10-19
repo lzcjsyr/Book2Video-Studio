@@ -1,11 +1,15 @@
 import { ChevronDown, ChevronRight, FileText, Loader2, RefreshCw, Save } from "lucide-react";
-import { useId, useEffect, useState } from "react";
+import { useId, useEffect, useImperativeHandle, useState } from "react";
 import { useCollapsed } from "../collapse";
 import { useI18n } from "../i18n";
 
+/** Saves an unsaved edit from outside, as a closing question does. */
+export interface DirectionHandle { save: () => Promise<boolean> }
+
 // The shared summary every visual follows. Visuals create it when it is missing or
 // outdated; here it can be reviewed, edited, or generated on its own.
-export default function VisualDirection({ summary, hash, outdated, disabled, generating, generationBlocked, onGenerate, onSave, onEditInstructions, onDirtyChange }: {
+export default function VisualDirection({ handle, summary, hash, outdated, disabled, generating, generationBlocked, onGenerate, onSave, onEditInstructions, onDirtyChange }: {
+  handle?: React.Ref<DirectionHandle>;
   summary: string;
   hash: string;
   outdated: boolean;
@@ -26,6 +30,13 @@ export default function VisualDirection({ summary, hash, outdated, disabled, gen
   const dirty = draft !== null && draft.text !== summary;
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+  async function save() {
+    if (!draft || !dirty) return true;
+    const saved = await onSave(draft.text, draft.hash);
+    if (saved) setDraft(null);
+    return saved;
+  }
+  useImperativeHandle(handle, () => ({ save }));
   const status = !summary.trim() ? "Not generated" : outdated ? "Outdated" : "";
   return <section className={"direction-panel" + (collapsed ? " collapsed" : "")} aria-label={t("Content summary")}>
     <div className="direction-heading">
@@ -52,7 +63,7 @@ export default function VisualDirection({ summary, hash, outdated, disabled, gen
         <button className="button small" disabled={disabled} onClick={onEditInstructions}>
           <FileText size={13} /> {t("Edit instructions")}</button>
         <button className="button small primary" disabled={disabled || !dirty}
-          onClick={async () => { if (draft && await onSave(draft.text, draft.hash)) setDraft(null); }}>
+          onClick={save}>
           <Save size={13} /> {t("Save summary")}</button>
       </div>
     </div>
