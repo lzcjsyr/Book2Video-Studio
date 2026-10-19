@@ -48,33 +48,39 @@ export function SegmentationControls({ settings, disabled, onChange }: Props) {
   </div>;
 }
 
-export function VoiceControls({ settings, disabled, onChange }: Props) {
+/** How the narration is spoken: model, speaking rate and emotion. Each change saves at once. */
+export function VoiceFields({ settings, disabled, onChange }: Props) {
   const { t } = useI18n();
   const emotion = String(settings.emotion || "neutral");
   const model = String(settings.tts_model || "seed-tts-2.0-standard");
+  return <div className="step-controls-fields">
+    <label className="field"><span>{t("TTS model")}</span>
+      <select aria-label={t("TTS model")} value={model} title={model} disabled={disabled}
+        onChange={(e) => onChange({ tts_model: e.target.value })}>
+        {!["seed-tts-2.0-standard", "seed-tts-2.0-expressive"].includes(model) && <option value={model}>{model}</option>}
+        <option value="seed-tts-2.0-standard">{t("Standard · seed-tts-2.0-standard")}</option>
+        <option value="seed-tts-2.0-expressive">{t("Expressive · seed-tts-2.0-expressive")}</option>
+      </select>
+    </label>
+    <NumberSetting label={t("Speaking rate")} value={Number(settings.speech_rate ?? 20)} min={-50} max={100}
+      disabled={disabled} onSave={(speech_rate) => onChange({ speech_rate })} />
+    <label className="field"><span>{t("Emotion")}</span>
+      <select aria-label={t("Emotion")} value={emotion} disabled={disabled}
+        onChange={(e) => onChange({ emotion: e.target.value })}>
+        {!["neutral", "happy", "sad"].includes(emotion) && <option value={emotion}>{emotion}</option>}
+        <option value="neutral">{t("neutral")}</option>
+        <option value="happy">{t("happy")}</option>
+        <option value="sad">{t("sad")}</option>
+      </select>
+    </label>
+  </div>;
+}
+
+export function VoiceControls(props: Props) {
+  const { t } = useI18n();
   return <section className="step-controls voice-controls" aria-label={t("Voice delivery")}>
     <h3>{t("Voice delivery")}</h3>
-    <div className="step-controls-fields">
-      <label className="field"><span>{t("TTS model")}</span>
-        <select aria-label={t("TTS model")} value={model} title={model} disabled={disabled}
-          onChange={(e) => onChange({ tts_model: e.target.value })}>
-          {!["seed-tts-2.0-standard", "seed-tts-2.0-expressive"].includes(model) && <option value={model}>{model}</option>}
-          <option value="seed-tts-2.0-standard">{t("Standard · seed-tts-2.0-standard")}</option>
-          <option value="seed-tts-2.0-expressive">{t("Expressive · seed-tts-2.0-expressive")}</option>
-        </select>
-      </label>
-      <NumberSetting label={t("Speaking rate")} value={Number(settings.speech_rate ?? 20)} min={-50} max={100}
-        disabled={disabled} onSave={(speech_rate) => onChange({ speech_rate })} />
-      <label className="field"><span>{t("Emotion")}</span>
-        <select aria-label={t("Emotion")} value={emotion} disabled={disabled}
-          onChange={(e) => onChange({ emotion: e.target.value })}>
-          {!["neutral", "happy", "sad"].includes(emotion) && <option value={emotion}>{emotion}</option>}
-          <option value="neutral">{t("neutral")}</option>
-          <option value="happy">{t("happy")}</option>
-          <option value="sad">{t("sad")}</option>
-        </select>
-      </label>
-    </div>
+    <VoiceFields {...props} />
     <p className="small-muted">{t("Speaking rate: −50 to 100; 0 is normal speed.")}</p>
     <p className="small-muted">{t("Saved automatically. Changes apply to new recordings.")}</p>
   </section>;

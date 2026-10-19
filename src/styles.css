@@ -4500,7 +4500,7 @@ code {
 .cover-method.selected {
   border-color: var(--accent-line);
   background: var(--accent-soft);
-  color: var(--text-1);
+  color: var(--text);
 }
 .cover-method > svg { flex-shrink: 0; color: var(--accent); }
 .cover-method strong { display: block; font-size: var(--fs-s); margin-bottom: 5px; }
@@ -4592,3 +4592,602 @@ code {
 .closing-list span { font-size: var(--fs-xs); color: var(--text-3); }
 .closing-running { margin: 14px 0 0; font-size: var(--fs-s); color: var(--warn); line-height: 1.6; }
 .closing-question .modal-actions .closing-discard { margin-right: auto; }
+
+/* ---------- Auto production -------------------------------------------- */
+.link-button {
+  color: var(--accent);
+  font-size: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-button:hover:not(:disabled) {
+  color: var(--accent-hi);
+}
+/* The step a job works on shows it in the sidebar. */
+.stage-working {
+  flex: none;
+  color: var(--accent);
+}
+.stage-status.running {
+  color: var(--accent-hi);
+  background: var(--accent-soft);
+}
+/* Sidebar: below the six steps, the run that makes Segments through Covers. */
+.autorun-entry {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 10px;
+  padding: 9px 10px 9px 8px;
+  text-align: left;
+  border: 1px dashed var(--line-3);
+  border-radius: var(--radius);
+  color: var(--text-2);
+  transition: background 0.12s, border-color 0.12s;
+}
+.autorun-entry:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: var(--accent-line);
+}
+.autorun-entry.active {
+  border-style: solid;
+  border-color: var(--accent-line);
+  background: var(--accent-softer);
+  color: var(--text);
+}
+.autorun-entry.running .stage-text small {
+  color: var(--accent-hi);
+}
+.autorun-icon {
+  width: 25px;
+  height: 25px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.autorun-entry.active .autorun-icon {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+/* Writing: the next step once the manuscript is saved. */
+.auto-cta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 22px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-l);
+  background: var(--accent-softer);
+}
+.auto-cta > svg {
+  flex: none;
+  color: var(--accent);
+}
+.auto-cta > div {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.auto-cta strong {
+  font-size: var(--fs-m);
+}
+.auto-cta span {
+  color: var(--text-3);
+  font-size: var(--fs-s);
+  line-height: 1.5;
+}
+.auto-production {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 22px;
+  align-items: start;
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 20px 24px 32px;
+}
+.auto-intro {
+  margin: 0 0 16px;
+  color: var(--text-3);
+  font-size: var(--fs-s);
+  line-height: 1.6;
+}
+.auto-more {
+  margin: 4px 2px 0;
+}
+/* One card per step: what the run will do there, then its choices. */
+.auto-step {
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+  transition: border-color 0.15s;
+}
+.auto-step.running {
+  border-color: var(--accent-line);
+}
+.auto-step.failed,
+.auto-step.stopped {
+  border-color: var(--danger-line);
+}
+.auto-step.off > :not(.auto-step-header) {
+  opacity: 0.5;
+}
+.auto-step-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 10px 14px;
+}
+.auto-step-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  color: var(--text-3);
+}
+.auto-step-badge {
+  width: 25px;
+  height: 25px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  background: var(--bg-1);
+}
+.auto-step.planned .auto-step-badge,
+.auto-step.pending .auto-step-badge {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+.auto-step.running .auto-step-badge {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.auto-step.done .auto-step-badge,
+.auto-step.current .auto-step-badge,
+.auto-step.skipped .auto-step-badge {
+  color: var(--ok);
+  border-color: rgba(134, 195, 159, 0.4);
+}
+.auto-step.failed .auto-step-badge,
+.auto-step.stopped .auto-step-badge {
+  color: var(--danger);
+  border-color: var(--danger-line);
+}
+.auto-step-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.auto-step-title strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: var(--fs-m);
+  font-weight: 600;
+}
+.auto-step-title strong svg {
+  color: var(--text-3);
+}
+.auto-step-plan {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-s);
+  color: var(--text-3);
+}
+.auto-step.planned .auto-step-plan,
+.auto-step.running .auto-step-plan {
+  color: var(--accent-hi);
+}
+.auto-step-header .switch {
+  margin: 0 6px;
+}
+.auto-step-summary {
+  margin: -4px 14px 12px 51px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+}
+.auto-step-body {
+  padding: 14px 16px 6px 51px;
+  border-top: 1px solid var(--line);
+}
+.auto-step-body > .small-muted {
+  margin: 8px 0 12px;
+}
+.auto-step-alert,
+.auto-step-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 14px 12px 51px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-size: var(--fs-s);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.auto-step-alert svg,
+.auto-step-note svg {
+  flex: none;
+  margin-top: 3px;
+}
+.auto-step-alert {
+  max-height: 8.5em;
+  overflow-y: auto;
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.auto-step-note {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.auto-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.auto-step-body > .auto-subhead:first-child {
+  margin-top: 2px;
+}
+.auto-subhead + .small-muted {
+  margin: 0 0 10px;
+}
+.auto-pill {
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  font-size: var(--fs-2xs);
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 18px;
+  color: var(--accent-hi);
+  background: var(--accent-soft);
+}
+.auto-pill.ok {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+.auto-pill.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.auto-step .segmentation-controls {
+  margin-bottom: 4px;
+}
+.auto-step .step-controls-fields {
+  margin-bottom: 14px;
+}
+.auto-step .step-controls-fields .field {
+  width: 200px;
+}
+.auto-step .visual-image-controls {
+  margin: 4px 0 14px;
+}
+.auto-step .cover-setup {
+  padding: 0 0 4px;
+}
+.auto-step .cover-methods {
+  margin-bottom: 14px;
+}
+.auto-step .cover-setup-fields {
+  grid-template-columns: minmax(0, 1fr) 160px;
+}
+.auto-step .cover-size-choice {
+  display: inline-flex;
+  gap: 6px;
+  margin: 0 14px 0 0;
+}
+.auto-step .cover-size-dimensions {
+  font-size: var(--fs-xs);
+}
+.auto-step .cover-style-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.auto-step .cover-style-choice {
+  margin: 0;
+}
+.auto-step .cover-setup + .form-grid {
+  margin-top: 12px;
+}
+.assembly-setup.auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 22px;
+  padding: 0;
+}
+.assembly-setup.auto .setup-group {
+  margin-top: 6px;
+}
+.assembly-setup.auto .checkbox.checkbox-hinted {
+  margin: 10px 0;
+}
+/* The run panel: options and checks, or progress while it runs. */
+.auto-run {
+  position: sticky;
+  top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+}
+.auto-run h2 {
+  margin: 0 0 10px;
+  font-size: var(--fs-l);
+  font-weight: 600;
+}
+.auto-run h3 {
+  margin: 0 0 8px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.auto-run > .small-muted,
+.auto-progress > .small-muted {
+  margin: -4px 0 0;
+}
+.auto-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.auto-scope legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--fs-s);
+  font-weight: 500;
+}
+.auto-scope-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.auto-scope-choice.selected {
+  border-color: var(--accent-line);
+  background: var(--accent-softer);
+}
+.auto-scope-choice input {
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+.auto-scope-choice strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: var(--fs-s);
+}
+.auto-scope-choice small {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.auto-options .checkbox.checkbox-hinted {
+  margin: 12px 0 0;
+}
+.auto-checks ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.auto-checks li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: var(--fs-s);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.auto-checks li > svg {
+  flex: none;
+  margin-top: 3px;
+}
+.auto-checks li > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.auto-checks li.ok > svg {
+  color: var(--ok);
+}
+.auto-checks li.problem > svg,
+.auto-checks li.problem > span {
+  color: var(--warn);
+}
+.auto-checks li.info > svg {
+  color: var(--accent);
+}
+.auto-checks li .switch {
+  margin: 1px 0 0;
+}
+.auto-checks li .button {
+  flex: none;
+}
+.auto-start {
+  width: 100%;
+  height: 40px;
+  font-size: var(--fs-m);
+}
+.auto-start-hint {
+  margin: -4px 0 0;
+  color: var(--warn);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+}
+.auto-last {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-size: var(--fs-s);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.auto-last.failed,
+.auto-last.stopped {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.auto-last > span {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+/* The step's card shows the whole message; here a few lines are enough. */
+.auto-last p {
+  flex-basis: 100%;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: var(--text-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.auto-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.auto-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.auto-progress-head svg {
+  color: var(--accent);
+}
+.auto-progress-head strong {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-m);
+}
+.auto-progress-head span {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.auto-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-4);
+  overflow: hidden;
+}
+.auto-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s;
+}
+.auto-progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.auto-progress-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-s);
+  color: var(--text-2);
+}
+.auto-progress-steps li > span:nth-child(2) {
+  flex: 1;
+}
+.auto-progress-steps small {
+  color: var(--text-4);
+  font-size: var(--fs-xs);
+}
+.auto-progress-steps .auto-step-badge {
+  width: 20px;
+  height: 20px;
+  font-size: var(--fs-2xs);
+}
+.auto-progress-steps li.running {
+  color: var(--text);
+}
+.auto-progress-steps li.running small {
+  color: var(--accent-hi);
+}
+.auto-progress-steps li.running .auto-step-badge {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.auto-progress-steps li.done .auto-step-badge,
+.auto-progress-steps li.skipped .auto-step-badge {
+  color: var(--ok);
+  border-color: rgba(134, 195, 159, 0.4);
+}
+.auto-progress .button.danger {
+  width: 100%;
+}
+.job-strip.auto {
+  padding-left: 14px;
+}
+@media (max-width: 1120px) {
+  .auto-production {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The run panel comes first when it no longer fits beside the steps. */
+  .auto-run {
+    position: static;
+    order: -1;
+  }
+}

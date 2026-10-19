@@ -189,12 +189,14 @@ def prepare(studio, project, body):
     directories = [str(project), *map(str, skill_directories)]
     if step == "1" and not direct:
         directories.append(str(Path(source) if Path(source).is_dir() else Path(source).parent))
+    # In a terminal, Assembly starts working at once: its permissions, then its first message between single-value
+    # options and the variadic --add-dir. A session without a terminal gets its own tools and message (headless.py).
+    terminal = step == "5" and not body.get("headless")
     # Projects can live anywhere; the launch names the project by its service id.
     launch = {"id": session, "project": studio.project_id(project), "step": step, "cwd": str(cwd), "context": str(prompt_path), "task": str(task_path), "context_chars": len(prompt), "scope": scope,
-              "args": [*(["--allowedTools", *editing.ALLOWED_TOOLS] if step == "5" else []),
+              "args": [*(["--allowedTools", *editing.ALLOWED_TOOLS] if terminal else []),
                        "--session-id", session, "--append-system-prompt-file", str(prompt_path),
-                       # Assembly starts working at once; the first message sits between single-value options and the variadic --add-dir.
-                       *([kickoff] if step == "5" else []),
+                       *([kickoff] if terminal else []),
                        "--add-dir", *dict.fromkeys(directories)]}
     if step == "5":
         launch["assembly_edit"] = assembly_edit

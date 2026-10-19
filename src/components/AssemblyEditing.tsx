@@ -4,7 +4,7 @@ import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
 import type { Detail, LibraryCatalog, Settings } from "../types";
 
-const styleLabels: Record<string, string> = { "content-led": "Free design", "editorial-explainer": "Editorial explainer", "cinematic-essay": "Cinematic essay", "kinetic-social": "Kinetic social" };
+export const styleLabels: Record<string, string> = { "content-led": "Free design", "editorial-explainer": "Editorial explainer", "cinematic-essay": "Cinematic essay", "kinetic-social": "Kinetic social" };
 
 /**
  * How Assembly makes the video. With Claude Code editing, the panel holds the brief: the style direction,

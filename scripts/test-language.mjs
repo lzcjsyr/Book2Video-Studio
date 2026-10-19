@@ -105,6 +105,7 @@ test("all static interface messages have Chinese translations", () => {
   for (const file of [
     "App.tsx",
     "ProjectWorkspace.tsx",
+    "autorun.ts",
     ...fs
       .readdirSync("src/components")
       .filter((f) => f.endsWith(".tsx"))

@@ -846,7 +846,7 @@ class PipelineTests(unittest.TestCase):
         # Exercise the real worker without calling a provider.
         studio = object.__new__(Studio)
         studio.engine = ENGINE; studio.workspace = self.p.parent.resolve(); studio.data = Path(self.temp.name)/'data'
-        studio.lock = threading.RLock(); studio.jobs = {}; studio.credentials = {}
+        studio.lock = threading.RLock(); studio.jobs = {}; studio.autoruns = {}; studio.credentials = {}
         detail = studio.detail(self.p.name)
         value = copy.deepcopy(RAW)
         value.update(video_titles=['原视频标题', '选择的视频标题', '备选视频标题'],

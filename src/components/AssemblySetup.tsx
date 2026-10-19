@@ -86,10 +86,11 @@ function Segmented({ label, name, options, value, disabled, onChange }: {
 /**
  * Assembly's choices, saved directly from its page. The inspector (standard assembly) shows every
  * group with the basics first; the brief (Claude Code editing) shows only the choices Claude Code
- * follows. How the video moves, cuts, captions and sounds is Claude Code's to design.
+ * follows. How the video moves, cuts, captions and sounds is Claude Code's to design. Auto production
+ * shows the basics of either method and whether to make the 3:4 copy; its panels stay on the Assembly page.
  */
 export default function AssemblySetup({ variant = "inspector", step5, panels, music, userMusic, copy, opening, disabled, musicUrl, onChange, onAddMusic }: {
-  variant?: "inspector" | "brief";
+  variant?: "inspector" | "brief" | "auto";
   step5: Values;
   panels: Values;
   music: string[];
@@ -105,7 +106,8 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
 }) {
   const uid = useId();
   const { t } = useI18n();
-  const brief = variant === "brief";
+  // The choices Claude Code follows, in its brief or in auto production with Claude Code editing.
+  const brief = variant === "brief" || (variant === "auto" && step5.assembly_method === "agent");
   const set5 = (patch: Patch) => onChange("step5", patch);
   const setPanel = (patch: Patch) => onChange("three_by_four", patch);
 
@@ -189,7 +191,7 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
         onClick={togglePreview}>
         {playing ? <Pause size={15} /> : <Play size={15} />}
       </button>
-      {brief && <button type="button" className="icon-button" disabled={disabled} aria-label={t("Add music…")} title={t("Add music…")}
+      {variant !== "inspector" && <button type="button" className="icon-button" disabled={disabled} aria-label={t("Add music…")} title={t("Add music…")}
         onClick={onAddMusic}><FolderOpen size={15} /></button>}
     </div>
     <audio ref={player} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
@@ -275,6 +277,28 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
         </label>
       </div>
     </fieldset>
+  </div>;
+
+  if (variant === "auto") return <div className="assembly-setup auto">
+    <div className="setup-group" role="group" aria-labelledby={`${uid}-auto-video`}>
+      <h3 id={`${uid}-auto-video`}>{t("Video")}</h3>
+      {sizeField}
+      {speedField}
+      {subtitlesField}
+      <label className="checkbox checkbox-hinted">
+        <input type="checkbox" disabled={disabled} checked={enabled} onChange={(e) => setPanel({ enabled: e.target.checked })} />
+        <span>{t("Also make the 3:4 copy")}<small>{t("Its panels are designed on the Assembly page.")}</small></span>
+      </label>
+    </div>
+    <div className="setup-group" role="group" aria-labelledby={`${uid}-auto-music`}>
+      <h3 id={`${uid}-auto-music`}>{t("Background music")}</h3>
+      {trackField}
+      {brief ? mixField : levelFields}
+    </div>
+    {!brief && <div className="setup-group" role="group" aria-labelledby={`${uid}-auto-pictures`}>
+      <h3 id={`${uid}-auto-pictures`}>{t("Pictures & transitions")}</h3>
+      {pictureFields}
+    </div>}
   </div>;
 
   if (brief) return <section className="assembly-setup brief" aria-label={t("Assembly setup")}>

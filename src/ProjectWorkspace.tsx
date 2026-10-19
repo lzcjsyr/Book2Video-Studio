@@ -31,6 +31,7 @@ import {
   Trash2,
   Undo2,
   X,
+  Zap,
 } from "lucide-react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -42,6 +43,9 @@ import {
   projectRoute,
 } from "./api";
 import type {
+  AutoPlan,
+  AutoRun,
+  AutoRunOptions,
   Bootstrap,
   ClaudeCodeMode,
   ClaudeCodeStatus,
@@ -80,6 +84,8 @@ import { useCollapsed } from "./collapse";
 import { parseSegmentNumbers } from "./visual-generation";
 import { librarySettings } from "./library";
 import { distinctGaps, keyNeeds, providerName, unmet, type NeedId } from "./keys";
+import AutoProduction from "./components/AutoProduction";
+import { autoNeeds } from "./autorun";
 import type { KeyStatus } from "./components/ApiKeysPanel";
 
 // Stage ids are the step numbers people see; the service translates them for the CLI engine.
@@ -115,7 +121,6 @@ const stages: {
   { id: "5", number: "5", name: "Assembly", description: "Video & sound mix", icon: Film },
   { id: "6", number: "6", name: "Covers", description: "The final impression", icon: Image },
 ];
-const order = stages.map((s) => s.id);
 // Recordings, visuals and assembly leave the text as it is, so covers are made beside them.
 const besideCovers: Stage[] = ["3", "4", "5"];
 const stageNumber = (id: Stage) => stages.find((s) => s.id === id)?.number || id;
@@ -154,6 +159,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     [projects, setProjects] = useState<Project[]>([]),
     [detail, setDetail] = useState<Detail | null>(null),
     [step, setStep] = useState<Stage>(tab.initialStage || "4"),
+    // Auto production replaces the step pages in the main area while it is open.
+    [autoView, setAutoView] = useState(false),
     [selected, setSelected] = useState(1);
   const [draft, setDraft] = useState<TextData>({}),
     [draftSelections, setDraftSelections] = useState(() => primarySelections({})),
@@ -165,6 +172,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   const unsaved = dirty || directionDirty;
   const [search, setSearch] = useState(""),
     [jobs, setJobs] = useState<Job[]>([]),
+    [autoruns, setAutoruns] = useState<AutoRun[]>([]),
     [launch, setLaunch] = useState<Launch | null>(null),
     [agentVisible, setAgentVisible] = useState(true),
     [agentWidth, setAgentWidth] = useState(352),
@@ -190,7 +198,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     [scope, setScope] = useState("selected"),
     [visualScope, setVisualScope] = useState("missing"),
     [visualNumbers, setVisualNumbers] = useState(""),
-    [rebuild, setRebuild] = useState(false),
     [withOpening, setWithOpening] = useState(false),
     [coverIndex, setCoverIndex] = useState(0);
   // Assembly always makes the 16:9 video; the 3:4 copy is optional and has a layout preview of its panels.
@@ -208,7 +215,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     jobsSeen = useRef(new Set<string>()),
     // Jobs that ended before this window opened (a reload, a reconnect) are not news.
     openedAt = useRef(Date.now() / 1000),
-    queue = useRef<Stage[]>([]),
+    // Automatic runs whose end was already announced (or that ended before this window opened).
+    runsSeen = useRef(new Set<string>()),
     video = useRef<HTMLVideoElement>(null),
     revisionRef = useRef(""),
     stepRef = useRef<Stage>("4");
@@ -223,7 +231,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   useEffect(() => {
     setPicker(null);
     setClipView(null);
-  }, [step, detail?.id]);
+  }, [step, detail?.id, autoView]);
   // Saved API keys (names only) and the Settings tab to open, for key reminders.
   const [keyStatus, setKeyStatus] = useState<KeyStatus | null>(null);
   const [claudeMode, setClaudeMode] = useState<ClaudeCodeMode>("api_key");
@@ -244,6 +252,10 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   // New images picked while a job runs wait here, and start together when it ends.
   const queuedJob = jobs.find((j) => j.project === detail?.id && j.status === "queued");
   const queuedParts = queuedJob ? [...(queuedJob.opening ? [0] : []), ...(queuedJob.scope || [])] : [];
+  // The project's latest automatic run. While it runs it holds the project, between its jobs too.
+  const autoRun = autoruns.find((r) => r.project === detail?.id) || null;
+  const autoRunning = Boolean(autoRun && ["running", "stopping"].includes(autoRun.status));
+  const jobLock = Boolean(activeJob) || autoRunning;
   const activeAgent = Boolean(detail?.state.agent_active);
   const savedWriting = detail ? writingOptions(detail, bootstrap) : null;
   const writing = writingDraft && writingDraft.project === detail?.id ? writingDraft.options : savedWriting;
@@ -262,8 +274,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   const manualItem = modalDirty ? (modal === "settings" ? "Settings" : "Skills & templates") : "";
   useEffect(() => {
     onStatus(tab.key, { projectId: detail?.id, title: projectTitle, dirty: hasDraft,
-      running: Boolean(runningJobs.length || activeAgent), closeReason, unsaved: unsavedItems, manual: manualItem });
-  }, [tab.key, detail?.id, projectTitle, hasDraft, runningJobs.length, activeAgent, closeReason, unsavedItems, manualItem, onStatus]);
+      running: Boolean(runningJobs.length || activeAgent || autoRunning), closeReason, unsaved: unsavedItems, manual: manualItem });
+  }, [tab.key, detail?.id, projectTitle, hasDraft, runningJobs.length, activeAgent, autoRunning, closeReason, unsavedItems, manualItem, onStatus]);
   useEffect(() => {
     if (!active) {
       shell.current?.querySelectorAll<HTMLMediaElement>("audio,video").forEach(media => media.pause());
@@ -372,8 +384,10 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     if (!bootstrap) return;
     const timer = setInterval(async () => {
       try {
-        const list = await api<Job[]>("/jobs");
+        const [list, runs] = await Promise.all([api<Job[]>("/jobs"), api<AutoRun[]>("/autoruns")]);
         setJobs(list);
+        setAutoruns(runs);
+        const runJobs = new Set(runs.flatMap((r) => r.steps.flatMap((s) => s.jobs)));
         for (const j of list) {
           if (
             !["queued", "running", "cancelling"].includes(j.status) &&
@@ -381,25 +395,21 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
           ) {
             jobsSeen.current.add(j.id);
             if (j.project === projectRef.current && j.started >= openedAt.current) {
-              const d = await load(j.project);
-              notice(j.result?.message || `Step ${stageNumber(j.step)} ${j.status}`);
-              // Covers, the last step, can run beside a rebuild without moving it along.
-              if (j.step === "6") continue;
-              if (
-                j.status === "succeeded" &&
-                queue.current.length &&
-                d.ready[j.step] &&
-                !d.state.stale[j.step]
-              ) {
-                const next = queue.current.shift()!;
-                setStep(next);
-                initializeDraft(d, next);
-                notice(
-                  `Next rebuild: ${stages.find((s) => s.id === next)?.name}. Review the outputs, then generate to continue.`,
-                );
-              } else if (j.status !== "succeeded") queue.current = [];
+              await load(j.project);
+              if (!runJobs.has(j.id)) notice(j.result?.message || `Step ${stageNumber(j.step)} ${j.status}`);
             }
           }
+        }
+        for (const r of runs) {
+          if (["running", "stopping"].includes(r.status) || runsSeen.current.has(r.id)) continue;
+          runsSeen.current.add(r.id);
+          if (r.project !== projectRef.current || (r.ended ?? 0) < openedAt.current) continue;
+          await load(r.project);
+          const at = r.steps.find((s) => ["failed", "stopped"].includes(s.status));
+          const name = stages.find((s) => s.id === at?.step)?.name || "";
+          notice(r.status === "succeeded" ? "Auto production finished. The video and covers are ready to review."
+            : r.status === "stopped" ? "Auto production stopped. Finished steps keep their outputs."
+            : at?.message ? `Auto production stopped at ${name}: ${at.message}` : `Auto production stopped at ${name}.`);
         }
         if (
           projectRef.current &&
@@ -435,9 +445,18 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       return;
     }
     setStep(s);
+    setAutoView(false);
     if (!["2", "3", "4", "5"].includes(s) && selected === 0) setSelected(1);
     setSearch("");
     if (detail) initializeDraft(detail, s);
+  }
+  function openAuto() {
+    if (unsaved || writingPending) {
+      notice(writingPending ? "Save your writing setup before switching stages." : "Save your text changes before switching stages.");
+      return;
+    }
+    setAutoView(true);
+    setSearch("");
   }
   function changeSegment(n: number) {
     // Segments edits every row in place; other stages edit only the selected one.
@@ -524,7 +543,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   const coverAgent = keySettings.step6?.cover_method === "agent";
   // The pane stays mounted elsewhere so a running session survives navigation.
   const assemblyAgent = keySettings.step5?.assembly_method === "agent";
-  const agentStep = (step === "5" && assemblyAgent) || step === "1" || step === "4" || (step === "6" && coverAgent);
+  const agentStep = !autoView && ((step === "5" && assemblyAgent) || step === "1" || step === "4" || (step === "6" && coverAgent));
   const agentShown = agentStep && agentVisible;
   const hasMotion = Boolean(detail?.segments.some((s) => s.visualizer === "hf"));
   const missingKeys = detail ? unmet(keyNeeds(keySettings, { motion: true, subscription: claudeMode === "subscription" }), keyStatus?.saved) : [];
@@ -591,7 +610,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     portraitStale = Boolean(detail?.state.three_by_four_stale);
   // The 3:4 copy shows the layout of its panels until a copy matching them exists.
   const portraitShows = portraitView ?? (portraitFile && portraitEnabled && !portraitStale ? "video" : "layout");
-  const showingLayout = step === "5" && exportVariant === "portrait" && portraitShows === "layout";
+  const showingLayout = !autoView && step === "5" && exportVariant === "portrait" && portraitShows === "layout";
   const currentLayout = layoutPreview && layoutPreview.project === detail?.id ? layoutPreview : null;
   const variantStatus = (variant: "landscape" | "portrait"): [string, string] => {
     const file = variant === "landscape" ? landscapeFile : portraitFile;
@@ -704,18 +723,10 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                 notice("Rendering covers from Claude Code's HTML designs…");
               })
               .catch((e) => notice(String(e)));
-          if (
-            !d.warning &&
-            queue.current.length &&
-            d.ready[stepRef.current] &&
-            !d.state.stale[stepRef.current]
-          ) {
-            const next = queue.current.shift()!;
-            setStep(next);
-            initializeDraft(d, next);
-            notice(
-              `Next rebuild: ${stages.find((s) => s.id === next)?.name}. Review and generate when ready.`,
-            );
+          // A first manuscript leads straight to setting up the rest of the production.
+          if (d.finished?.step === "1" && !d.warning && d.ready["1"] && !d.segments.length) {
+            setAutoView(true);
+            notice("Manuscript saved. Set up the remaining steps, then start auto production.");
           }
         })
         .catch((e) => notice(String(e)));
@@ -728,10 +739,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     }
     await action(async () => {
       if (unsaved) throw new Error(t("Save changes before generating."));
-      if (rebuild)
-        queue.current = order
-          .slice(order.indexOf(step) + 1)
-          .filter((s) => !(s === "6" && ["3", "4", "5"].includes(step)));
       if (step === "1" || (step === "6" && coverAgent) || (step === "5" && assemblyAgent)) {
         setModal(null);
         await activate();
@@ -766,6 +773,25 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       );
     });
   }
+  /** Start auto production with the project's saved settings, once the keys its plan needs are saved. */
+  async function startAuto(options: AutoRunOptions, plan: AutoPlan) {
+    if (!detail) return;
+    if (!keysReady(autoNeeds(plan, keySettings, { motion: hasMotion, summary: Boolean(String(detail.summary.summary || "").trim()) }))) return;
+    await action(async () => {
+      if (unsaved || writingPending) throw new Error(t("Save changes before generating."));
+      const run = await api<AutoRun>(projectRoute(detail.id) + "/autorun", options);
+      setAutoruns((runs) => [...runs.filter((r) => r.project !== run.project), run]);
+      notice("Auto production started. Follow it here, or keep working in another project.");
+    });
+  }
+  async function stopAuto() {
+    if (!autoRun) return;
+    const id = autoRun.id;
+    await action(async () => {
+      const run = await api<AutoRun>(`/autoruns/${encodeURIComponent(id)}/stop`, {});
+      setAutoruns((runs) => runs.map((r) => (r.id === run.id ? run : r)));
+    });
+  }
   function openLibrary(group = step === "4" ? "image_styles" : step === "6" ? "cover_styles" : "writing_skills") {
     const setting = librarySettings[group];
     const id = group === "writing_skills" ? writing?.agent_skill || "" : setting ? String(detail?.state.settings[setting[0]]?.[setting[1]] ?? bootstrap?.defaults[setting[0]]?.[setting[1]] ?? "") : "summary";
@@ -777,7 +803,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   }
   /** Save some of a step's settings from its page; the service marks what they outdate. */
   async function saveSettings(section: string, patch: Record<string, unknown>) {
-    if (!detail || activeJob || activeAgent) return false;
+    if (!detail || jobLock || activeAgent) return false;
     let saved = false;
     await action(async () => {
       const updated = await api<Detail>(projectRoute(detail.id) + "/settings", { settings: { [section]: patch } });
@@ -897,6 +923,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   }
   /** Why a part's visual cannot change right now, or "" when it can. */
   function takeLock(index: number) {
+    if (autoRunning) return "Wait for auto production to finish.";
     if (activeJob) return "Wait for the running job to finish.";
     if (agentSegments.includes(index) || (activeAgent && detail?.state.agent_active?.step !== "4"))
       return "Finish the Claude Code session first.";
@@ -912,14 +939,15 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   }
   /** Why a new image or clip cannot be made right now, or "" when it can. */
   function makeLock() {
+    if (autoRunning) return "Wait for auto production to finish.";
     if (activeJob) return "Wait for the running job to finish.";
     return imageLock();
   }
   const closePicker = useCallback(() => setPicker(null), []);
   function newImage(index: number) {
     setPicker(null);
-    // While a job runs, the image waits in the queue instead.
-    if (activeJob || queuedJob) queueImage(index);
+    // While a job (or auto production) runs, the image waits in the queue instead.
+    if (jobLock || queuedJob) queueImage(index);
     else if (index === 0) startVisualJob({ mode: "opening", opening: true, indices: [] }, "Generating a new opening background.");
     else startVisualJob({ mode: "static", indices: [index] }, `Generating a new image for segment ${index}.`);
   }
@@ -1009,7 +1037,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       const removesCurrent = Boolean(detail && ids.includes(detail.id));
       if (removesCurrent && (writingPending || unsaved))
         throw new Error(t("Save your edits before removing this project."));
-      if (removesCurrent && (activeAgent || activeJob))
+      if (removesCurrent && (activeAgent || jobLock))
         throw new Error(t("Finish the active job or agent before removing this project."));
       await api("/projects/remove", { ids, delete_files: deleteFiles });
       const list = await api<Project[]>("/projects");
@@ -1150,10 +1178,10 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
             <span className="status-dot" />
             {t("Unsaved changes")}
           </span>
-        ) : runningJobs.length ? (
+        ) : runningJobs.length || autoRunning ? (
           <span className="header-save-state running">
             <Loader2 size={12} className="spin" />
-            {t("Production running")}
+            {t(autoRunning ? "Auto production running" : "Production running")}
           </span>
         ) : null}
         {detail && projectGaps.length > 0 && (
@@ -1255,12 +1283,13 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
           <div className="stage-list">
             {stages.map((s) => {
               const ready = detail?.ready[s.id],
-                stale = detail?.state.stale[s.id];
+                stale = detail?.state.stale[s.id],
+                working = runningJobs.some((j) => j.step === s.id) || (autoRunning && autoRun?.current === s.id);
               return (
                 <button
                   key={s.id}
-                  className={`stage-item${step === s.id ? " active" : ""}${stale ? " stale" : ""}${ready ? " done" : ""}`}
-                  aria-current={step === s.id ? "step" : undefined}
+                  className={`stage-item${step === s.id && !autoView ? " active" : ""}${stale ? " stale" : ""}${ready ? " done" : ""}`}
+                  aria-current={step === s.id && !autoView ? "step" : undefined}
                   title={stale ? t(stale.reason) : undefined}
                   onClick={() => changeStage(s.id)}
                 >
@@ -1270,8 +1299,10 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                     <small>{t(s.description)}</small>
                   </span>
                   {/* The check means the step has what the next one needs; outdated is shown beside it. */}
-                  {stale && <span className="stale-dot" title={t(stale.reason)} />}
-                  {ready ? (
+                  {stale && !working && <span className="stale-dot" title={t(stale.reason)} />}
+                  {working ? (
+                    <Loader2 size={13} className="spin stage-working" aria-label={t("Running")} />
+                  ) : ready ? (
                     <Check size={13} className="stage-check" />
                   ) : !stale && (
                     <span className="stage-empty-dot" />
@@ -1280,6 +1311,28 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
               );
             })}
           </div>
+          <button
+            className={`autorun-entry${autoView ? " active" : ""}${autoRunning ? " running" : ""}`}
+            aria-current={autoView ? "page" : undefined}
+            disabled={!detail}
+            onClick={openAuto}
+          >
+            <span className="autorun-icon" aria-hidden="true">
+              {autoRunning ? <Loader2 size={13} className="spin" /> : <Zap size={13} />}
+            </span>
+            <span className="stage-text">
+              <strong>{t("Auto production")}</strong>
+              <small>
+                {autoRun?.status === "stopping"
+                  ? t("Stopping…")
+                  : autoRunning
+                    ? t("Running · {step}", { step: t(stages.find((s) => s.id === autoRun?.current)?.name || "Starting…") })
+                    : autoRun
+                      ? t(autoRun.status === "succeeded" ? "Last run finished" : autoRun.status === "stopped" ? "Last run was stopped" : "Last run failed")
+                      : t("Steps 2–6 in one run")}
+              </small>
+            </span>
+          </button>
           <div className="sidebar-bottom">
             <button disabled={!detail} title={detail?.path} onClick={() => showFiles("")}>
               <FolderOpen size={14} /> {t("Show project folder")}
@@ -1321,6 +1374,42 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                 </button>
               </div>
             </div>
+          ) : autoView ? (
+            <>
+              <div className="production-heading">
+                <div className="production-name">
+                  <Zap size={18} />
+                  <h1>{t("Auto production")}</h1>
+                  <span className={`stage-status ${autoRunning ? "running" : autoRun?.status === "succeeded" ? "ready" : autoRun ? "needs-rebuild" : ""}`}>
+                    <span className="status-dot" />
+                    {t(autoRun?.status === "stopping" ? "Stopping…" : autoRunning ? "Running" : autoRun
+                      ? autoRun.status === "succeeded" ? "Last run finished" : autoRun.status === "stopped" ? "Last run was stopped" : "Last run failed"
+                      : "Ready to set up")}
+                  </span>
+                </div>
+                <div className="production-actions">
+                  <button className="icon-button" aria-label={t("Refresh project outputs")} title={t("Refresh project outputs")}
+                    onClick={() => action(async () => { await load(detail.id); notice("Outputs refreshed."); })}>
+                    <RefreshCw size={15} />
+                  </button>
+                </div>
+              </div>
+              {/* Its own scroll position: the page opens at the top, not where the step page was. */}
+              <div className="stage-content" key="auto-production">
+                <AutoProduction detail={detail} bootstrap={bootstrap} settings={keySettings} run={autoRun} jobs={jobs}
+                  locked={busy || activeAgent || jobLock || unsaved || writingPending}
+                  lockReason={activeAgent ? "Finish the Claude Code session first." : jobLock ? "Wait for the running job to finish."
+                    : unsaved || writingPending ? "Save your changes first." : busy ? "Working…" : ""}
+                  subscription={claudeMode === "subscription"}
+                  gaps={(plan) => {
+                    const ids = autoNeeds(plan, keySettings, { motion: hasMotion, summary: Boolean(String(detail.summary.summary || "").trim()) });
+                    return missingKeys.filter((n) => ids.includes(n.id));
+                  }}
+                  onSettings={saveSettings} onOpenStep={changeStage} onLibrary={openLibrary} onSettingsModal={openSettings}
+                  onAddMusic={addMusic} onToggleOpening={toggleOpening} onStart={startAuto} onStop={stopAuto}
+                  musicUrl={musicUrl} onError={notice} />
+              </div>
+            </>
           ) : (
             <>
               <div className={`production-heading${step === "4" ? " visual-generation-heading" : ""}`}>
@@ -1337,7 +1426,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                   {(detail.state.stale[step] || (step === "4" && detail.state.summary_stale) || (step === "5" && detail.state.three_by_four_stale)) && (
                     <button
                       className="button small"
-                      disabled={busy || Boolean(activeJob) || activeAgent}
+                      disabled={busy || jobLock || activeAgent}
                       title={t("Keep these outputs as they are. Nothing is regenerated.")}
                       onClick={() =>
                         action(async () => {
@@ -1381,10 +1470,10 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                       <Save size={13} /> {t("Save changes")}
                     </button>
                   )}
-                  {step === "2" && <SegmentationControls settings={keySettings.step2 || {}} disabled={busy || activeAgent || Boolean(activeJob)}
+                  {step === "2" && <SegmentationControls settings={keySettings.step2 || {}} disabled={busy || activeAgent || jobLock}
                     onChange={(patch) => saveSettings("step2", patch)} />}
                   {step === "4" && <select className="visual-generation-scope" aria-label={t("Generation scope")}
-                    disabled={busy || unsaved || Boolean(activeJob) || activeAgent} value={visualScope}
+                    disabled={busy || unsaved || jobLock || activeAgent} value={visualScope}
                     onChange={(e) => {
                       setVisualScope(e.target.value);
                       if (e.target.value === "selected" && !visualNumbers.trim()) setVisualNumbers(String(selected));
@@ -1396,11 +1485,11 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                   {step === "4" && visualScope === "selected" && <input className="visual-generation-numbers"
                     aria-label={t("Segment numbers")} value={visualNumbers} placeholder="2, 5-8"
                     title={t(visualSelectionError || (openingEnabled ? "Enter numbers or ranges, for example 2, 5-8. Use 0 for the opening." : "Enter numbers or ranges, for example 2, 5-8."))}
-                    aria-invalid={Boolean(visualSelectionError)} disabled={busy || unsaved || Boolean(activeJob) || activeAgent}
+                    aria-invalid={Boolean(visualSelectionError)} disabled={busy || unsaved || jobLock || activeAgent}
                     onChange={(e) => setVisualNumbers(e.target.value)} />}
                   <button
                     className="button small"
-                    disabled={busy || Boolean(activeJob) || activeAgent || (step === "4" && (unsaved || Boolean(visualSelectionError)))}
+                    disabled={busy || jobLock || activeAgent || (step === "4" && (unsaved || Boolean(visualSelectionError)))}
                     onClick={() => {
                       if (step === "4") {
                         generateVisuals();
@@ -1412,7 +1501,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                       }
                       // Outdated segments are the usual next work when there are some.
                       setScope(!["3", "4"].includes(step) ? "all" : detail.state.stale[step]?.segments.length ? "outdated" : "selected");
-                      setRebuild(false);
                       setWithOpening(selected === 0);
                       setModal("generate");
                     }}
@@ -1425,7 +1513,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                 {step === "1" ? (
                   <div className="manuscript-workspace">
                     {writing && <WritingSetup value={writing} bootstrap={bootstrap}
-                      disabled={busy || activeAgent || Boolean(activeJob)} pending={writingPending} subscription={claudeMode === "subscription"}
+                      disabled={busy || activeAgent || jobLock} pending={writingPending} subscription={claudeMode === "subscription"}
                       onClaudeMode={setClaudeMode}
                       onChange={editWriting} onEditSkill={() => openLibrary()}
                       onSave={() => action(async () => { await saveWriting(); notice("Writing setup saved."); })} />}
@@ -1434,14 +1522,14 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                       <span>{t("Source name")}</span>
                       <input value={String(draft.source_name || "")} aria-label={t("Source name")}
                         placeholder={t("For example: The Wealth of Nations | Adam Smith")}
-                        disabled={activeAgent || busy || Boolean(activeJob)}
+                        disabled={activeAgent || busy || jobLock}
                         onChange={(e) => edit({ ...draft, source_name: e.target.value })} />
                       <small className="field-hint">{t("The book or source this video is about. The opening clip shows it under the quote.")}</small>
                     </label>
                     {/* The title comes first, then the opening quote; cover text stays with the manuscript below. */}
                     <MetadataCandidates value={draft} selections={draftSelections}
                       fields={["video_titles"]} showHeading={false} className="title-candidates"
-                      disabled={activeAgent || busy || Boolean(activeJob)}
+                      disabled={activeAgent || busy || jobLock}
                       onChange={(value, selections) => { edit(value); setDraftSelections(selections); }} />
                     <section className={"opening-quote-panel" + (openingEnabled ? "" : " excluded") + (openingCollapsed ? " collapsed" : "")} aria-label={t("Opening quote")}>
                       <div className="opening-quote-heading">
@@ -1454,7 +1542,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                         {openingCollapsed && <span className="collapse-summary" title={openingSummary}>{openingSummary}</span>}
                         <label className="checkbox">
                           <input type="checkbox" checked={openingEnabled}
-                            disabled={activeAgent || busy || Boolean(activeJob)}
+                            disabled={activeAgent || busy || jobLock}
                             onChange={(e) => toggleOpening(e.target.checked)} />
                           {t("Use opening quote")}
                         </label>
@@ -1465,7 +1553,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                           : "The video will start with the manuscript. Your quote candidates and existing opening media are kept.")}</p>
                         <MetadataCandidates value={draft} selections={draftSelections}
                           fields={["golden_quotes"]} showHeading={false} hideLegend
-                          disabled={activeAgent || busy || Boolean(activeJob)}
+                          disabled={activeAgent || busy || jobLock}
                           onChange={(value, selections) => { edit(value); setDraftSelections(selections); }} />
                         {openingEnabled && !openingQuote &&
                           <p className="opening-quote-hint" role="status">{t("Enter and save an opening quote, or turn it off to continue without one.")}</p>}
@@ -1494,7 +1582,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                       value={draft}
                       fields={["cover_titles", "cover_subtitles"]}
                       selections={draftSelections}
-                      disabled={activeAgent || busy || Boolean(activeJob)}
+                      disabled={activeAgent || busy || jobLock}
                       onChange={(value, selections) => {
                         edit(value);
                         setDraftSelections(selections);
@@ -1503,7 +1591,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                     <div className="editor-actions">
                       <button
                         className="button primary"
-                        disabled={dirty || busy || activeAgent || Boolean(activeJob)}
+                        disabled={dirty || busy || activeAgent || jobLock}
                         onClick={activate}
                       >
                         <TerminalSquare size={14} />{" "}
@@ -1511,12 +1599,24 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                       </button>
                       <button
                         className="button"
-                        disabled={!dirty || busy || activeAgent || Boolean(activeJob)}
+                        disabled={!dirty || busy || activeAgent || jobLock}
                         onClick={save}
                       >
                         <Save size={14} /> {t("Save manuscript")}
                       </button>
                     </div>
+                    {detail.ready["1"] && !dirty && !activeAgent && (
+                      <div className="auto-cta">
+                        <Zap size={18} />
+                        <div>
+                          <strong>{t(detail.segments.length ? "Update the rest of the production" : "Manuscript ready")}</strong>
+                          <span>{t("Set up Segments through Covers on one page, then Studio makes the video in the background.")}</span>
+                        </div>
+                        <button className="button primary small" onClick={openAuto}>
+                          {t("Set up auto production")} <ArrowRight size={13} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : step === "2" ? (
                   <>
@@ -1525,7 +1625,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                     draft={draft.segments || []}
                     selected={selected}
                     search={search}
-                    locked={busy || activeAgent || Boolean(activeJob)}
+                    locked={busy || activeAgent || jobLock}
                     onSearch={setSearch}
                     onSelect={changeSegment}
                     onEdit={(index, key, value) => editSegment(key, value, index)}
@@ -1534,16 +1634,16 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                 ) : (
                   <div className={`media-workspace${step === "3" ? " voice-workspace" : step === "4" ? " visuals-workspace" : step === "6" ? " covers-workspace" : ""}`}>
                     {step === "5" && <AssemblyEditing settings={step5Settings} edit={detail.assembly_edit} library={bootstrap?.library}
-                      active={detail.state.agent_active?.step === "5"} locked={busy || unsaved || Boolean(activeJob) || (activeAgent && detail.state.agent_active?.step !== "5")}
+                      active={detail.state.agent_active?.step === "5"} locked={busy || unsaved || jobLock || (activeAgent && detail.state.agent_active?.step !== "5")}
                       onChange={(patch) => saveSettings("step5", patch)} onDesign={(revise) => activateFor(undefined, undefined, revise)}
                       onFinish={() => agentHandle.current?.stop()} onLibrary={() => openLibrary("assembly_skills")}>
                       {assemblyAgent && <AssemblySetup key={detail.id} variant="brief" step5={step5Settings} panels={panelSettings}
                         music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []} copy={coverCopy} opening={openingStatus}
-                        disabled={busy || Boolean(activeJob) || activeAgent} musicUrl={musicUrl} onChange={saveSettings} onAddMusic={addMusic} />}
+                        disabled={busy || jobLock || activeAgent} musicUrl={musicUrl} onChange={saveSettings} onAddMusic={addMusic} />}
                     </AssemblyEditing>}
                     {step === "6" && <>
                       <CoverSetup key={detail.id} settings={keySettings.step6 || {}} library={bootstrap?.library}
-                        disabled={busy || activeAgent || Boolean(activeJob)} copy={coverCopy}
+                        disabled={busy || activeAgent || jobLock} copy={coverCopy}
                         agentMode={claudeMode === "subscription" ? "Your Claude Code · subscription" : "Built-in Claude Code · API key"}
                         onChange={saveCoverSetting} onEditStyles={() => openLibrary("cover_styles")} />
                       {coverAgent && <section className="cover-design-actions" aria-label={t("HTML cover design")}>
@@ -1555,11 +1655,11 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                           {activeAgent && detail.state.agent_active?.step === "6" ? <button className="button small primary"
                             disabled={busy || !detail.cover_design?.complete} onClick={() => agentHandle.current?.stop()}>
                             <Play size={13} />{t("Finish & render covers")}</button> : <>
-                            <button className="button small primary" disabled={busy || unsaved || activeAgent || Boolean(activeJob)} onClick={activate}>
+                            <button className="button small primary" disabled={busy || unsaved || activeAgent || jobLock} onClick={activate}>
                               <TerminalSquare size={13} />{t("New cover design")}</button>
-                            <button className="button small" disabled={busy || unsaved || activeAgent || Boolean(activeJob) || !detail.cover_design?.files.length}
+                            <button className="button small" disabled={busy || unsaved || activeAgent || jobLock || !detail.cover_design?.files.length}
                               onClick={() => activateFor(undefined, undefined, true)}>{t("Revise HTML design")}</button>
-                            <button className="button small" disabled={busy || unsaved || activeAgent || Boolean(activeJob) || !detail.cover_design?.complete || !detail.cover_design.current}
+                            <button className="button small" disabled={busy || unsaved || activeAgent || jobLock || !detail.cover_design?.complete || !detail.cover_design.current}
                               onClick={() => action(async () => {
                                 const job = await api<Job>(projectRoute(detail.id) + "/job", { step: "6", mode: "cover_render" });
                                 setJobs((jobs) => [...jobs, job]);
@@ -1577,12 +1677,12 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                     {step === "4" && <>
                       <VisualDirection key={detail.id} handle={directionHandle} summary={String(detail.summary.summary || "")}
                         hash={detail.hashes.summary} outdated={Boolean(detail.state.summary_stale)}
-                        disabled={busy || activeAgent || Boolean(activeJob)} onSave={saveDirection}
+                        disabled={busy || activeAgent || jobLock} onSave={saveDirection}
                         generating={Boolean(activeJob?.mode === "summary")} generationBlocked={unsaved}
                         onGenerate={() => startVisualJob({ mode: "summary" }, "Generating the content summary…")}
                         onEditInstructions={() => openLibrary("summary")} onDirtyChange={setDirectionDirty} />
                       <VisualImageControls settings={keySettings.step4 || {}} library={bootstrap?.library}
-                        disabled={busy || activeAgent || Boolean(activeJob)}
+                        disabled={busy || activeAgent || jobLock}
                         onChange={(patch) => saveSettings("step4", patch)} onEdit={openLibrary} />
                     </>}
                     <div className={`preview-toolbar${step === "5" ? " output-toolbar" : ""}`}>
@@ -1607,7 +1707,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                                 {portrait && (
                                   <label className="switch" title={t(portraitEnabled ? "Stop making the 3:4 copy" : "Also make the 3:4 copy")}>
                                     <input type="checkbox" role="switch" checked={portraitEnabled} aria-label={t("Make the 3:4 copy")}
-                                      disabled={Boolean(activeJob) || activeAgent}
+                                      disabled={jobLock || activeAgent}
                                       onChange={(e) => saveSettings("three_by_four", { enabled: e.target.checked })} />
                                     <span aria-hidden="true" />
                                   </label>
@@ -1621,7 +1721,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                             const needed = !missing && (portraitStale || !portraitFile);
                             return (
                               <button type="button" className={`button small build-portrait${needed ? " primary" : ""}`}
-                                disabled={missing || busy || Boolean(activeJob) || activeAgent}
+                                disabled={missing || busy || jobLock || activeAgent}
                                 title={t(missing
                                   ? "Generate the 16:9 video first. The 3:4 copy is made from it."
                                   : "Redraws only the 3:4 copy around the current 16:9 video, much faster than generating the video.")}
@@ -1899,7 +1999,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                             editSegment("content", e.target.value)
                           }
                           disabled={
-                            selected === 0 || Boolean(activeJob) || activeAgent
+                            selected === 0 || jobLock || activeAgent
                           }
                         />
                         <div className="narration-footer">
@@ -1939,7 +2039,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                         </div>
                       </div>
                     )}
-                    {step === "3" && <VoiceControls settings={keySettings.step3 || {}} disabled={busy || activeAgent || Boolean(activeJob)}
+                    {step === "3" && <VoiceControls settings={keySettings.step3 || {}} disabled={busy || activeAgent || jobLock}
                       onChange={(patch) => saveSettings("step3", patch)} />}
                     {step === "6" && detail.covers.length > 0 && (
                       <div className="cover-grid">
@@ -1969,7 +2069,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                             <span>{t("Cover {index}", { index: i + 1 })}</span>
                           </button>
                           <DeleteControl item={t("Cover {index}", { index: i + 1 })}
-                            blocked={activeJob ? "Wait for the running job to finish." : activeAgent ? "Finish the Claude Code session first." : busy ? "Working…" : ""}
+                            blocked={jobLock ? "Wait for the running job to finish." : activeAgent ? "Finish the Claude Code session first." : busy ? "Working…" : ""}
                             onDelete={() => deleteCover(f)} />
                           </div>
                         ))}
@@ -1997,41 +2097,46 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                   } : undefined}
                 />
               )}
-              {runningJobs.map((job) => (
-                <div className="job-strip" key={job.id}>
-                  <Loader2 size={14} className="spin" />
-                  <span>
-                    {t("Step")} {stageNumber(job.step)} ·{" "}
-                    {t(job.log.at(-1) || "Starting production…")}
-                  </span>
-                  <button
-                    disabled={job.status === "cancelling"}
-                    onClick={() =>
-                      api("/jobs/" + job.id + "/cancel", {}).catch((e) =>
-                        notice(String(e)),
-                      )
-                    }
-                  >
-                    {t("Stop job")}
-                  </button>
-                </div>
-              ))}
-              {queuedJob && (
-                <div className="job-strip queued">
-                  <ListPlus size={14} />
-                  <span title={queuedParts.map(partName).join(", ")}>
-                    {t("Queued new images: {parts}", { parts: queuedParts.map(partName).join(", ") })}
-                  </span>
-                  <button disabled={busy} onClick={clearQueue}>{t("Clear queue")}</button>
-                </div>
-              )}
             </>
           )}
+          {detail && runningJobs.map((job) => {
+            // The automatic run's job: stopping it stops the run; its page shows it already.
+            const own = autoRunning && job.id === autoRun?.job;
+            if (own && autoView) return null;
+            return (
+              <div className={`job-strip${own ? " auto" : ""}`} key={job.id}>
+                <Loader2 size={14} className="spin" />
+                <span>
+                  {own && <>{t("Auto production")} · </>}
+                  {t("Step")} {stageNumber(job.step)} ·{" "}
+                  {t(job.log.at(-1) || "Starting production…")}
+                </span>
+                {own && <button onClick={openAuto}>{t("View")}</button>}
+                <button
+                  disabled={job.status === "cancelling" || autoRun?.status === "stopping"}
+                  onClick={() =>
+                    own ? stopAuto() : api("/jobs/" + job.id + "/cancel", {}).catch((e) => notice(String(e)))
+                  }
+                >
+                  {t(own ? "Stop auto production" : "Stop job")}
+                </button>
+              </div>
+            );
+          })}
+          {detail && queuedJob && (
+            <div className="job-strip queued">
+              <ListPlus size={14} />
+              <span title={queuedParts.map(partName).join(", ")}>
+                {t("Queued new images: {parts}", { parts: queuedParts.map(partName).join(", ") })}
+              </span>
+              <button disabled={busy} onClick={clearQueue}>{t("Clear queue")}</button>
+            </div>
+          )}
         </main>
-        {detail && step === "5" && !assemblyAgent && <aside className="cover-inspector" aria-label={t("Assembly setup")}>
+        {detail && step === "5" && !assemblyAgent && !autoView && <aside className="cover-inspector" aria-label={t("Assembly setup")}>
           <AssemblySetup key={detail.id} step5={step5Settings} panels={panelSettings}
             music={bootstrap?.music || []} userMusic={bootstrap?.user_music || []} copy={coverCopy} opening={openingStatus}
-            disabled={Boolean(activeJob) || activeAgent} musicUrl={musicUrl}
+            disabled={jobLock || activeAgent} musicUrl={musicUrl}
             onChange={saveSettings} onAddMusic={addMusic} />
         </aside>}
         {detail && (
@@ -2057,7 +2162,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                 directWriting={step === "1" && writing?.mode === "direct"}
                 noWritingSkill={step === "1" && writing?.agent_skill === ""}
                 claudeMode={claudeMode}
-                disabled={busy || unsaved || activeAgent || Boolean(activeJob)}
+                disabled={busy || unsaved || activeAgent || jobLock}
               />
             </div>
           </>
@@ -2083,7 +2188,9 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
         <span>
           {activeAgent
             ? t("Claude Code · interactive")
-            : busy
+            : autoRunning
+              ? t("Auto production running")
+              : busy
               ? t("Working…")
               : t("All files stay on your computer")}
         </span>
@@ -2128,7 +2235,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       {modal === "library" && <LibraryPanel initialGroup={libraryTarget.group} initialId={libraryTarget.id}
         onDirtyChange={setModalDirty}
         onClose={() => setModal(null)} onChanged={refreshLibrary}
-        onUse={detail && !unsaved && !activeJob && !activeAgent ? (group, id) => {
+        onUse={detail && !unsaved && !jobLock && !activeAgent ? (group, id) => {
           action(async () => {
             if (group === "writing_skills" && writing) {
               await saveWriting({ ...writing, agent_skill: id });
@@ -2147,13 +2254,13 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
           opening={picker.index === 0} locked={Boolean(takeLock(picker.index))} lockReason={takeLock(picker.index)}
           generating={jobCovers("static") || jobCovers("opening")}
           newImageLock={imageLock()}
-          queue={queuedParts.includes(picker.index) ? "queued" : activeJob || queuedJob ? "add" : ""}
+          queue={queuedParts.includes(picker.index) ? "queued" : jobLock || queuedJob ? "add" : ""}
           newImageLabel={queuedParts.includes(picker.index) ? "Remove from queue"
-            : activeJob || queuedJob ? (picker.index === 0 ? "Queue new background" : "Queue new image")
+            : jobLock || queuedJob ? (picker.index === 0 ? "Queue new background" : "Queue new image")
             : picker.index === 0 ? "New background" : "New image"}
           newImageHint={queuedParts.includes(picker.index)
             ? "Queued: a new image starts when the running job finishes. Click to take it out of the queue"
-            : activeJob || queuedJob ? "Starts when the running job finishes; every queued image is generated together"
+            : jobLock || queuedJob ? "Starts when the running job finishes; every queued image is generated together"
             : picker.index === 0
             ? "Generates a new background for the opening; earlier backgrounds are kept"
             : "Generated by the image service, guided by the content summary"}
@@ -2328,23 +2435,14 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                       {t("Also generate the opening")}
                     </label>
                   )}
-                  {step !== "4" && <>
-                  <label className="checkbox">
-                    <input
-                      type="checkbox"
-                      checked={rebuild}
-                      onChange={(e) => setRebuild(e.target.checked)}
-                    />{" "}
-                    {t("Queue affected later steps for rebuilding")}
-                  </label>
-                  {rebuild && (
+                  {step !== "6" && (
                     <p className="small-muted">
-                      {t(
-                        "Studio guides you through later steps, pausing for your review and interactive agents.",
-                      )}
+                      {t("Auto production can update the later steps too, in one run.")}{" "}
+                      <button type="button" className="link-button" onClick={() => { setModal(null); openAuto(); }}>
+                        {t("Open Auto production")}
+                      </button>
                     </p>
                   )}
-                  </>}
 
                 </>
               )}
@@ -2365,7 +2463,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                           disabled={
                             busy ||
                             activeAgent ||
-                            Boolean(activeJob) ||
+                            jobLock ||
                             e.files.length === 0
                           }
                           onClick={() =>

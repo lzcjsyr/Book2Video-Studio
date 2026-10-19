@@ -461,6 +461,8 @@ class Config:
         ],
     }
     SEEDREAM_V5_MIN_PIXELS = 3686400
+    # Seedream 5 rejects larger images ("image area must be at most 4624220 pixels"); larger sizes are requested smaller and scaled up.
+    SEEDREAM_V5_MAX_PIXELS = 4624220
     MIN_NUM_SEGMENTS = 5
     MAX_NUM_SEGMENTS = 100
     SPEECH_SPEED_WPM = 250

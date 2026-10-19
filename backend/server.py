@@ -27,6 +27,7 @@ import covers as cover_designs
 import editing
 import opening
 import exports
+import autorun
 
 STAGES = ["1", "2", "3", "4", "5", "6"]
 # The CLI engine numbers Segments 1.5 and keeps the content summary (part of step 4 here) as its
@@ -49,6 +50,7 @@ MOTION_PACKAGES = ("puppeteer-core", "three", "gsap")
 # The still the Assembly page shows for the 3:4 copy's panels.
 PANEL_PREVIEW = ".studio/preview_3x4.png"
 RENDER_REASON = "Render the revised motion compositions to review the new visuals"
+RENDER_COVERS = "Render the saved HTML designs to review the new covers."
 # Outdated-visual reasons that only concern a segment's previous visual type.
 TYPE_REASONS = {"Visual type changed", RENDER_REASON}
 TEXT_FILES = {"raw": "raw.json", "script": "script.json", "summary": "mini_summary.json"}
@@ -213,6 +215,8 @@ class Studio:
         self.lock = threading.RLock()
         self.preview_lock = threading.Lock()
         self.jobs = {}
+        # Automatic production runs (autorun.py), at most one listed per project.
+        self.autoruns = {}
         # Received from the native host; never included in project data or API responses.
         self.credentials = {}
         # A terminal lease belongs to this service instance; recover after an app crash.
@@ -361,6 +365,13 @@ class Studio:
 
     def state(self, p: Path):
         return read_json(p / ".studio/state.json", {"stale": {}, "reviewed": {}, "settings": {}, "source": "", "events": []})
+
+    def effective(self, state):
+        """The settings a job uses: the defaults, then the project's saved choices."""
+        settings = self.defaults()
+        for section, fields in state.get("settings", {}).items():
+            settings.setdefault(section, {}).update(fields)
+        return settings
 
     def persist(self, p: Path, state):
         atomic_json(p / ".studio/state.json", state)
@@ -778,9 +789,7 @@ class Studio:
                 ready["4"] = ready["4"] and bool(parts[0]["visual"])
             self.persist(p, state)
             # New takes, keyframes and compositions refresh the app without outdating later steps.
-            settings = self.defaults()
-            for section, fields in state.get("settings", {}).items():
-                settings.setdefault(section, {}).update(fields)
+            settings = self.effective(state)
             # Assembly renders the opening clip; it is reused while its quote, source name and background stay the same.
             opening_clip = opening.current(p, settings.get("motion_opening", {}))
             cover_design = cover_designs.detail(p, state.get("cover_design"), settings, cover_copy(raw if raw.get("content") else script))
@@ -800,13 +809,14 @@ class Studio:
         """Work on these two steps does not wait for each other: covers, and recordings, visuals or assembly."""
         return (a == "6" and b in BESIDE_COVERS) or (b == "6" and a in BESIDE_COVERS)
 
-    def running(self, project_id, step=None):
-        """A job is running that work on this step (or, without one, on anything in the project) waits for."""
+    def running(self, project_id, step=None, own=False):
+        """A job is running that work on this step (or, without one, on anything in the project) waits for.
+        An automatic run holds its project between its jobs too; `own` is the run starting its next job."""
         return any(j["project"] == project_id and j["status"] in {"running", "cancelling"} and not (step and self.beside(step, j["step"]))
-                   for j in self.jobs.values())
+                   for j in self.jobs.values()) or (not own and autorun.active(self, project_id))
 
-    def busy(self, project_id, step=None):
-        return self.running(project_id, step) or bool(self.state(self.project(project_id)).get("agent_active"))
+    def busy(self, project_id, step=None, own=False):
+        return self.running(project_id, step, own) or bool(self.state(self.project(project_id)).get("agent_active"))
 
     def save(self, project_id, body):
         p = self.project(project_id)
@@ -1226,27 +1236,16 @@ class Studio:
                         atomic_json(target, raw)
                 state.pop("agent_active", None)
                 if active["step"] == "5":
-                    # Claude Code renders and delivers final_video.mp4 itself; the 3:4 copy is then drawn around it again.
-                    info = editing.detail(p, state.get("assembly_edit"))
-                    if info and info["delivered"]:
-                        state["stale"].pop("5", None)
-                        state["reviewed"].pop("5", None)
-                        if (p / "final_video_3x4.mp4").is_file():
-                            state["three_by_four_stale"] = True
+                    warning = self.edit_ended(p, state)
+                elif active["step"] == "6":
+                    warning = self.design_ended(p, state)
+                else:
+                    if active["step"] != "1" or active.get("raw_before") != fingerprint(p / "text/raw.json"):
+                        self.invalidate(state, active["step"], active["indices"])
+                    if warning:
+                        state["stale"][active["step"]] = {"reason": warning, "segments": []}
                     else:
-                        warning = "Claude Code ended without delivering the final video. Start a new edit, or revise this one."
-                if active["step"] == "6":
-                    info = cover_designs.detail(p, state.get("cover_design"))
-                    warning = None if info and info["complete"] else "Save every cover HTML design with Claude Code before rendering."
-                if active["step"] == "6":
-                    state["stale"]["6"] = {"reason": warning or "Render the saved HTML designs to review the new covers.", "segments": []}
-                    state["reviewed"].pop("6", None)
-                elif active["step"] != "5" and (active["step"] != "1" or active.get("raw_before") != fingerprint(p / "text/raw.json")):
-                    self.invalidate(state, active["step"], active["indices"])
-                if warning:
-                    state["stale"][active["step"]] = {"reason": warning, "segments": []}
-                elif active["step"] not in {"5", "6"}:
-                    state["stale"].pop(active["step"], None)
+                        state["stale"].pop(active["step"], None)
                 if active["step"] == "4":
                     indices = active["indices"] or list(map(int, active.get("takes", {})))
                     work = {i: (takes.folder(p, i) / active["takes"][str(i)]) if str(i) in active.get("takes", {}) else self.motion_folder(p, state, i) for i in indices}
@@ -1275,33 +1274,60 @@ class Studio:
         result["finished"] = {"step": active["step"], "indices": active["indices"] or []} if active else None
         return result
 
-    def run_job(self, project_id, body):
+    @staticmethod
+    def edit_ended(p, state):
+        """Claude Code renders and delivers final_video.mp4 itself; the 3:4 copy is then drawn around it again.
+        Returns why Assembly still needs work, or None when the video was delivered."""
+        info = editing.detail(p, state.get("assembly_edit"))
+        if info and info["delivered"]:
+            state["stale"].pop("5", None)
+            state["reviewed"].pop("5", None)
+            if (p / "final_video_3x4.mp4").is_file():
+                state["three_by_four_stale"] = True
+            return None
+        warning = "Claude Code ended without delivering the final video. Start a new edit, or revise this one."
+        state["stale"]["5"] = {"reason": warning, "segments": []}
+        return warning
+
+    @staticmethod
+    def design_ended(p, state):
+        """Claude Code saved its HTML covers; they become candidates when rendered. Returns what is missing, or None."""
+        info = cover_designs.detail(p, state.get("cover_design"))
+        warning = None if info and info["complete"] else "Save every cover HTML design with Claude Code before rendering."
+        state["stale"]["6"] = {"reason": warning or RENDER_COVERS, "segments": []}
+        state["reviewed"].pop("6", None)
+        return warning
+
+    def run_job(self, project_id, body, own=False):
         p = self.project(project_id)
         with self.lock:
             step = str(body["step"])
             # Default visual generation follows each segment's saved type and runs in the job process.
             if step == "4" and body.get("mode") is None:
                 body = {**body, "mode": "segments", "batch": body.get("batch") or ("selected" if body.get("indices") is not None else "all")}
-            if self.busy(project_id, step):
+            if self.busy(project_id, step, own):
                 raise Conflict("Finish the active project job or agent first.")
             if step not in STAGES or step == "1":
                 raise ValueError("Step 1 runs interactively through Activate Claude Code.")
             if step == "4" and body.get("mode") not in {"segments", "static", "render", "opening", "summary"}:
                 raise ValueError("Unknown visual generation action.")
-            if step == "5" and body.get("mode") not in {None, "three_by_four"}:
+            # "agent": Claude Code edits the video, or designs the covers, without a terminal (automatic production).
+            if step == "5" and body.get("mode") not in {None, "three_by_four", "agent"}:
                 raise ValueError("Unknown assembly action.")
-            if step == "5" and body.get("mode") is None and self.state(p).get("settings", {}).get("step5", {}).get("assembly_method") == "agent":
-                raise ValueError("Edit the video through the interactive Claude Code terminal.")
+            if step == "5" and body.get("mode") != "three_by_four" and (self.state(p).get("settings", {}).get("step5", {}).get("assembly_method") == "agent") != (body.get("mode") == "agent"):
+                raise ValueError("Edit the video through the interactive Claude Code terminal." if body.get("mode") is None else "Choose Claude Code editing in Assembly first.")
             if step == "6":
-                if body.get("mode") not in {None, "cover_render"}:
+                if body.get("mode") not in {None, "cover_render", "agent"}:
                     raise ValueError("Unknown cover action.")
+                if body.get("mode") == "agent" and self.state(p).get("settings", {}).get("step6", {}).get("cover_method", "api") != "agent":
+                    raise ValueError("Choose Claude Code + HTML / Three.js in Cover setup first.")
                 if body.get("mode") == "cover_render":
                     info = self.detail(project_id).get("cover_design")
                     if not info or not info["complete"]:
                         raise ValueError("Save every cover HTML design with Claude Code before rendering.")
                     if not info["current"]:
                         raise ValueError("Cover copy or setup changed. Revise the HTML design before rendering.")
-                elif self.state(p).get("settings", {}).get("step6", {}).get("cover_method", "api") == "agent":
+                elif body.get("mode") is None and self.state(p).get("settings", {}).get("step6", {}).get("cover_method", "api") == "agent":
                     raise ValueError("Design covers through the interactive Claude Code terminal.")
             # Earlier steps need their outputs; an outdated output still lets later steps run.
             if step == "5" and body.get("mode") == "three_by_four":
@@ -1357,13 +1383,11 @@ class Studio:
                     raise ValueError("All static images are already available.")
                 body = {**body, "indices": indices, "opening": opening, "mode": "static"}
             if step in {"4", "6"}:
-                settings = self.defaults()
-                for section, fields in self.state(p).get("settings", {}).items():
-                    settings.setdefault(section, {}).update(fields)
+                settings = self.effective(self.state(p))
                 image_work = body.get("mode") not in {"render", "summary"}
                 if body.get("mode") == "segments":
                     image_work = body["opening"] or any(s["index"] in body["indices"] and s.get("visualizer") != "hf" for s in candidates)
-                required = ([] if body.get("mode") == "cover_render" else [("cover_styles", "step6", "cover_image_style")]) if step == "6" else [
+                required = ([] if body.get("mode") in {"cover_render", "agent"} else [("cover_styles", "step6", "cover_image_style")]) if step == "6" else [
                     ("image_styles", "step4", "image_style_preset"),
                     ("image_templates", "step4", "image_prompt_template"),
                 ] if image_work else []
@@ -1382,10 +1406,17 @@ class Studio:
             if summary:
                 paths += [p / "text/mini_summary.json"]
             if step == "5":
-                paths = [p / "final_video_3x4.mp4"] if body.get("mode") == "three_by_four" else list(p.glob("final_video*.mp4"))
+                # Claude Code may also deliver subtitles beside the video.
+                paths = [p / "final_video_3x4.mp4"] if body.get("mode") == "three_by_four" else list(p.glob("final_video*" if body.get("mode") == "agent" else "final_video*.mp4"))
                 paths = [f for f in paths if f.is_file()]
             if step == "6":
-                paths = list(p.glob("cover_*"))
+                # A design session adds HTML of its own; the covers are kept when it is rendered.
+                paths = [] if body.get("mode") == "agent" else list(p.glob("cover_*"))
+            # A Claude Code session without a terminal is prepared first: missing materials stop it before anything is kept.
+            launch = None
+            if body.get("mode") == "agent":
+                from context import prepare
+                launch = prepare(self, p, {"step": step, "headless": True})
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
                        "music_dir": str(self.music_root)}
@@ -1399,6 +1430,15 @@ class Studio:
                                claude=read_json(self.data / "claude-code.json", {"mode": "api_key"}))
             if step == "6" and body.get("mode") == "cover_render":
                 request["cover_design"] = self.state(p)["cover_design"]
+            if launch:
+                state = self.state(p)
+                # The session is the project's latest edit or design, as one made in the terminal would be.
+                if step == "5":
+                    state["assembly_edit"] = launch["assembly_edit"]
+                else:
+                    state["cover_design"] = launch["cover_design"]
+                self.persist(p, state)
+                request.update(launch=launch, claude=read_json(self.data / "claude-code.json", {"mode": "api_key"}))
             if step == "4" and body.get("mode") == "render":
                 # Each segment renders its selected motion clip, or the one clip asked for.
                 state = self.state(p)
@@ -1470,6 +1510,13 @@ class Studio:
             if job.get("mode") == "summary":
                 if direction:
                     self.direction_changed(state)
+                self.persist(p, state)
+                return
+            if job.get("mode") == "agent":
+                if job["step"] == "5":
+                    self.edit_ended(p, state)
+                else:
+                    self.design_ended(p, state)
                 self.persist(p, state)
                 return
             generated = None
@@ -1714,6 +1761,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json([studio.public_job(j) for j in studio.jobs.values()])
             if len(parts) == 4 and parts[1] == "jobs" and parts[3] == "cancel" and method == "POST":
                 return self.json(studio.cancel_job(parts[2]))
+            if parts == ["api", "autoruns"]:
+                return self.json([autorun.public(r) for r in studio.autoruns.values()])
+            if len(parts) == 4 and parts[1] == "autoruns" and parts[3] == "stop" and method == "POST":
+                return self.json(autorun.stop(studio, parts[2]))
             if len(parts) >= 3 and parts[1] == "projects":
                 project_id = parts[2]
                 if len(parts) == 3 and method == "GET":
@@ -1724,6 +1775,10 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json(studio.save(project_id, body))
                     if action == "job":
                         return self.json(studio.run_job(project_id, body))
+                    if action == "autorun":
+                        return self.json(autorun.start(studio, project_id, body))
+                    if action == "autorun-plan":
+                        return self.json(autorun.plan(studio, project_id, body))
                     if action == "queue-image":
                         return self.json(studio.queue_image(project_id, body))
                     if action == "panel-preview":

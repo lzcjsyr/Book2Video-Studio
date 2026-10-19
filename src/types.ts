@@ -132,6 +132,56 @@ export interface Job {
   mode?: string | null;
   opening?: boolean;
 }
+/** One step of an automatic run: what it is doing, or how it ended. */
+export interface AutoRunStep {
+  step: Stage;
+  status: "pending" | "running" | "done" | "skipped" | "failed" | "stopped";
+  jobs: string[];
+  message: string;
+  /** Finished, though some outputs are still marked outdated, and why. */
+  note: string;
+}
+export interface AutoRunOptions {
+  /** "missing": make missing and outdated outputs, keeping finished work. "all": make everything again. */
+  scope: "missing" | "all";
+  refresh_summary: boolean;
+  covers: boolean;
+}
+/** Automatic production: Segments through Covers, one step after another, in the background. */
+export interface AutoRun {
+  id: string;
+  project: string;
+  status: "running" | "stopping" | "succeeded" | "failed" | "stopped";
+  options: AutoRunOptions;
+  steps: AutoRunStep[];
+  current: Stage | null;
+  /** The job it waits for. */
+  job: string | null;
+  started: number;
+  ended: number | null;
+  message: string;
+}
+/** What a run would do now. Counts are absent for a step that follows new segments (`after`). */
+export interface AutoPlanStep {
+  step: Stage;
+  run: boolean;
+  /** Not part of this run (covers can be left out). */
+  off?: boolean;
+  /** Earlier steps of the run whose outputs decide this step's work. */
+  after?: Stage[];
+  jobs?: string[];
+  segments?: number;
+  opening?: boolean;
+  images?: number;
+  motion?: number;
+  summary?: "write" | "rewrite" | null;
+}
+export interface AutoPlan {
+  steps: AutoPlanStep[];
+  /** Why a run cannot start, or null. */
+  blocked: string | null;
+  segments: number;
+}
 export interface Bootstrap {
   default_location: string;
   library_folder: string;

@@ -1,39 +1,12 @@
 """Generate each selected visual using its saved type, with isolated motion sessions."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
-import os
 from pathlib import Path
-import shutil
-import subprocess
+
+from headless import claude_command, run_claude
 
 
 MOTION_CONCURRENCY = 3
-PROVIDER_ENV = (
-    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
-    "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_EFFORT_LEVEL",
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_API_KEY_FILE_DESCRIPTOR",
-)
-
-
-def claude_command(saved):
-    """Honor the same subscription/API choice as the interactive terminal."""
-    env = os.environ.copy()
-    for key in (*PROVIDER_ENV, "CLAUDECODE"):
-        env.pop(key, None)
-    if saved.get("mode") == "subscription":
-        program = saved.get("path") or shutil.which("claude")
-    else:
-        for key in ("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"):
-            env.pop(key, None)
-        program = os.environ.get("STUDIO_CLAUDE") or shutil.which("claude")
-        from core.infra.ai.claude_agent import build_step4_motion_agent_env
-        env.update(build_step4_motion_agent_env())
-    if not program or not Path(program).is_file():
-        raise ValueError("Claude Code is unavailable. Check its setup in Settings.")
-    return str(program), env
 
 
 def generate_motion(launch, program, env, max_turns):
@@ -42,22 +15,12 @@ def generate_motion(launch, program, env, max_turns):
     payload = json.loads((work / "studio-payload.json").read_text(encoding="utf-8"))
     index = payload["segmentIndex"]
     print(f"Generating motion for segment {index} with Claude Code…", flush=True)
-    with (work / "claude-session.json").open("w", encoding="utf-8") as log, (work / "claude-stderr.log").open("w", encoding="utf-8") as errors:
-        result = subprocess.run([
-            program, "-p", "Complete this segment's motion, checks and final render using the supplied task context. Finish when verified; do not wait for user input.",
-            *launch["args"], "--output-format", "json", "--max-turns", str(max_turns),
-            "--permission-mode", "acceptEdits", "--tools", "Read,Write,Edit,Bash,Glob,Grep",
-            "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep", "--setting-sources", "project,local",
-            *(["--model", env["ANTHROPIC_MODEL"]] if env.get("ANTHROPIC_MODEL") else []),
-        ], cwd=work, env=env, stdout=log, stderr=errors, text=True, timeout=1800)
-    if result.returncode:
-        raise ValueError(f"Claude Code failed for segment {index}. See {work / 'claude-session.json'}")
-    # Check the result as well as the exit code: max-turns and tool failures can exit with zero.
     try:
-        session = json.loads((work / "claude-session.json").read_text(encoding="utf-8"))
+        run_claude(program, env, launch, "Complete this segment's motion, checks and final render using the supplied task context. Finish when verified; do not wait for user input.",
+                   max_turns, 1800, work)
     except ValueError as exc:
-        raise ValueError(f"Claude Code returned an invalid result for segment {index}.") from exc
-    if session.get("is_error") or not (work / "index.html").is_file():
+        raise ValueError(f"Claude Code did not complete segment {index}. See {work / 'claude-session.json'}") from exc
+    if not (work / "index.html").is_file():
         raise ValueError(f"Claude Code did not complete segment {index}. See {work / 'claude-session.json'}")
     from core.infra.motion.renderer import render_clip
     # Cached verified output is reused; unfinished or stale output is rendered and verified here.

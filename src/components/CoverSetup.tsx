@@ -4,8 +4,8 @@ import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
 import type { LibraryCatalog, Settings } from "../types";
 
-/** The cover's creative choices, saved directly from its production page. */
-export default function CoverSetup({ settings, library, disabled, onChange, onEditStyles, copy, agentMode }: {
+/** The cover's creative choices, saved directly from its production page (or from auto production, without the heading). */
+export default function CoverSetup({ settings, library, disabled, onChange, onEditStyles, copy, agentMode, heading = true }: {
   settings: Settings[string];
   library?: LibraryCatalog;
   disabled: boolean;
@@ -13,6 +13,7 @@ export default function CoverSetup({ settings, library, disabled, onChange, onEd
   onEditStyles: () => void;
   copy: { title: string; subtitle: string };
   agentMode: string;
+  heading?: boolean;
 }) {
   const uid = useId();
   const { t } = useI18n();
@@ -31,12 +32,12 @@ export default function CoverSetup({ settings, library, disabled, onChange, onEd
   const [countText, setCountText] = useState(String(count));
   useEffect(() => setCountText(String(count)), [count]);
   return <section className="cover-setup" aria-label={t("Cover setup")}>
-    <div className="cover-setup-heading">
+    {heading && <div className="cover-setup-heading">
       <h2>{t("Cover setup")}</h2>
       <button className="button small" disabled={disabled} onClick={onEditStyles}>
         <FileText size={13} /> {t("Edit cover styles")}
       </button>
-    </div>
+    </div>}
     <div className="cover-methods" role="group" aria-label={t("Cover generation method")}>
       {(["api", "agent"] as const).map((value) => <button type="button" key={value}
         className={`cover-method${method === value ? " selected" : ""}`} aria-pressed={method === value}

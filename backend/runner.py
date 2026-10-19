@@ -111,6 +111,10 @@ def run(request):
     if step == "4" and request.get("mode") == "segments":
         from visual_generation import run as generate_visuals
         return generate_visuals(request, params, steps, call)
+    if request.get("mode") == "agent":
+        # Assembly or Covers by Claude Code without a terminal, prepared by the service (automatic production).
+        from headless import run_session
+        return run_session(request)
     if step == "4" and request.get("mode") == "render":
         from core.infra.motion.renderer import render_clip
         script = json.loads((project / "text/script.json").read_text())
