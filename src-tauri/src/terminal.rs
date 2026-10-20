@@ -104,7 +104,7 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
     };
     let command = session_command(&installation, &program, &trusted, mode, &provider)?;
     let child = pair.slave.spawn_command(command).map_err(|e| match mode {
-        Mode::ApiKey => format!("Cannot launch Claude Code: {e}. Reinstall Book2Video Studio."),
+        Mode::ApiKey => format!("Cannot launch Claude Code: {e}. Reinstall Stuff 2 Video."),
         Mode::Subscription => format!(
             "Cannot launch your Claude Code ({}): {e}. Check it in Settings → API keys.",
             program.display()

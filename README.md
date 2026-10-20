@@ -1,4 +1,4 @@
-# Book2Video Studio
+# Stuff 2 Video
 
 **English** · [简体中文](#简体中文)
 
@@ -39,7 +39,7 @@ The tab lists exactly which keys the open project needs for the whole production
 
 ### Claude Code: API key or subscription
 
-Writing, Visuals (motion segments), Assembly in Claude Code editing mode, and Covers in HTML / Three.js mode work with Claude Code in a terminal on the right. Edit every agent's instructions in **Settings → Skills & templates**, under the numbered Writing, Visual, Assembly or Cover templates. This includes Studio session guidance, motion-reference/style guidance and the Assembly template. Saved edits apply to new and revised sessions. The existing segmentation template remains in Step 2. **Settings → API keys → Claude Code** chooses how it runs:
+Writing, Visuals (motion segments), Assembly in Claude Code editing mode, and Covers in HTML / Three.js mode work with Claude Code in a terminal on the right. Everything an agent reads is in **Settings → Skills & templates**: the shared rules under **All steps**, then one template per step (Writing, Visual, Assembly or Cover); Studio only fills in values. Saved edits apply to new and revised sessions. The existing segmentation template remains in Step 2. **Settings → API keys → Claude Code** chooses how it runs:
 
 - **Built-in Claude Code · API key** (default): the copy bundled with Studio, connected to the language-model provider chosen for Writing and Motion.
 - **Your Claude Code · subscription:** the Claude Code installed on this computer, signed in with your Claude account, so your Claude plan covers those sessions and they need no key. Studio finds it (even when opened from the Finder), shows its version and sign-in, and starts it without any provider settings. Agent segmentation and the other background steps still use API keys.
@@ -48,7 +48,7 @@ Writing, Visuals (motion segments), Assembly in Claude Code editing mode, and Co
 
 | What | Where |
 |---|---|
-| Projects | `~/Movies/Book2Video Studio` by default, or any folder you choose. **Open project folder** adds an existing production. |
+| Projects | `~/Movies/Stuff 2 Video` by default, or any folder you choose. **Open project folder** adds an existing production. |
 | Skills and templates | An editable copy in the app data folder (`~/Library/Application Support/com.book2video.studio/library`). App updates add new bundled files and refresh files you never changed; your edits and deletions are kept. |
 | Logs | `logs/service.log` in the app data folder. |
 
@@ -102,9 +102,9 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 <a id="简体中文"></a>
 
-# Book2Video Studio（简体中文）
+# Stuff 2 Video（简体中文）
 
-[English](#book2video-studio) · **简体中文**
+[English](#stuff-2-video) · **简体中文**
 
 一款独立运行的桌面应用（Tauri 2），把书籍和文稿做成有旁白的视频。用 Claude Code 写稿，逐段编辑，生成配音和画面（AI 图片或 HTML / Three.js 动画），合成横屏和 3:4 视频，并制作封面。
 
@@ -152,7 +152,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 | 内容 | 位置 |
 |---|---|
-| 项目 | 默认为 `~/Movies/Book2Video Studio`，也可选择任意文件夹。**打开项目文件夹** 可添加已有的制作项目。 |
+| 项目 | 默认为 `~/Movies/Stuff 2 Video`，也可选择任意文件夹。**打开项目文件夹** 可添加已有的制作项目。 |
 | Skills 与模板 | 应用数据文件夹中的可编辑副本（`~/Library/Application Support/com.book2video.studio/library`）。应用更新会添加新的内置文件，并刷新你从未改动的文件；你的修改和删除会被保留。 |
 | 日志 | 应用数据文件夹中的 `logs/service.log`。 |
 

@@ -13,12 +13,14 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 from urllib.parse import quote
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(Path(__file__).resolve().parent)]
 import autorun
 import headless
-from server import Studio, Handler, Conflict, atomic_json
+from server import RENDER_COVERS, Studio, Handler, Conflict, atomic_json
+from test_covers import HTML as COVER_HTML
 
 ENGINE = Path(__file__).resolve().parents[2] / 'build/engine'
+SMALL_HTML_COVERS = {'cover_method': 'agent', 'cover_image_size_presets': {'16:9': '640x360'}, 'cover_image_size_keys': ['16:9'], 'cover_image_count': 1}
 RAW = {'source_name': '自动之书', 'content': '第一句话。第二句话。第三句话。', 'total_length': 15,
        'video_titles': ['自动视频'], 'cover_titles': ['封面'], 'cover_subtitles': ['副标题'], 'golden_quotes': ['开场金句。']}
 # Stands in for runner.py: makes each step's files the way the engine names them, from the job request.
@@ -27,7 +29,6 @@ import json, os, sys, time, wave
 from pathlib import Path
 request = json.loads(sys.argv[-1]); p = Path(request['project']); step, mode = request['step'], request.get('mode')
 control = json.loads((p / 'control.json').read_text()) if (p / 'control.json').is_file() else {}
-(p / 'requests.jsonl').open('a').write(json.dumps({k: request.get(k) for k in ('step', 'mode', 'indices', 'opening', 'batch')}) + '\n')
 time.sleep(control.get('sleep', {}).get(step, 0))
 if step in control.get('fail', []):
     print('STUDIO_RESULT:' + json.dumps({'success': False, 'message': f'Step {step} stand-in failed.'})); sys.exit(1)
@@ -64,9 +65,10 @@ if step == '5' and mode in (None, 'agent'):
 if step == '5' and mode == 'three_by_four':
     (p / 'final_video_3x4.mp4').write_bytes(f'portrait {time.time()}'.encode())
 if step == '6' and mode == 'agent':
+    # Like Claude Code: a real WebGL page per cover, which the real renderer turns into PNGs.
     folder = p / request['launch']['cover_design']['folder']
-    for entry in request['launch']['cover_design']['entries']: (folder / entry['html']).write_text('<html></html>')
-if step == '6' and mode != 'agent':
+    for entry in request['launch']['cover_design']['entries']: (folder / entry['html']).write_text(COVER_HTML)
+if step == '6' and mode is None:
     (p / f'cover_{time.time_ns()}.png').write_bytes(b'cover')
 print('STUDIO_RESULT:' + json.dumps(result))
 '''
@@ -83,12 +85,19 @@ class AutoRunTests(unittest.TestCase):
         self.settings({'global': {'opening_quote': True}, 'step5': {'assembly_method': 'standard', 'bgm_filename': None},
                        'three_by_four': {'enabled': False}, 'step6': {'cover_method': 'api'}})
         self.id = self.studio.project_id(self.p)
-        (root / 'engine_stand_in.py').write_text(ENGINE_STAND_IN)
+        (root / 'engine_stand_in.py').write_text(ENGINE_STAND_IN.replace('COVER_HTML', repr(COVER_HTML)))
         real = subprocess.Popen
         def popen(command, *args, **kwargs):
-            # Only the job runner is replaced; FFprobe and other tools still run.
+            # Only the job runner is replaced (FFprobe and other tools still run), and HTML covers are rendered
+            # by the real runner, in the app's environment.
             if isinstance(command, list) and len(command) > 2 and str(command[2]).endswith('runner.py'):
-                command = [sys.executable, str(root / 'engine_stand_in.py'), command[-1]]
+                request = json.loads(command[-1])
+                with (self.p / 'requests.jsonl').open('a') as log:
+                    log.write(json.dumps({k: request.get(k) for k in ('step', 'mode', 'indices', 'opening', 'batch')}) + '\n')
+                if request.get('mode') == 'cover_render':
+                    kwargs['env'] = {k: v for k, v in kwargs['env'].items() if k != 'PYTHONPATH'}
+                else:
+                    command = [sys.executable, str(root / 'engine_stand_in.py'), command[-1]]
             return real(command, *args, **kwargs)
         patcher = patch('server.subprocess.Popen', side_effect=popen)
         patcher.start()
@@ -242,8 +251,7 @@ class AutoRunTests(unittest.TestCase):
 
     def test_claude_code_editing_and_html_covers_run_without_a_terminal(self):
         self.produce()
-        self.settings({'step5': {'assembly_method': 'agent', 'video_size': '320x180'}, 'three_by_four': {'enabled': True},
-                       'step6': {'cover_method': 'agent', 'cover_image_count': 1, 'cover_image_size_keys': ['16:9']}})
+        self.settings({'step5': {'assembly_method': 'agent', 'video_size': '320x180'}, 'three_by_four': {'enabled': True}, 'step6': SMALL_HTML_COVERS})
         run = self.run_to_end(scope='all')
         self.assertEqual(run['status'], 'succeeded', run)
         work = [(r['step'], r['mode']) for r in self.requests()][-4:]
@@ -251,9 +259,41 @@ class AutoRunTests(unittest.TestCase):
         detail = self.studio.detail(self.id)
         self.assertTrue(detail['assembly_edit']['delivered'])
         self.assertTrue(detail['cover_design']['complete'])
+        from PIL import Image
+        rendered = [c for c in detail['covers'] if c.startswith('cover_640x360_1_')]
+        sizes = []
+        for cover in rendered:
+            with Image.open(self.p / cover) as image: sizes.append(image.size)
+        self.assertEqual(sizes, [(640, 360)])
         self.assertNotIn('5', detail['state']['stale'])
         self.assertNotIn('three_by_four_stale', detail['state'])
         self.assertIsNone(detail['state'].get('agent_active'))
+
+    def test_a_saved_cover_design_is_rendered_not_designed_again(self):
+        """A design whose render failed (or was never rendered) still matches the cover copy and setup: the next run renders it."""
+        self.produce()
+        self.settings({'step6': SMALL_HTML_COVERS})
+        job = self.studio.run_job(self.id, {'step': '6', 'mode': 'agent'})
+        self.wait()
+        self.assertEqual(self.studio.jobs[job['id']]['status'], 'succeeded')
+        self.assertEqual(self.studio.state(self.p)['stale']['6']['reason'], RENDER_COVERS)
+        # Earlier covers exist and the design waits for its render; then, with no covers and nothing marked outdated.
+        for prepare in [lambda: None, lambda: self.clear_covers()]:
+            prepare()
+            plan = {s['step']: s for s in autorun.plan(self.studio, self.id, {})['steps']}
+            self.assertEqual(plan['6']['jobs'], ['covers'])
+            (self.p / 'requests.jsonl').unlink(missing_ok=True)
+            run = self.run_to_end()
+            self.assertEqual(run['status'], 'succeeded', run)
+            self.assertEqual([(r['step'], r['mode']) for r in self.requests()], [('6', 'cover_render')])
+            self.assertTrue(any(c.startswith('cover_640x360_1_') for c in self.studio.detail(self.id)['covers']))
+        # Everything again designs anew.
+        plan = {s['step']: s for s in autorun.plan(self.studio, self.id, {'scope': 'all'})['steps']}
+        self.assertEqual(plan['6']['jobs'], ['design', 'covers'])
+
+    def clear_covers(self):
+        for cover in self.p.glob('cover_*'): cover.unlink()
+        state = self.studio.state(self.p); state['stale'].pop('6', None); self.studio.persist(self.p, state)
 
     def test_a_background_edit_has_no_terminal_kickoff_or_terminal_permissions(self):
         self.produce()
@@ -262,7 +302,7 @@ class AutoRunTests(unittest.TestCase):
         self.wait()
         args = self.studio.jobs[job['id']]['result']['args']
         import editing
-        self.assertNotIn(editing.KICKOFF[False], args)
+        self.assertNotIn('开始。', args)
         self.assertNotIn('--allowedTools', args)
         self.assertEqual(args[args.index('--add-dir') - 2], '--append-system-prompt-file')
         with self.assertRaisesRegex(ValueError, 'interactive Claude Code terminal'):
@@ -286,7 +326,7 @@ class AutoRunTests(unittest.TestCase):
             result = headless.run_session({'step': '5', 'project': str(project), 'launch': launch})
         self.assertTrue(result['success'])
         argv = json.loads((project / 'argv.json').read_text())
-        self.assertEqual(argv[:2], ['-p', headless.SESSIONS['5'][0]])
+        self.assertEqual(argv[:2], ['-p', headless.first_message()])
         for flag in ['--permission-mode', 'acceptEdits', '--output-format', 'json', '--session-id']: self.assertIn(flag, argv)
         (project / 'final_video.mp4').unlink()
         claude.write_text(f'#!{sys.executable}\nprint("{{\\"is_error\\": false}}")\n')
@@ -297,12 +337,16 @@ class AutoRunTests(unittest.TestCase):
         server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         server.studio, server.token = self.studio, 'token'
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         def call(method, path, body=None):
             connection = http.client.HTTPConnection('127.0.0.1', server.server_port)
             connection.request(method, quote(path), json.dumps(body) if body is not None else None, {'Authorization': 'Bearer token'})
             response = connection.getresponse()
-            return response.status, json.loads(response.read())
+            try:
+                return response.status, json.loads(response.read())
+            finally:
+                connection.close()
         status, plan = call('POST', f'/api/projects/{self.id}/autorun-plan', {'scope': 'missing'})
         self.assertEqual((status, plan['steps'][0]['run']), (200, True))
         self.assertEqual(call('POST', f'/api/projects/{self.id}/autorun', {'scope': 'nothing'})[0], 400)

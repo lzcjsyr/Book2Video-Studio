@@ -1,15 +1,29 @@
 """Cover agent contracts, retained candidates, and real bundled WebGL rendering."""
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import covers
-from server import Studio, atomic_json, engine_settings
+from server import RENDER_COVERS, Studio, atomic_json, engine_settings
+
+
+def size(path):
+    from PIL import Image
+    with Image.open(path) as image:
+        return image.size
+
+
+def packaged():
+    """The environment the app starts its processes in: the native host clears PYTHONPATH."""
+    return {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
 
 DESKTOP = Path(__file__).resolve().parents[2]
 ENGINE = DESKTOP / 'build/engine'
@@ -101,7 +115,7 @@ class CoverAgentTests(unittest.TestCase):
     def test_invalid_agent_template_is_rejected_before_a_session_is_created(self):
         item=self.studio.library.item('templates','step6_cover_agent.md')
         with self.assertRaisesRegex(ValueError,'variables'):
-            self.studio.library.save({'group':'templates','id':item['id'],'value':item['value'].replace('{entries_json}',''),'expected_hash':item['hash']})
+            self.studio.library.save({'group':'templates','id':item['id'],'value':item['value'].replace('{covers}',''),'expected_hash':item['hash']})
         Path(item['path']).write_text('Invalid external edit {unknown}')
         with self.assertRaisesRegex(ValueError,'sections'):self.activate()
         self.assertNotIn('agent_active',self.studio.state(self.p))
@@ -157,6 +171,25 @@ class CoverAgentTests(unittest.TestCase):
         self.assertFalse(set(first['covers']) & set(second['covers']))
         self.assertEqual(previous.read_bytes(),b'previous')
         self.assertEqual(len(self.studio.detail(self.id)['covers']),5)
+    def test_the_agents_render_script_and_the_render_job_work_as_the_app_runs_them(self):
+        """Regression: both started a Python that could not import the engine (No module named 'core')."""
+        from PIL import Image
+        launch=self.activate();work=self.compose(launch)
+        # Claude Code previews with render.py from its own shell.
+        result=subprocess.run([sys.executable,'render.py'],cwd=work,env=packaged(),capture_output=True,text=True,timeout=300)
+        self.assertEqual(result.returncode,0,result.stdout[-1500:]+result.stderr[-1500:])
+        self.assertEqual(sorted(size(f) for f in (work/'previews').glob('*.png')),[(360,480),(640,360)])
+        self.assertEqual(self.studio.finish_agent(self.id,{})['state']['stale']['6']['reason'],RENDER_COVERS)
+        # Finish & render covers (and auto production) run the service's render job in its own process.
+        with patch.dict(os.environ,packaged(),clear=True):
+            job=self.studio.run_job(self.id,{'step':'6','mode':'cover_render'})
+        deadline=time.time()+300
+        while self.studio.jobs[job['id']]['status'] in {'running','cancelling'} and time.time()<deadline:time.sleep(.2)
+        ended=self.studio.jobs[job['id']]
+        self.assertEqual(ended['status'],'succeeded',[*ended['log'][-5:],ended['result']])
+        detail=self.studio.detail(self.id)
+        self.assertEqual(sorted(size(self.p/cover) for cover in detail['covers']),[(360,480),(640,360)])
+        self.assertNotIn('6',detail['state']['stale']);self.assertTrue(detail['ready']['6'])
     def test_missing_asset_fails_without_publishing_partial_covers(self):
         launch=self.activate();work=self.compose(launch)
         second=work/launch['cover_design']['entries'][1]['html']

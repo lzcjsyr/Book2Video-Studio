@@ -37,24 +37,21 @@ GROUPS = {
     "templates": ("Production templates", "prompt", "prompts"),
 }
 PROMPTS = {
-    "step1_no_skill.md": ("Writing without a skill", None, {"input_file", "output_json", "text_dir", "extra_requirements"}),
-    "step1_agent.md": ("Writing agent template", None, {"input_file", "output_json", "text_dir", "skill_path", "extra_requirements"}),
+    "agent_rules.md": ("Rules for every Claude Code session", True, {"task_file"}),
+    "step1_agent.md": ("Claude Code writing template", True, {"source", "skill", "extra_requirements", "output_json", "opening_quote_state", "project_dir", "text_dir", "input_file", "skill_path"}),
     "step1_5_segment.md": ("Segmentation template", None, {"raw_json_path", "output_json_path", "target_segments"}),
-    "step4_motion_agent.md": ("Motion agent template", True, {"skill_path_context", "style_preset", "style_context", "payload_json", "target_index_html_path"}),
+    "step4_motion_agent.md": ("Claude Code motion template", True, {"segment_count", "segments", "style_label", "style_best_for", "style_definition", "palette", "palette_definition", "style_references", "reference_limit", "recipe_paths", "reference_paths", "skill_entries", "segment_index", "duration", "work_dir", "new"}),
     "step4_opening_bg.md": ("Opening image template", True, {"summary", "style_block"}),
     "step4_safety.md": ("Image prompt refinement", True, {"prompt"}),
     "step6_cover.md": ("Cover image template", True, {"cover_title", "cover_subtitle", "style_block"}),
-    "step6_cover_agent.md": ("Claude Code cover template", True, {"design_dir", "entries_json"}),
-    "step1_studio.md": ("Writing Studio instructions", True, {"project_dir", "text_dir", "output_json", "opening_quote_state"}),
-    "step4_studio.md": ("Visuals Studio instructions", True, {"agent_prompt", "segment_index", "work_dir", "snapshots_dir", "segment_count", "task_number", "target_path", "tasks", "segments"}),
-    "step4_skill_context.md": ("Motion reference instructions", True, {"skills_root", "reference_limit", "recipe_paths", "reference_paths", "skill_entries"}),
-    "step4_style_context.md": ("Motion style instructions", True, {"style_id", "label", "official_style", "palette", "best_for", "style_definition", "palette_definition", "references"}),
+    "step6_cover_agent.md": ("Claude Code cover template", True, {"revise", "title", "subtitle", "covers", "design_dir"}),
     "step5_editing_agent.md": ("Claude Code assembly template", None, {"style", "skill_path", "materials", "video_size", "narration_speed", "subtitles", "music", "opening", "session", "work_dir", "delivery"}),
 }
 TEXT_EXTENSIONS = {".md", ".txt", ".yaml", ".yml", ".json", ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".toml"}
 TEMPLATE_SECTIONS = {
-    "step1_studio.md": {"direct", "shared"},
-    "step4_studio.md": {"segment", "new", "single", "multi", "target", "task", "finish"},
+    "agent_rules.md": {"rules", "start", "automatic"},
+    "step1_agent.md": {"main", "source", "direct", "skill", "no_skill"},
+    "step4_motion_agent.md": {"main", "segment", "new"},
     "step6_cover_agent.md": {"main", "revise"},
 }
 MAX_TEXT = 2_000_000
@@ -273,6 +270,8 @@ class Library:
             if section not in sections:
                 raise ValueError(f"Template {name} is missing its {section} section.")
             text = sections[section]
+        # Whole-line HTML comments are notes for the person editing the template; the agent never sees them.
+        text = re.sub(r"(?m)^[ \t]*<!--.*-->[ \t]*\n?", "", text).lstrip("\n")
         if PROMPTS[name][1]:
             return text.format(**values)
         for key, value in values.items():

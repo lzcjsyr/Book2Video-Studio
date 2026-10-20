@@ -11,6 +11,7 @@ export function stagedRuntime(root) {
   const manifest = JSON.parse(readFileSync(file, "utf8"));
   const tool = (name) => path.join(runtime, manifest[name]);
   const env = { ...process.env };
+  // As in the app, no PYTHONPATH: every process finds the engine itself, so a script that does not is caught here.
   for (const name of ["PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"]) delete env[name];
   Object.assign(env, {
     PATH: [...manifest.path.map((p) => path.join(runtime, p)), process.env.PATH].join(path.delimiter),
@@ -21,7 +22,6 @@ export function stagedRuntime(root) {
     PRODUCER_HEADLESS_SHELL_PATH: tool("chrome"),
     IMAGEIO_FFMPEG_EXE: tool("ffmpeg"),
     STUDIO_CLAUDE: tool("claude"),
-    PYTHONPATH: path.join(root,"build/engine"),
     PYTHONNOUSERSITE: "1",
     PYTHONDONTWRITEBYTECODE: "1",
     PYTHONUTF8: "1",

@@ -60,10 +60,13 @@ def prepare(project, settings, session, previous=None, copy=("", "")):
     design = {"folder": str(work.relative_to(project)), "entries": entries,
               "brief": {"title": copy[0], "subtitle": copy[1], "style": settings.get("step6", {}).get("cover_image_style", "cover01")}}
     (work / "design.json").write_text(json.dumps(design, ensure_ascii=False, indent=2), encoding="utf-8")
-    # Agents can inspect snapshots using the same renderer as the final production job.
+    # Agents can inspect snapshots using the same renderer as the final production job. It runs in the agent's
+    # shell, which has no PYTHONPATH in the app, so it names both the backend and the engine it imports.
+    import core
+    folders = [str(Path(__file__).parent), str(Path(core.__file__).resolve().parents[1])]
     (work / "render.py").write_text(
         "import sys\nfrom pathlib import Path\n"
-        f"sys.path.insert(0, {str(Path(__file__).parent)!r})\n"
+        f"sys.path[:0] = {folders!r}\n"
         "from covers import render\n"
         f"render(Path({str(project)!r}), {design!r}, preview=True)\n", encoding="utf-8")
     return design
@@ -177,7 +180,7 @@ def render(project, design, preview=False):
     chrome = browser_path()
     node = shutil.which("node")
     if not chrome or not node:
-        raise ValueError("The bundled cover renderer is unavailable. Reinstall Book2Video Studio.")
+        raise ValueError("The bundled cover renderer is unavailable. Reinstall Stuff 2 Video.")
     info = detail(project, design)
     if not info["complete"]:
         raise ValueError("Save every cover HTML design with Claude Code before rendering.")

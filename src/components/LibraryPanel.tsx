@@ -39,7 +39,7 @@ export default function LibraryPanel({
   const [lastRevision, setLastRevision] = useState("");
   const groups = orderedLibraryGroups(catalog);
   const group = groups.find((g) => g.id === groupId && (g.id !== "templates" || g.step === templateStep));
-  const groupLabel = (g: typeof group) => g ? `${g.step} · ${t(g.label)}` : t("Library");
+  const groupLabel = (g: typeof group) => g ? (g.step ? `${g.step} · ${t(g.label)}` : t(g.label)) : t("Library");
 
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
@@ -87,7 +87,7 @@ export default function LibraryPanel({
     if (!guard()) return;
     await perform(async () => {
       setGroupId(nextGroup); setHistory(null);
-      if (nextGroup === "templates") setTemplateStep(groups.find((g) => g.id === nextGroup && g.items.some((item) => item.id === id))?.step || templateStep);
+      if (nextGroup === "templates") setTemplateStep(groups.find((g) => g.id === nextGroup && g.items.some((item) => item.id === id))?.step ?? templateStep);
       accept(id ? await readItem(nextGroup, id, file) : null);
     });
   }

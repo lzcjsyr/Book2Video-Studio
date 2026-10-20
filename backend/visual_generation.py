@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
 
-from headless import claude_command, run_claude
+from headless import claude_command, first_message, run_claude
 
 
 MOTION_CONCURRENCY = 3
@@ -16,8 +16,7 @@ def generate_motion(launch, program, env, max_turns):
     index = payload["segmentIndex"]
     print(f"Generating motion for segment {index} with Claude Code…", flush=True)
     try:
-        run_claude(program, env, launch, "Complete this segment's motion, checks and final render using the supplied task context. Finish when verified; do not wait for user input.",
-                   max_turns, 1800, work)
+        run_claude(program, env, launch, first_message(), max_turns, 1800, work)
     except ValueError as exc:
         raise ValueError(f"Claude Code did not complete segment {index}. See {work / 'claude-session.json'}") from exc
     if not (work / "index.html").is_file():

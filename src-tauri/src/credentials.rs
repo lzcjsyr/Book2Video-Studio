@@ -102,7 +102,7 @@ fn read_env_file() -> Result<BTreeMap<String, String>, String> {
 #[cfg(debug_assertions)]
 fn write_env_file(keys: &BTreeMap<String, String>) -> Result<(), String> {
     let mut text =
-        String::from("# Development API keys for Book2Video Studio (debug builds only).\n");
+        String::from("# Development API keys for Stuff 2 Video (debug builds only).\n");
     for (name, value) in keys {
         text.push_str(name);
         text.push('=');
@@ -171,7 +171,7 @@ pub fn apply(info: &crate::Bootstrap, keys: &BTreeMap<String, String>) -> Result
         .header("Authorization", format!("Bearer {}", info.token))
         .send_json(keys)
         .map_err(|_| {
-            "Cannot apply API keys to the production service. Restart Book2Video Studio."
+            "Cannot apply API keys to the production service. Restart Stuff 2 Video."
                 .to_string()
         })?;
     Ok(())

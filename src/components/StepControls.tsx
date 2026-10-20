@@ -48,7 +48,7 @@ export function SegmentationControls({ settings, disabled, onChange }: Props) {
   </div>;
 }
 
-/** How the narration is spoken: model, speaking rate and emotion. Each change saves at once. */
+/** How the narration is spoken: model, speaking rate, emotion and its strength. Each change saves at once. */
 export function VoiceFields({ settings, disabled, onChange }: Props) {
   const { t } = useI18n();
   const emotion = String(settings.emotion || "neutral");
@@ -73,6 +73,8 @@ export function VoiceFields({ settings, disabled, onChange }: Props) {
         <option value="sad">{t("sad")}</option>
       </select>
     </label>
+    <NumberSetting label={t("Emotion strength")} value={Number(settings.emotion_scale ?? 4)} min={1} max={5}
+      disabled={disabled} onSave={(emotion_scale) => onChange({ emotion_scale })} />
   </div>;
 }
 
@@ -81,7 +83,7 @@ export function VoiceControls(props: Props) {
   return <section className="step-controls voice-controls" aria-label={t("Voice delivery")}>
     <h3>{t("Voice delivery")}</h3>
     <VoiceFields {...props} />
-    <p className="small-muted">{t("Speaking rate: −50 to 100; 0 is normal speed.")}</p>
+    <p className="small-muted">{t("Speaking rate: −50 to 100; 0 is normal speed.")} {t("Emotion strength: 1 to 5; higher is more expressive.")}</p>
     <p className="small-muted">{t("Saved automatically. Changes apply to new recordings.")}</p>
   </section>;
 }

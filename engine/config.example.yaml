@@ -79,13 +79,10 @@ step3:
 # 步骤4：画面生成
 # =============================================================================
 step4:
-  # 画面生成模式：
-  # - static_image：调用图像模型生成 segment_i.png
-  # - motion_agent：调用 Claude Agent + HTML 动画 生成 segment_i.mp4
-  # - mixed：读取 text/script.json 中每段的 visualizer 字段；image 走静态图，hf 走 HTML 动画
+  # 引擎只生成静态图（segment_i.png）；visualizer=hf 的段落由 Studio 用 Claude Code 制作 HTML 动画。
   visual_mode: static_image
 
-  # HTML 动画 动态画面参数，仅 visual_mode=motion_agent 或 mixed 且段落 visualizer=hf 时生效。
+  # HTML 动画参数，用于 Studio 的 Claude Code 动画会话。
   motion_style_preset: data_driven
   motion_max_turns: 60
   motion_render_fps: 30
@@ -94,14 +91,11 @@ step4:
   # 若有高限额 Key 可调大至 2-4 以加速生成。
   motion_concurrency: 1
 
-  # 步骤4专用 LLM：
-  # - static_image：用于图像提示词脱敏/润色
-  # - motion_agent：用于驱动 Claude Agent 生成 HTML 动画 HTML
-  # - mixed：同时用于上述两类任务
+  # 步骤4专用 LLM：用于图像提示词脱敏/润色，也驱动 Claude Code 动画会话。
   llm_server: deepseek
   llm_model: deepseek-flash
 
-  # 图像供应商（visual_mode=static_image，或 mixed 且段落 visualizer=image 时生效）：
+  # 图像供应商（段落 visualizer=image 时生效）：
   # - google：使用 GOOGLE_CLOUD_API_KEY
   # - google_adc：使用本机 Google ADC / Vertex AI
   # - doubao：火山引擎 Seedream
@@ -156,7 +150,7 @@ step5:
 
   enable_subtitles: true
   # 背景音乐文件名，位于 music/ 目录；设为 null 表示不加 BGM。
-  bgm_filename: The Sound of Slience.mp3
+  bgm_filename: The Bandari - 寂静之声（The Sounds of Silence）.mp3
   bgm_default_volume: 0.1
   narration_default_volume: 2.0
   # 口播整体变速，1.0 表示原速。

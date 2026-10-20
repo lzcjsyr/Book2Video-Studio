@@ -20,21 +20,10 @@ from claude_agent_sdk import (
 )
 
 from core.config import config
-from core.infra.ai.task_context import write_task_context
-from core.infra.motion.skill_loader import (
-    build_step4_motion_skill_path_context,
-    default_step4_motion_skill_dir,
-    step4_motion_skill_dirs,
-)
-from core.prompts import (
-    STEP1_5_SEGMENT_PROMPT_TEMPLATE,
-    STEP4_MOTION_AGENT_PROMPT_TEMPLATE,
-    STEP4_MOTION_PROMPT_VERSION,
-    build_step4_motion_style_context,
-)
+from core.infra.ai.task_context import agent_rules, write_task_context
+from core.prompts import STEP1_5_SEGMENT_PROMPT_TEMPLATE
 
 STEP1_5_AGENT_TOOLS = ["Read", "Write"]
-STEP4_MOTION_AGENT_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 
 
 _MAX_LOG_FIELD_CHARS = 12_000
@@ -518,11 +507,9 @@ async def _run_step1_5_segment_agent_async(
         output_json_path=output_json_path,
         target_segments=target_segments,
     )
-    prompt = write_task_context(Path(session_log_path).with_suffix('.task.json'),
-        stage='2', objective='只做语义分段并选择 image/hf，不修改正文或生成素材。', cwd=output_path.parent,
-        inputs=[raw_json_path], writable=[output_path], protected=[raw_json_path],
-        done=['只写 segments JSON；按顺序拼接内容与原文一致（忽略空白），visualizer 只能为 image/hf。'],
-        facts={'target_segments': target_segments}) + '\n' + prompt
+    task = write_task_context(Path(session_log_path).with_suffix('.task.json'), stage='2', cwd=output_path.parent,
+        inputs=[raw_json_path], writable=[output_path], protected=[raw_json_path], facts={'target_segments': target_segments})
+    prompt = agent_rules('rules', task_file=task) + '\n\n' + prompt
     tools = list(STEP1_5_AGENT_TOOLS)
     effective_llm_server = llm_server or config.LLM_SERVER_STEP1_5
     effective_llm_model = llm_model or config.LLM_MODEL_STEP1_5
@@ -604,179 +591,3 @@ def run_step1_5_segment_agent(
         llm_model=llm_model,
     )
     return anyio.run(runner)
-
-
-def _build_step4_motion_prompt(
-    *,
-    segment_payload: dict[str, Any],
-    style_preset: str,
-    skill_path_context: str,
-    skills_root: str | Path | None = None,
-    target_index_html_path: str = "",
-) -> str:
-    payload_json = json.dumps(segment_payload, ensure_ascii=False, indent=2)
-    style_context = build_step4_motion_style_context(style_preset, skills_root=skills_root)
-    return STEP4_MOTION_AGENT_PROMPT_TEMPLATE.format(
-        skill_path_context=skill_path_context,
-        style_preset=style_preset,
-        style_context=style_context,
-        payload_json=payload_json,
-        target_index_html_path=target_index_html_path,
-    )
-
-
-async def _run_step4_motion_agent_async(
-    *,
-    work_dir: str,
-    project_dir: str,
-    segment_payload: dict[str, Any],
-    duration_seconds: float | None = None,
-    style_preset: str,
-    max_turns: int,
-    session_log_path: str,
-    step4_skill_dir: str | None = None,
-    llm_server: str | None = None,
-    llm_model: str | None = None,
-    llm_base_url: str | None = None,
-) -> None:
-    work_path = Path(work_dir)
-    work_path.mkdir(parents=True, exist_ok=True)
-
-    # Remove stale index.html files in both actual and normalized paths to ensure fresh copy fallback trigger
-    for parent_path in [work_path, Path(str(work_path).replace("“", "\"").replace("”", "\"").replace("‘", "'").replace("’", "'"))]:
-        try:
-            stale_file = parent_path / "index.html"
-            if stale_file.exists():
-                stale_file.unlink()
-        except Exception:
-            pass
-    from core.infra.motion.runtime import prepare
-    prepare(work_path, segment_payload)
-    skill_dir = Path(step4_skill_dir) if step4_skill_dir else default_step4_motion_skill_dir()
-    skill_path_context = build_step4_motion_skill_path_context(skill_dir)
-    skill_add_dirs = [str(path) for path in step4_motion_skill_dirs(skill_dir.parent)]
-    prompt = _build_step4_motion_prompt(
-        segment_payload=segment_payload,
-        style_preset=style_preset,
-        skill_path_context=skill_path_context,
-        skills_root=skill_dir.parent,
-        target_index_html_path=str(work_path / "index.html"),
-    )
-    prompt = write_task_context(Path(session_log_path).with_suffix('.task.json'),
-        stage='4', objective='只制作当前段落 HTML 动画，完成预览、修复和静音视频验证。', cwd=work_path,
-        inputs=[work_path/'studio-payload.json', work_path/'index.html'], optional_inputs=[work_path/'index.html'], writable=[work_path],
-        protected=[work_path/'studio-payload.json', work_path/'render.py', work_path/'vendor', Path(project_dir)/'text', Path(project_dir)/'voice'],
-        done=['video.mp4 与当前 HTML 一致，render-report.json 的 verified 为 true；如实报告视觉检查限制。'],
-        facts={'segment': segment_payload.get('segmentIndex', segment_payload.get('index')), 'fps': segment_payload.get('fps', 30)}) + '\n' + prompt
-    tools = list(STEP4_MOTION_AGENT_TOOLS)
-    effective_llm_server = llm_server or config.LLM_SERVER_STEP4
-    effective_llm_model = llm_model or config.LLM_MODEL_STEP4
-    options = ClaudeAgentOptions(
-        cwd=str(work_path),
-        model=_anthropic_agent_options_model(effective_llm_server, effective_llm_model),
-        tools=tools,
-        allowed_tools=tools,
-        permission_mode="acceptEdits",
-        max_turns=max(1, int(max_turns or 1)),
-        add_dirs=[str(Path(project_dir)), *skill_add_dirs],
-        env=build_step4_motion_agent_env(
-            llm_server=llm_server,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        ),
-        setting_sources=["project", "local"],
-    )
-    session_log = AgentSessionLog(session_log_path)
-    session_log.append(
-        "session_start",
-        {
-            "step": "step_4_motion",
-            "work_dir": str(work_path),
-            "project_dir": project_dir,
-            "style_preset": style_preset,
-            "prompt_version": STEP4_MOTION_PROMPT_VERSION,
-            "max_turns": max_turns,
-            "step4_skill_dir": str(skill_dir),
-            "segment_payload": segment_payload,
-            "duration_seconds": duration_seconds,
-            "llm_server": llm_server,
-            "llm_model": llm_model,
-            "llm_base_url": llm_base_url,
-            "tools": tools,
-            "prompt": prompt,
-        },
-    )
-
-    result_message: ResultMessage | None = None
-    try:
-        async for message in query(prompt=prompt, options=options):
-            session_log.append("message", {"message": _serialize_sdk_message(message)})
-            if isinstance(message, ResultMessage):
-                result_message = message
-                if message.is_error:
-                    raise RuntimeError(message.result or "Claude Agent Step 4 HTML 动画 failed")
-    except Exception as exc:
-        session_log.append(
-            "session_error",
-            {"error_type": type(exc).__name__, "error": str(exc)},
-        )
-        raise
-    finally:
-        if result_message is not None:
-            session_log.append(
-                "session_end",
-                {
-                    "success": not result_message.is_error,
-                    "result": _serialize_sdk_message(result_message),
-                },
-            )
-        else:
-            session_log.append(
-                "session_end",
-                {"success": False, "result": None, "note": "no ResultMessage received"},
-            )
-
-    if not (work_path / "index.html").exists():
-        # Fallback: check if the agent normalized quotes in paths and wrote to a parallel directory
-        normalized_str = str(work_path).replace("“", "\"").replace("”", "\"").replace("‘", "'").replace("’", "'")
-        normalized_work_path = Path(normalized_str)
-        if normalized_work_path.exists() and normalized_work_path != work_path:
-            import shutil
-            work_path.mkdir(parents=True, exist_ok=True)
-            for item in normalized_work_path.glob("*"):
-                if item.is_file():
-                    shutil.copy2(item, work_path / item.name)
-
-    if not (work_path / "index.html").exists():
-        raise FileNotFoundError(f"Claude Agent未生成HTML 动画 index.html: {work_path / 'index.html'}")
-
-
-def run_step4_motion_agent(
-    *,
-    work_dir: str,
-    project_dir: str,
-    segment_payload: dict[str, Any],
-    duration_seconds: float | None = None,
-    style_preset: str,
-    max_turns: int,
-    session_log_path: str,
-    step4_skill_dir: str | None = None,
-    llm_server: str | None = None,
-    llm_model: str | None = None,
-    llm_base_url: str | None = None,
-) -> None:
-    runner = partial(
-        _run_step4_motion_agent_async,
-        work_dir=work_dir,
-        project_dir=project_dir,
-        segment_payload=segment_payload,
-        duration_seconds=duration_seconds,
-        style_preset=style_preset,
-        max_turns=max_turns,
-        session_log_path=session_log_path,
-        step4_skill_dir=step4_skill_dir,
-        llm_server=llm_server,
-        llm_model=llm_model,
-        llm_base_url=llm_base_url,
-    )
-    anyio.run(runner)

@@ -42,7 +42,7 @@ class AgentTemplateTests(unittest.TestCase):
         return prepare(self.studio,self.p,{'step':step,'indices':[1], 'folders':{1:self.p/'images/takes/motion'}})
 
     def test_each_agents_studio_instructions_are_editable_and_reload_without_restart(self):
-        for step,name,section in [('1','step1_studio.md','shared'),('4','step4_studio.md','finish'),
+        for step,name,section in [('1','step1_agent.md','main'),('4','step4_motion_agent.md','main'),
                                   ('5','step5_editing_agent.md',None),('6','step6_cover_agent.md','main')]:
             with self.subTest(step=step):
                 marker=f'CUSTOM STEP {step} INSTRUCTIONS'
@@ -53,11 +53,21 @@ class AgentTemplateTests(unittest.TestCase):
                 second=self.launch(step);self.assertNotIn(marker,Path(second['context']).read_text())
                 self.assertEqual(Path(first['context']).read_text(),prompt)
 
-    def test_motion_reference_and_style_instructions_are_editable(self):
-        for name in ['step4_skill_context.md','step4_style_context.md']:
-            self.save(name,lambda value:value+'\nCUSTOM '+name+'\n')
-        motion=self.launch('4');prompt=Path(motion['context']).read_text()
-        for name in ['step4_skill_context.md','step4_style_context.md']:self.assertIn('CUSTOM '+name,prompt)
+    def test_shared_rules_open_every_session_and_are_editable(self):
+        marker='CUSTOM SHARED RULE'
+        self.save('agent_rules.md',lambda value:value.replace('<!-- section: rules -->','<!-- section: rules -->\n'+marker))
+        for step in ['1','4','5','6']:
+            with self.subTest(step=step):
+                prompt=Path(self.launch(step)['context']).read_text()
+                # The rules come first, then the step's own template; notes for people never reach the agent.
+                self.assertTrue(prompt.startswith(marker));self.assertNotIn('<!--',prompt)
+
+    def test_a_session_prompt_is_the_rules_and_its_template_with_values_filled_in(self):
+        launch=self.launch('6');prompt=Path(launch['context']).read_text()
+        rules=self.studio.library.prompt('agent_rules.md','rules',task_file=Path(launch['task'])).strip()
+        self.assertTrue(prompt.startswith(rules))
+        for text in ['Cover','Subtitle','cover_320x320_1.html：320×320',launch['cwd']]:self.assertIn(text,prompt)
+        self.assertNotIn('{',prompt.replace('{{','').split('importmap')[0])
 
     def test_the_assembly_template_is_one_file_with_every_setting_filled_in(self):
         from library import PROMPTS
@@ -85,7 +95,7 @@ class AgentTemplateTests(unittest.TestCase):
                 self.assertEqual(self.studio.writing_options(self.studio.state(self.p))['agent_skill'], '')
                 launch = prepare(self.studio, self.p, {'step': '1', 'instructions': 'Write a short, warm introduction.'})
                 prompt = Path(launch['context']).read_text()
-                self.assertIn('当前没有选择写作技能', prompt)
+                self.assertIn('没有选择写作技能', prompt)
                 self.assertIn('Write a short, warm introduction.', prompt)
                 self.assertIn(str(self.p/'text/raw.json'), prompt)
                 for field in ['source_name', 'content', 'total_length', 'video_titles', 'golden_quotes']:
@@ -107,7 +117,7 @@ class AgentTemplateTests(unittest.TestCase):
                 prompt = Path(launch['context']).read_text()
                 self.assertEqual(task['stage'], step)
                 self.assertEqual(task['cwd'], str(Path(launch['cwd']).resolve()))
-                self.assertTrue(task['writable']); self.assertTrue(task['protected']); self.assertTrue(task['done'])
+                self.assertTrue(task['writable']); self.assertTrue(task['protected'])
                 self.assertIn(str(Path(launch['task'])), prompt)
                 self.assertIn('不自行进入下一步', prompt)
                 self.assertEqual(launch['context_chars'], len(prompt))
@@ -132,7 +142,7 @@ class AgentTemplateTests(unittest.TestCase):
         launch=prepare(self.studio,self.p,{'step':'4','indices':[1,2],'folders':folders})
         prompt=Path(launch['context']).read_text()
         task=json.loads(Path(launch['task']).read_text())
-        self.assertEqual(prompt.count('## 浏览器片段契约'),1)
+        self.assertEqual(prompt.count('## 片段契约'),1)
         self.assertEqual(prompt.count('动作配方：'),1)
         self.assertNotIn('A second, unrelated narration.',prompt)
         self.assertLess(len(prompt),len(one)*1.5)
@@ -146,8 +156,8 @@ class AgentTemplateTests(unittest.TestCase):
         self.assertNotEqual(json.loads((folders[1]/'studio-payload.json').read_text())['content'],json.loads((folders[2]/'studio-payload.json').read_text())['content'])
 
     def test_missing_sections_and_variables_are_rejected_without_saving(self):
-        item=self.studio.library.item('templates','step4_studio.md')
-        for transform in [lambda value:value.replace('<!-- section: single -->','<!-- section: wrong -->'),
-                          lambda value:value.replace('{snapshots_dir}','')]:
+        item=self.studio.library.item('templates','step4_motion_agent.md')
+        for transform in [lambda value:value.replace('<!-- section: segment -->','<!-- section: wrong -->'),
+                          lambda value:value.replace('{work_dir}','')]:
             with self.assertRaisesRegex(ValueError,'sections|variables'):self.save(item['id'],transform)
         self.assertEqual(self.studio.library.item('templates',item['id'])['value'],item['value'])

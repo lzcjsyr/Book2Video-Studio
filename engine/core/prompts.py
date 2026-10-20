@@ -9,7 +9,7 @@ import re
 import string
 import yaml
 
-from core.resources import prompts_dir, skills_dir
+from core.resources import prompts_dir
 
 def _load_prompt_file(filename: str) -> str:
     path = os.path.join(prompts_dir(), filename)
@@ -67,7 +67,6 @@ def _load_prompt_template_definitions(filename: str) -> dict[str, dict[str, str]
 # ================================================================================
 # 动态加载提示词模板
 # ================================================================================
-STEP1_AGENT_PROMPT_TEMPLATE = _load_prompt_file("step1_agent.md")
 STEP1_5_SEGMENT_PROMPT_TEMPLATE = _load_prompt_file("step1_5_segment.md")
 description_summary_system_prompt = _load_prompt_file("step2_summary.md")
 STEP4_IMAGE_PROMPT_SAFETY_TEMPLATE = _load_prompt_file("step4_safety.md")
@@ -83,8 +82,6 @@ DEFAULT_STEP4_IMAGE_PROMPT_TEMPLATE = (
 STEP4_IMAGE_DESCRIPTION_PROMPT_TEMPLATE = STEP4_IMAGE_DESCRIPTION_PROMPT_TEMPLATES[
     DEFAULT_STEP4_IMAGE_PROMPT_TEMPLATE
 ]
-STEP4_MOTION_AGENT_PROMPT_TEMPLATE = _load_prompt_file("step4_motion_agent.md")
-STEP4_MOTION_PROMPT_VERSION = "2026-10-15-agent-render-v2"
 IMAGE_PROMPT_SAFETY_TEMPLATE = STEP4_IMAGE_PROMPT_SAFETY_TEMPLATE
 IMAGE_DESCRIPTION_PROMPT_TEMPLATE = STEP4_IMAGE_DESCRIPTION_PROMPT_TEMPLATE
 COVER_IMAGE_PROMPT_TEMPLATE = _load_prompt_file("step6_cover.md")
@@ -132,42 +129,11 @@ def _read_step4_palette(skills_root: str | os.PathLike, palette: str) -> str:
         return ""
 
 
-def build_step4_motion_style_context(style_preset: str, skills_root: str | os.PathLike | None = None) -> str:
-    """构建第四步 HTML 动画 视觉风格映射上下文，内联所选风格与调色板，免去 Agent 逐个读取。"""
-    style_id = (style_preset or "data_driven").strip()
-    style = STEP4_MOTION_STYLE_PRESETS.get(style_id) or STEP4_MOTION_STYLE_PRESETS.get("data_driven", {})
-    official_style = style.get("official_style", "Swiss Pulse")
-    palette = style.get("palette", "dark-premium")
-    root = os.fspath(skills_root) if skills_root else os.fspath(skills_dir() / "step4")
-    # The style section and palette are inlined below; list only the other files.
-    inlined = ("references/visual-styles.md", f"palettes/{palette}.md")
-    references = [item for item in style.get("references") or [] if not item.split("#", 1)[0].endswith(inlined)]
-    reference_lines = "\n".join(
-        f"- {item} -> {os.path.join(root, item.split('#', 1)[0])}" for item in references
-    ) if references else "- 无"
-    lines = [
-        f"用户选择的业务风格：{style_id}",
-        f"显示名称：{style.get('label', style_id)}",
-        f"视觉设计 风格：{official_style}",
-        f"调色板：{palette}",
-        f"适用场景：{style.get('best_for', '')}",
-        "项目的字数、字号、字体、透明度和字幕避让规则优先于下方视觉风格里的字号与字体。",
-    ]
-    style_section = _read_step4_style_section(root, official_style)
-    if style_section:
-        lines += ["", f"视觉风格定义（摘自 motion-creative/references/visual-styles.md）：", style_section]
-    palette_text = _read_step4_palette(root, palette)
-    if palette_text:
-        lines += ["", f"调色板（摘自 motion-creative/palettes/{palette}.md，每行一组可选配色）：", palette_text]
-    lines += ["", "可选延伸参考（不必读取）：", reference_lines]
-    return "\n".join(lines).strip()
-
 
 # ================================================================================
 # 导出配置
 # ================================================================================
 __all__ = [
-    'STEP1_AGENT_PROMPT_TEMPLATE',
     'STEP1_5_SEGMENT_PROMPT_TEMPLATE',
     'description_summary_system_prompt',
     'IMAGE_DESCRIPTION_PROMPT_TEMPLATE',
@@ -181,9 +147,6 @@ __all__ = [
     'STEP4_IMAGE_PROMPT_SAFETY_TEMPLATE',
     'STEP4_IMAGE_STYLE_PRESETS',
     'STEP4_MOTION_STYLE_PRESETS',
-    'STEP4_MOTION_PROMPT_VERSION',
-    'build_step4_motion_style_context',
-    'STEP4_MOTION_AGENT_PROMPT_TEMPLATE',
     'COVER_IMAGE_STYLE_PRESETS',
     'COVER_IMAGE_PROMPT_TEMPLATE',
     'STEP4_OPENING_BG_PROMPT_TEMPLATE',

@@ -17,8 +17,6 @@ DELIVERY = 'final_video.mp4'
 # What an Assembly session may do without asking: work in its own folder, render and encode.
 ALLOWED_TOOLS = ['Edit', 'Write', 'Bash(cd:*)', 'Bash(python studio_render.py:*)', 'Bash(python3 studio_render.py:*)',
                  'Bash(ffmpeg:*)', 'Bash(ffprobe:*)']
-# The first message, so Claude Code starts working as soon as it opens; what to do is in the template.
-KICKOFF = {False: '开始本次视频合成。', True: '开始修改上一次的视频合成。'}
 
 
 def read(path):

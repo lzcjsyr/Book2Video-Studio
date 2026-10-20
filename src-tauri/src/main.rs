@@ -64,7 +64,7 @@ impl Installation {
         } else if cfg!(debug_assertions) {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build")
         } else {
-            return Err("This installation is incomplete. Reinstall Book2Video Studio.".into());
+            return Err("This installation is incomplete. Reinstall Stuff 2 Video.".into());
         };
         let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
         let workspace = app
@@ -72,7 +72,7 @@ impl Installation {
             .video_dir()
             .or_else(|_| app.path().home_dir())
             .map_err(|e| e.to_string())?
-            .join("Book2Video Studio");
+            .join("Stuff 2 Video");
         Self::new(&resources, data, workspace)
     }
 
@@ -82,7 +82,7 @@ impl Installation {
         let manifest: Manifest = std::fs::read(runtime.join("manifest.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .ok_or("The bundled runtime is missing. Reinstall Book2Video Studio, or run `npm run stage` when developing.")?;
+            .ok_or("The bundled runtime is missing. Reinstall Stuff 2 Video, or run `npm run stage` when developing.")?;
         let source_backend = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../backend");
         let backend = if cfg!(debug_assertions) && source_backend.is_dir() {
             source_backend
@@ -193,7 +193,7 @@ pub(crate) fn project_root(info: &Bootstrap, project: &str) -> Result<PathBuf, S
         .query("project", project)
         .header("Authorization", format!("Bearer {}", info.token))
         .call()
-        .map_err(|_| "Cannot find this project. Restart Book2Video Studio.".to_string())?;
+        .map_err(|_| "Cannot find this project. Restart Stuff 2 Video.".to_string())?;
     let value: serde_json::Value = response
         .body_mut()
         .read_json()
@@ -420,7 +420,7 @@ fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
             let MenuItemKind::Predefined(predefined) = entry else { continue };
             if predefined.text()?.starts_with("Quit") {
                 submenu.remove(&predefined)?;
-                submenu.append(&MenuItem::with_id(app, QUIT_MENU_ID, "Quit Book2Video Studio", true, Some("CmdOrCtrl+Q"))?)?;
+                submenu.append(&MenuItem::with_id(app, QUIT_MENU_ID, "Quit Stuff 2 Video", true, Some("CmdOrCtrl+Q"))?)?;
             }
         }
     }
@@ -459,7 +459,7 @@ fn main() {
             terminal::terminal_stop
         ])
         .build(tauri::generate_context!())
-        .expect("Cannot build Book2Video Studio")
+        .expect("Cannot build Stuff 2 Video")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 app.state::<terminal::Terminals>().stop_all();

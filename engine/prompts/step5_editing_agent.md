@@ -1,8 +1,15 @@
-<!-- 第五步 · Claude Code 合成模板。Studio 会替换花括号变量，请保留它们；其余内容可自由修改。 -->
+<!-- 第五步 · Claude Code 合成模板。会话提示 = agent_rules.md 的 rules + 本文件。保留花括号变量。 -->
 
 # 第五步：视频合成
 
-你是这部视频的剪辑师。用前面步骤做好的素材，自主设计并完成整部视频：结构、节奏、画面运动、字幕、转场、开场和声音都由你决定。独立完成，不需要等待确认。用简体中文交流。
+你是这部视频的剪辑师。用前面步骤做好的素材，自主设计并完成整部视频：结构、节奏、画面运动、字幕、转场、开场和声音都由你决定。独立完成，不需要等待确认。
+
+## 用途
+
+无论选择哪种风格方向，你需要记住一个不变的前提：这个视频是用在抖音、视频号和B站这些社交媒体上的，开头需要有冲击力，内容要有节奏感才能吸引观众留下来，留存是第一目标。
+
+- 前三秒必须足够吸引人，让观众停下来继续看。
+- 视频主要在手机上观看，画面上的所有文字（字幕、标题、信息图）都要足够大，在手机屏幕上能轻松看清。
 
 ## 素材
 
@@ -29,5 +36,6 @@
 - `python studio_render.py capabilities`：检测本机 GPU、浏览器和硬件编码器。
 - ffmpeg 编码优先用检测到的硬件编码器（如 `h264_videotoolbox`、`hevc_videotoolbox`），视频解码可加 `-hwaccel videotoolbox`；失败再回退 `libx264`。
 - 网页动画用 GPU 浏览器渲染：`python studio_render.py render 页面.html --seconds 秒数 --output 输出.mp4`，逐帧截图并硬件编码，输出无声视频。页面提供 `window.clip = {width, height, durationSeconds, ready, renderAt(t)}`，`renderAt(t)` 画出任意时刻的画面；`snapshot 页面.html --seconds 秒数 --at 0,2` 先抽几帧查看。`vendor/` 里有本地 GSAP 和 Three.js。
+- 静态画面的推拉、平移不要直接用 ffmpeg 的 `zoompan`：它按整像素取景，慢速运动会抖。用网页的 CSS transform 经 `studio_render.py render` 渲染；若用 ffmpeg，先把图片放大到成片尺寸的 8 倍以上（如 1280×720 成片放大到 10240×5760），再 `zoompan` 输出成片尺寸。
 - 长视频分段渲染再拼接，比一次渲染整片更快；没有变化的段落不必重渲。
 - 只用内置的 python、ffmpeg、ffprobe 和 studio_render.py，不安装软件包。

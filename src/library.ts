@@ -5,9 +5,10 @@ const librarySteps: Record<string, number> = {
   motion_styles: 4, motion_skills: 4, assembly_skills: 5, cover_styles: 6,
 };
 const templateLabels: Record<number, string> = {
-  1: "Writing templates", 2: "Segmentation templates", 4: "Visual templates", 5: "Assembly templates", 6: "Cover templates",
+  0: "All steps", 1: "Writing templates", 2: "Segmentation templates", 4: "Visual templates", 5: "Assembly templates", 6: "Cover templates",
 };
-const templateStep = (id: string) => id.startsWith("step1_5_") ? 2 : Number(id.match(/^step(\d)/)?.[1]);
+// Templates that belong to no single step (agent_rules.md) are listed first, under "All steps".
+const templateStep = (id: string) => id.startsWith("step1_5_") ? 2 : Number(id.match(/^step(\d)/)?.[1] ?? 0);
 
 /** Presentation only: template IDs, files and save/history routes stay the same. */
 export function orderedLibraryGroups(catalog: LibraryCatalog): (LibraryGroup & { step: number })[] {

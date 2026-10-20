@@ -78,10 +78,11 @@ def panel_preview(project, params, output):
 def run(request):
     engine = Path(request["engine"])
     project = Path(request["project"])
+    # Every job imports the engine. The app starts this process without PYTHONPATH, so it is found here.
+    sys.path.insert(0, str(engine))
     if request["step"] == "6" and request.get("mode") == "cover_render":
         from covers import render
         return render(project, request["cover_design"])
-    sys.path.insert(0, str(engine))
     # The engine may be read-only; anything written relative to the working folder stays in the project.
     os.chdir(project)
     import yaml

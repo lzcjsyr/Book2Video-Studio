@@ -180,8 +180,8 @@ class ProjectTests(unittest.TestCase):
         self.agent_started();raw=copy.deepcopy(RAW);raw['video_titles']='标题一\n标题二';atomic_json(self.p/'text/raw.json',raw)
         self.assertIsNotNone(self.studio.finish_agent(self.p.name,{})['warning'])
     def test_writing_agent_is_told_where_to_save_everything(self):
-        (self.engine/'prompts').mkdir();(self.engine/'prompts/step1_agent.md').write_text('任务：{output_json} {text_dir} {skill_path}',encoding='utf-8')
-        (self.engine/'prompts/step1_studio.md').write_text((DESKTOP/'engine/prompts/step1_studio.md').read_text(),encoding='utf-8')
+        (self.engine/'prompts').mkdir()
+        for name in ['agent_rules.md','step1_agent.md']:(self.engine/'prompts'/name).write_text((DESKTOP/'engine/prompts'/name).read_text(),encoding='utf-8')
         skill=self.engine/'skills/step1/sample_writer';skill.mkdir(parents=True);(skill/'SKILL.md').write_text('---\nname: sample_writer\ndescription: 测试\n---\n正文',encoding='utf-8')
         studio=self.open();launch=studio.prepare_agent(self.p.name,{'step':'1'})
         prompt=Path(launch['context']).read_text(encoding='utf-8')
@@ -949,7 +949,10 @@ class AgentContextTests(unittest.TestCase):
             launch=prepare(studio,self.p,{'step':step,'indices':[1],'folders':{1:self.p/'images/takes/segment_1/motion-test'}})
             context=Path(launch['context']).read_text()
             self.assertIn('--append-system-prompt-file',launch['args']);self.assertNotIn('{output_json}',context)
-            if step=='4':self.assertIn('"durationSeconds": 1.0',context);self.assertIn('Shared context',context)
+            if step=='4':
+                self.assertIn('时长：1 秒',context)
+                payload=json.loads((self.p/'images/takes/segment_1/motion-test/studio-payload.json').read_text())
+                self.assertEqual(payload['descriptionSummary'],'Shared context')
     def test_direct_context_excludes_previous_source_and_keeps_output_contract(self):
         from context import prepare
         studio = object.__new__(Studio); studio.engine = studio.library_root = ENGINE
@@ -958,7 +961,7 @@ class AgentContextTests(unittest.TestCase):
                 atomic_json(self.p/'.studio/state.json', {'settings': {'step1': {'writing_mode': 'direct'}}, 'source': source})
                 launch = prepare(studio, self.p, {'step': '1'})
                 prompt = Path(launch['context']).read_text()
-                self.assertIn(studio.library.prompt('step1_studio.md', 'direct'), prompt)
+                self.assertIn(studio.library.prompt('step1_agent.md', 'direct').strip(), prompt)
                 self.assertIn(str(self.p/'text/raw.json'), prompt)
                 self.assertIn(str(ENGINE/'skills/step1'), prompt)
                 for field in RAW:
@@ -977,7 +980,7 @@ class AgentContextTests(unittest.TestCase):
         launch = prepare(studio, self.p, {'step': '1'})
         self.assertIn(str(source), Path(launch['context']).read_text())
         self.assertIn(str(source.parent), launch['args'])
-        self.assertNotIn(studio.library.prompt('step1_studio.md', 'direct'), Path(launch['context']).read_text())
+        self.assertNotIn(studio.library.prompt('step1_agent.md', 'direct').strip(), Path(launch['context']).read_text())
 
 class MotionRenderTests(unittest.TestCase):
     setUp=PipelineTests.setUp
@@ -1129,8 +1132,7 @@ class MotionContextTests(unittest.TestCase):
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[1,3]})
         context=Path(launch['context']).read_text()
         for i in (1,3):
-            self.assertIn(f"段落 {i} → `{self.clip(i)/'index.html'}`",context)
-            self.assertIn(f'# 段落 {i}（第',context)
+            self.assertIn(f'### 段落 {i}',context);self.assertIn(f"`{self.clip(i)}`",context)
         self.assertNotIn('segment_2/',context)
         self.assertEqual(launch['cwd'],str(self.p/'images/takes'))
         (self.clip(3)/'index.html').write_text('<!DOCTYPE html>')
@@ -1143,18 +1145,18 @@ class MotionContextTests(unittest.TestCase):
     def test_single_segment_keeps_its_own_instructions(self):
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[2]})
         context=Path(launch['context']).read_text()
-        self.assertTrue(context.startswith('# 本次任务边界'));self.assertIn('当前任务是所选段落。',context);self.assertNotIn('第 1 /',context)
+        self.assertTrue(context.startswith('# 通用规则'));self.assertIn('为下面 1 个段落',context);self.assertNotIn('### 段落 1',context)
         task=json.loads(Path(launch['task']).read_text());self.assertEqual(task['facts']['selected_segments'],[2])
         work=self.clip(2)
-        self.assertEqual(launch['cwd'],str(work));self.assertIn(f'cd "{work}"',context);self.assertIn(str(work/'snapshots'),context)
-        self.assertIn('结束会话不会重新渲染',context);self.assertIn('新建的动态片段',context)
+        self.assertEqual(launch['cwd'],str(work));self.assertIn(f'工作目录：`{work}`',context)
+        self.assertIn('结束会话不会重新渲染',context);self.assertIn('这是新片段',context)
         self.studio.finish_agent(self.id,{})
     def test_revising_a_clip_works_in_its_folder_and_a_new_clip_keeps_it(self):
         self.studio.prepare_agent(self.id,{'step':'4','indices':[1]})
         first=self.clip(1);(first/'index.html').write_text('<!DOCTYPE html><p>first</p>')
         self.studio.finish_agent(self.id,{})
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[1],'take':first.name})
-        self.assertEqual(launch['cwd'],str(first));self.assertNotIn('新建的动态片段',Path(launch['context']).read_text())
+        self.assertEqual(launch['cwd'],str(first));self.assertNotIn('这是新片段',Path(launch['context']).read_text())
         self.studio.finish_agent(self.id,{})
         launch=self.studio.prepare_agent(self.id,{'step':'4','indices':[1],'take':'new'})
         second=self.clip(1);self.assertNotEqual(second,first);self.assertEqual(launch['cwd'],str(second))

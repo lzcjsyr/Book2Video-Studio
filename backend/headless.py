@@ -14,11 +14,14 @@ PROVIDER_ENV = (
     "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_API_KEY_FILE_DESCRIPTOR",
 )
 TOOLS = "Read,Write,Edit,Bash,Glob,Grep"
-# What each session is told to do, how many turns it may take and how long it may run (seconds).
-SESSIONS = {
-    "5": ("开始本次视频合成。这是自动制作，没有人在场：独立完成到交付 final_video.mp4，不要提问或等待确认。", 200, 3 * 3600),
-    "6": ("设计 design.json 列出的全部封面 HTML，并用 render.py 检查每张预览。这是自动制作，没有人在场：完成后直接结束，不要提问或等待确认。", 100, 3600),
-}
+# How many turns each session may take and how long it may run (seconds).
+SESSIONS = {"5": (200, 3 * 3600), "6": (100, 3600)}
+
+
+def first_message():
+    """What a session without a terminal is told first: agent_rules.md's "automatic" section."""
+    from core.infra.ai.task_context import agent_rules
+    return agent_rules("automatic")
 
 
 def claude_command(saved, step="4"):
@@ -65,10 +68,10 @@ def run_session(request):
     """Assembly or Covers by Claude Code without a terminal; the job succeeds when it delivered."""
     step, launch = request["step"], request["launch"]
     project = Path(request["project"])
-    prompt, turns, timeout = SESSIONS[step]
+    turns, timeout = SESSIONS[step]
     program, env = claude_command(request.get("claude", {}), step)
     print("Claude Code is editing the video…" if step == "5" else "Claude Code is designing the covers…", flush=True)
-    run_claude(program, env, launch, prompt, turns, timeout, Path(launch["context"]).parent)
+    run_claude(program, env, launch, first_message(), turns, timeout, Path(launch["context"]).parent)
     if step == "5":
         import editing
         if not editing.detail(project, launch["assembly_edit"])["delivered"]:

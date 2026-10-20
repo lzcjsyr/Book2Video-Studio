@@ -97,13 +97,14 @@ def next_job(studio, project_id, step, options, done, d=None):
             return "three_by_four", {"step": "5", "mode": "three_by_four"}
         return None
     if settings.get("step6", {}).get("cover_method") == "agent":
-        from server import RENDER_COVERS
         design = d.get("cover_design")
-        # A design saved earlier that only waits for its render is rendered, not designed again.
-        waiting = bool(stale and stale["reason"] == RENDER_COVERS and design and design["complete"] and design["current"] and not everything)
-        if "design" not in done and not waiting and (everything or not d["ready"]["6"] or stale):
+        needed = everything or not d["ready"]["6"] or stale
+        # A complete design that still matches the cover copy and setup (one whose render failed, or that was
+        # never rendered) is rendered, not designed again. Everything again designs anew.
+        saved = bool(design and design["complete"] and design["current"] and not everything)
+        if "design" not in done and not saved and needed:
             return "design", {"step": "6", "mode": "agent"}
-        if "covers" not in done and ("design" in done or waiting):
+        if "covers" not in done and ("design" in done or (saved and needed)):
             return "covers", {"step": "6", "mode": "cover_render"}
         return None
     if "covers" not in done and (everything or not d["ready"]["6"] or stale):

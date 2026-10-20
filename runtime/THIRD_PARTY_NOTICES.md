@@ -1,6 +1,6 @@
-# Third-party components bundled with Book2Video Studio
+# Third-party components bundled with Stuff 2 Video
 
-Book2Video Studio runs these programs as separate processes. Each keeps its own
+Stuff 2 Video runs these programs as separate processes. Each keeps its own
 license; review them before distributing the application.
 
 | Component | Version | License | Source |

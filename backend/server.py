@@ -21,7 +21,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
-from library import Library, LibraryConflict, install_bundled
+from library import PROMPTS, Library, LibraryConflict, install_bundled
 import takes
 import covers as cover_designs
 import editing
@@ -197,7 +197,7 @@ class Studio:
         # The engine (code, bundled prompts and skills, music, defaults) is read-only.
         self.engine = engine.resolve()
         if not (self.engine / "core/pipeline/steps.py").exists():
-            raise ValueError("The production engine is missing. Reinstall Book2Video Studio.")
+            raise ValueError("The production engine is missing. Reinstall Stuff 2 Video.")
         # User data: the editable library and the registry of projects kept
         # outside the workspace, the default folder for new projects.
         self.data = data.resolve()
@@ -207,9 +207,10 @@ class Studio:
         # The native host also gives this path to the service and agents as AIGC_VIDEO_LIBRARY_DIR.
         self.library_root = self.data / "library"
         install_bundled(self.engine, self.library_root)
-        # Step 5's template changed shape; an edited copy the app can no longer use moves to history.
-        if (self.engine / "prompts/step5_editing_agent.md").is_file():
-            self.library.retire_invalid("step5_editing_agent.md", self.engine / "prompts/step5_editing_agent.md")
+        # A template that changed shape replaces an edited copy the app can no longer use; the edit stays in history.
+        for name in PROMPTS:
+            if (self.engine / "prompts" / name).is_file():
+                self.library.retire_invalid(name, self.engine / "prompts" / name)
         # Music the user adds; the bundled tracks stay in the read-only engine.
         self.music_root = self.data / "music"
         self.lock = threading.RLock()

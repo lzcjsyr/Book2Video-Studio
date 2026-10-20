@@ -12,7 +12,6 @@
 import json
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from core.config import Config, config
@@ -35,7 +34,6 @@ from core.domain.summarizer import generate_description_summary, process_raw_to_
 from core.infra.ai.tts_client import text_to_audio_bytedance
 from core.infra.project_paths import ProjectPaths
 from core.prompts import OPENING_BG_PROMPT_TEMPLATE
-from core.infra.motion.segment_renderer import render_motion_segments_with_agent
 from core.shared import load_json_file, logger
 
 SEGMENT_VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".m4v")
@@ -188,53 +186,6 @@ def _resolve_segment_media_path(paths: ProjectPaths, index: int) -> Optional[str
         pass
 
     return None
-
-
-def _normalize_segment_visualizer(segment: Dict[str, Any]) -> str:
-    visualizer = str((segment or {}).get("visualizer") or "image").strip().lower()
-    if visualizer not in {"image", "hf"}:
-        raise ValueError(f"不支持的段落 visualizer: {visualizer}，支持 image / hf")
-    return visualizer
-
-
-def _split_mixed_visual_targets(
-    segments: List[Dict[str, Any]],
-    selected_segments: Optional[List[int]],
-) -> Dict[str, List[int]]:
-    selected_set = set(selected_segments) if selected_segments is not None else None
-    targets = {"image": [], "hf": []}
-    for fallback_idx, segment in enumerate(segments, 1):
-        segment_index = int((segment or {}).get("index") or fallback_idx)
-        if selected_set is not None and segment_index not in selected_set:
-            continue
-        targets[_normalize_segment_visualizer(segment)].append(segment_index)
-    return targets
-
-
-def _merge_visual_generation_results(
-    paths: ProjectPaths,
-    total_segments: int,
-    results: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    image_paths = [_resolve_segment_media_path(paths, idx) or "" for idx in range(1, total_segments + 1)]
-    failed_segments: set[int] = set()
-    processed_segments: set[int] = set()
-    missing_audio_segments: set[int] = set()
-
-    for result in results:
-        for idx, media_path in enumerate(result.get("image_paths", []) or [], 1):
-            if idx <= total_segments and media_path:
-                image_paths[idx - 1] = media_path
-        failed_segments.update(int(idx) for idx in result.get("failed_segments", []) or [])
-        processed_segments.update(int(idx) for idx in result.get("processed_segments", []) or [])
-        missing_audio_segments.update(int(idx) for idx in result.get("missing_audio_segments", []) or [])
-
-    return {
-        "image_paths": image_paths,
-        "failed_segments": sorted(failed_segments),
-        "processed_segments": sorted(processed_segments),
-        "missing_audio_segments": sorted(missing_audio_segments),
-    }
 
 
 def run_step_1_5(
@@ -437,10 +388,6 @@ def run_step_4(
     llm_server: Optional[str] = None,
     llm_base_url: Optional[str] = None,
     visual_mode: Optional[str] = None,
-    motion_style_preset: Optional[str] = None,
-    motion_max_turns: Optional[int] = None,
-    motion_render_fps: Optional[int] = None,
-    motion_concurrency: Optional[int] = None,
     image_prompt_template: Optional[str] = None,
 ) -> Dict[str, Any]:
     paths = ProjectPaths(project_output_dir)
@@ -573,7 +520,8 @@ def run_step_4(
 
     # 2. 并行调度任务：开场视频渲染与段落画面生成
     mode = (visual_mode or getattr(config, "VISUAL_MODE", "static_image") or "static_image").strip().lower()
-    if mode not in {"static_image", "motion_agent", "mixed"}:
+    if mode != "static_image":
+        # Animated segments are Claude Code sessions that Studio prepares and runs itself.
         return {"success": False, "message": f"不支持的画面生成模式: {visual_mode}"}
 
     def run_static(targets: Optional[List[int]]) -> Dict[str, Any]:
@@ -592,25 +540,6 @@ def run_step_4(
             image_prompt_template=image_prompt_template,
         )
 
-    def run_motion(targets: Optional[List[int]]) -> Dict[str, Any]:
-        return render_motion_segments_with_agent(
-            project_output_dir=project_output_dir,
-            script_data=script_data,
-            image_size=image_size,
-            output_dir=paths.images,
-            target_segments=targets,
-            description_data=description_data,
-            style_preset=motion_style_preset or getattr(config, "MOTION_STYLE_PRESET", "data_driven"),
-            max_turns=int(motion_max_turns or getattr(config, "MOTION_MAX_TURNS", 60)),
-            render_fps=int(motion_render_fps or getattr(config, "MOTION_RENDER_FPS", 30)),
-            concurrency=int(motion_concurrency or getattr(config, "MOTION_CONCURRENCY", 1)),
-            session_log_path=os.path.join(paths.images, "motion", "_step4_motion_agent_session.jsonl"),
-            repo_root=_get_project_root(),
-            llm_server=llm_server,
-            llm_model=llm_model,
-            llm_base_url=llm_base_url,
-        )
-
     def generate_segments_task() -> Dict[str, Any]:
         should_generate_segments = selected_segments is None or len(selected_segments) > 0
         generation_targets = None if selected_segments is None else selected_segments
@@ -621,32 +550,7 @@ def run_step_4(
                 image_paths.append(media_path or "")
             return {"image_paths": image_paths, "failed_segments": [], "processed_segments": []}
 
-        if mode == "static_image":
-            return run_static(generation_targets)
-        elif mode == "motion_agent":
-            return run_motion(generation_targets)
-        else:
-            try:
-                mixed_targets = _split_mixed_visual_targets(segments, selected_segments)
-            except ValueError as exc:
-                return {"success": False, "message": str(exc)}
-
-            jobs: List[tuple[str, List[int]]] = []
-            if mixed_targets["image"]:
-                jobs.append(("image", mixed_targets["image"]))
-            if mixed_targets["hf"]:
-                jobs.append(("hf", mixed_targets["hf"]))
-
-            results: List[Dict[str, Any]] = []
-            with ThreadPoolExecutor(max_workers=max(1, len(jobs))) as executor:
-                futures = {
-                    executor.submit(run_static if kind == "image" else run_motion, targets): kind
-                    for kind, targets in jobs
-                }
-                for future in as_completed(futures):
-                    results.append(future.result())
-
-            return _merge_visual_generation_results(paths, total_segments, results)
+        return run_static(generation_targets)
 
     image_result = generate_segments_task()
 

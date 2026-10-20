@@ -49,9 +49,17 @@ class EditingTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in work.iterdir()),['materials.json','studio_render.py','vendor'])
         for text in [str(work/'materials.json'),str(self.p/'final_video.mp4'),'320×180','1.10×','studio_render.py render','h264_videotoolbox']:self.assertIn(text,prompt)
         for text in ['plan.json','captions','overlays']:self.assertNotIn(text,prompt)
-        args=launch['args'];self.assertEqual(args[args.index('--add-dir')-1],editing.KICKOFF[False]);self.assertEqual(launch['cwd'],str(self.p))
+        args=launch['args'];self.assertEqual(args[args.index('--add-dir')-1],'开始。');self.assertEqual(launch['cwd'],str(self.p))
         self.assertEqual(args[args.index('--allowedTools')+1:args.index('--session-id')],editing.ALLOWED_TOOLS)
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
+
+    def test_the_render_tool_runs_as_claude_code_runs_it(self):
+        # The agent's shell has no PYTHONPATH in the app; the tool finds the backend and the engine itself.
+        launch,work=self.prepare()
+        env={k:v for k,v in os.environ.items() if k!='PYTHONPATH'}
+        result=subprocess.run([sys.executable,'studio_render.py','capabilities'],cwd=work,env=env,capture_output=True,text=True,timeout=180)
+        self.assertEqual(result.returncode,0,result.stdout[-1500:]+result.stderr[-1500:])
+        self.assertTrue(result.stdout.strip())
 
     def test_the_opening_is_material_not_a_design(self):
         state=self.studio.state(self.p);state['settings']['global']['opening_quote']=True;self.studio.persist(self.p,state)
@@ -108,7 +116,7 @@ class EditingTests(unittest.TestCase):
         launch,revised=self.prepare(revise=True)
         self.assertNotEqual(first,revised);self.assertEqual((revised/'my_design.html').read_text(),'<p>mine</p>')
         prompt=Path(launch['context']).read_text()
-        self.assertIn(editing.KICKOFF[True],launch['args']);self.assertIn('修改上一次的合成',prompt)
+        self.assertIn('开始。',launch['args']);self.assertIn('修改上一次的合成',prompt)
         # Materials are refreshed for the revision; the copy does not change the earlier folder.
         (revised/'my_design.html').write_text('<p>changed</p>');self.assertEqual((first/'my_design.html').read_text(),'<p>mine</p>')
 

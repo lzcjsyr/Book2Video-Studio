@@ -235,7 +235,7 @@ class LibraryTests(unittest.TestCase):
         source = project / "source.txt"; source.write_text("Source")
         atomic_json(project / ".studio/state.json", {"settings": {"step1": {"agent_skill": "test_writer"}}, "source": str(source)})
         original = self.library.item("templates", "step1_agent.md")["value"]
-        self.save("templates", "step1_agent.md", original + "\nCustom writing requirement")
+        self.save("templates", "step1_agent.md", original.replace("<!-- section: main -->", "<!-- section: main -->\nCustom writing requirement"))
         launch = prepare(studio, project, {"step": "1"})
         text = Path(launch["context"]).read_text()
         self.assertIn(str(self.engine / "skills/step1/test_writer/SKILL.md"), text)

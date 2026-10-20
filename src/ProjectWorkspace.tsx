@@ -1055,7 +1055,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   function openNewProject() {
     if (detail) { onNewTab(true); return; }
     setNewName("");
-    // Start from the last location used, else the Book2Video Studio projects folder.
+    // Start from the last location used, else the Stuff 2 Video projects folder.
     setNewLocation(localStorage.getItem("studio-location") || bootstrap?.default_location || "");
     setModal("new");
   }
@@ -1165,7 +1165,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
         <div className="brand">
           <BrandMark size={26} />
           <span>
-            Book2Video<span className="brand-studio">Studio</span>
+            Stuff 2 <span className="brand-studio">Video</span>
           </span>
         </div>
         <span className="header-divider" />
@@ -2568,7 +2568,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
               {modal === "system" && bootstrap && (
                 <>
                   <p className="muted">
-                    {t("Everything production needs is included with Book2Video Studio. Nothing else has to be installed.")}
+                    {t("Everything production needs is included with Stuff 2 Video. Nothing else has to be installed.")}
                   </p>
                   <div className="runtime-tools">
                     {bootstrap.components.map((c) => (
