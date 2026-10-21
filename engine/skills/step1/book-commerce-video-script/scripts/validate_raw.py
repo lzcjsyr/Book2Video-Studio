@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the exact Step 1 raw.json contract for Book2Video."""
+"""Validate the exact Step 1 raw.json contract for Grist."""
 
 from __future__ import annotations
 

@@ -2,8 +2,8 @@
 
 ## Goal
 
-`core` is Book2Video Studio's production engine. The desktop backend runs its
-steps 1.5–6 in job processes (writing, step 1, happens in Studio's Claude Code
+`core` is Grist's production engine. The desktop backend runs its
+steps 1.5–6 in job processes (writing, step 1, happens in Grist's Claude Code
 sessions). Orchestration lives in `pipeline`, business logic in `domain`, and
 external systems in `infra`. Packages export nothing themselves: import the
 module that defines a name (`from core.pipeline import steps`).
@@ -14,7 +14,7 @@ module that defines a name (`from core.pipeline import steps`).
 core/
 ├── config.py              # YAML settings, API keys, validation
 ├── prompts.py             # Loads prompts/ templates and style presets
-├── resources.py           # Where prompts/ and skills/ live (Studio's editable library)
+├── resources.py           # Where prompts/ and skills/ live (Grist's editable library)
 ├── shared.py              # Logging, errors, retry, JSON and file helpers
 │
 ├── pipeline/

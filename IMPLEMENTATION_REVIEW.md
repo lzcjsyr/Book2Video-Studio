@@ -2,7 +2,7 @@
 
 10 October 2026
 
-Book2Video Studio now has a working Tauri desktop application in this directory. It loads the existing Python pipeline and production files, provides a GUI text editor and media review workspace, and runs the main Claude Code CLI agents interactively in the right pane. macOS is the first tested platform; Windows compatibility is addressed in the source and still needs runtime validation.
+Grist now has a working Tauri desktop application in this directory. It loads the existing Python pipeline and production files, provides a GUI text editor and media review workspace, and runs the main Claude Code CLI agents interactively in the right pane. macOS is the first tested platform; Windows compatibility is addressed in the source and still needs runtime validation.
 
 ## Implemented behavior
 

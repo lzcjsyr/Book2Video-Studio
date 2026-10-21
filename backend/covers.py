@@ -180,7 +180,7 @@ def render(project, design, preview=False):
     chrome = browser_path()
     node = shutil.which("node")
     if not chrome or not node:
-        raise ValueError("The bundled cover renderer is unavailable. Reinstall Stuff 2 Video.")
+        raise ValueError("The bundled cover renderer is unavailable. Reinstall Grist.")
     info = detail(project, design)
     if not info["complete"]:
         raise ValueError("Save every cover HTML design with Claude Code before rendering.")

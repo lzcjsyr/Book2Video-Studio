@@ -1,4 +1,4 @@
-# Python packages bundled with Book2Video Studio: the engine's runtime dependencies.
+# Python packages bundled with Grist: the engine's runtime dependencies.
 openai>=1.100.0
 requests>=2.32.0
 python-dotenv>=1.0.0

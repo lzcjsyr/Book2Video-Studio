@@ -38,6 +38,6 @@ The real renderer also produced exact-size 640 × 360 and 360 × 480 PNGs, with 
 
 ## Screenshots
 
-![Agent setup](qa/step6/book2video-step6-agent.png)
-![Rendered fixture and retained gallery](qa/step6/book2video-step6-rendered.png)
-![Compact window](qa/step6/book2video-step6-compact.png)
+![Agent setup](qa/step6/grist-step6-agent.png)
+![Rendered fixture and retained gallery](qa/step6/grist-step6-rendered.png)
+![Compact window](qa/step6/grist-step6-compact.png)

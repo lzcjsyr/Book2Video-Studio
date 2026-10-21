@@ -1,5 +1,5 @@
 {
-  "name": "book2video-motion-runtime",
+  "name": "grist-motion-runtime",
   "private": true,
   "dependencies": {
     "puppeteer-core": "25.13.0",

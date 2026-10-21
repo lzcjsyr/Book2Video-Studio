@@ -48,13 +48,13 @@ export function planText(t: Translate, plan: AutoPlanStep | undefined, segments:
       if (!plan.after && plan.jobs && !plan.jobs.includes("assembly")) return t("Build the 3:4 copy");
       const portrait = settings.three_by_four?.enabled !== false;
       if (settings.step5?.assembly_method === "agent")
-        return t(portrait ? "Claude Code edits the video; Studio draws the 3:4 copy" : "Claude Code edits the video");
+        return t(portrait ? "Claude Code edits the video; Grist draws the 3:4 copy" : "Claude Code edits the video");
       return t(portrait ? "Assemble the video and the 3:4 copy" : "Assemble the video");
     }
     default:
       if (!plan.run) return t("Up to date · covers are current");
       if (settings.step6?.cover_method === "agent")
-        return t(plan.jobs?.join() === "covers" ? "Render the saved HTML covers" : "Claude Code designs HTML covers; Studio renders them");
+        return t(plan.jobs?.join() === "covers" ? "Render the saved HTML covers" : "Claude Code designs HTML covers; Grist renders them");
       return t("Generate cover candidates");
   }
 }

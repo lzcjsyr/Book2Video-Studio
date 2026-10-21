@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a topic-explainer raw.json against the Book2Video Step 1 contract."""
+"""Validate a topic-explainer raw.json against the Grist Step 1 contract."""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ def validate(raw_path: Path, draft_path: Path | None, min_chars: int | None, max
     if long_paragraphs:
         warnings.append(f"有 {len(long_paragraphs)} 个段落超过300字，建议按意思拆开：{long_paragraphs[0][:20]}……")
     if re.search(r"\n\s*\n", content):
-        warnings.append("正文里有空行，Studio 的 Word 文档会把它合并掉；自然段之间用一个换行即可")
+        warnings.append("正文里有空行，万物成片的 Word 文档会把它合并掉；自然段之间用一个换行即可")
     if len(source_name) - 2 > 12:
         warnings.append("source_name 超过12字，开场卡片上会显得很长")
     long_sentences = [s for s in re.split(r"[。！？!?\n]", content) if len(s) > 40]

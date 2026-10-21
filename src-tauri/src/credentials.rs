@@ -20,7 +20,10 @@ use serde::Serialize;
 use tauri::Manager;
 
 #[cfg(any(not(debug_assertions), test))]
-const SERVICE: &str = "com.book2video.studio.provider-keys";
+const SERVICE: &str = "app.grist.desktop.provider-keys";
+/// Where builds named Book2Video Studio and Stuff 2 Video kept the keys.
+#[cfg(not(debug_assertions))]
+const LEGACY_SERVICE: &str = "com.book2video.studio.provider-keys";
 pub const PROVIDERS: [&str; 8] = [
     "OPENROUTER_API_KEY",
     "DEEPSEEK_API_KEY",
@@ -102,7 +105,7 @@ fn read_env_file() -> Result<BTreeMap<String, String>, String> {
 #[cfg(debug_assertions)]
 fn write_env_file(keys: &BTreeMap<String, String>) -> Result<(), String> {
     let mut text =
-        String::from("# Development API keys for Stuff 2 Video (debug builds only).\n");
+        String::from("# Development API keys for Grist (debug builds only).\n");
     for (name, value) in keys {
         text.push_str(name);
         text.push('=');
@@ -132,6 +135,21 @@ fn write(keys: &BTreeMap<String, String>) -> Result<(), String> {
         .map_err(|_| "Cannot save the API key in the system credential store.".into())
 }
 
+/// Move keys saved by an earlier build into this build's item; without any, none are saved.
+#[cfg(not(debug_assertions))]
+fn adopt_legacy_keys() -> Result<BTreeMap<String, String>, String> {
+    let legacy = Entry::new(LEGACY_SERVICE, VAULT)
+        .map_err(|_| "Cannot access the system credential store.".to_string())?;
+    let keys: BTreeMap<String, String> = match legacy.get_password() {
+        Ok(json) => serde_json::from_str(&json).map_err(|_| READ_ERROR.to_string())?,
+        Err(Error::NoEntry) => return Ok(BTreeMap::new()),
+        Err(_) => return Err(READ_ERROR.into()),
+    };
+    write(&keys)?;
+    let _ = legacy.delete_credential();
+    Ok(keys)
+}
+
 pub fn load() -> Result<BTreeMap<String, String>, String> {
     let mut cache = CACHE.lock().unwrap();
     if let Some(keys) = cache.as_ref() {
@@ -142,7 +160,7 @@ pub fn load() -> Result<BTreeMap<String, String>, String> {
     #[cfg(not(debug_assertions))]
     let keys = match vault()?.get_password() {
         Ok(json) => serde_json::from_str(&json).map_err(|_| READ_ERROR.to_string())?,
-        Err(Error::NoEntry) => BTreeMap::new(),
+        Err(Error::NoEntry) => adopt_legacy_keys()?,
         Err(_) => return Err(READ_ERROR.into()),
     };
     *cache = Some(keys.clone());
@@ -171,7 +189,7 @@ pub fn apply(info: &crate::Bootstrap, keys: &BTreeMap<String, String>) -> Result
         .header("Authorization", format!("Bearer {}", info.token))
         .send_json(keys)
         .map_err(|_| {
-            "Cannot apply API keys to the production service. Restart Stuff 2 Video."
+            "Cannot apply API keys to the production service. Restart Grist."
                 .to_string()
         })?;
     Ok(())

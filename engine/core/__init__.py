@@ -1,1 +1,1 @@
-"""Book2Video engine: configuration, pipeline steps and their integrations."""
+"""Grist engine: configuration, pipeline steps and their integrations."""

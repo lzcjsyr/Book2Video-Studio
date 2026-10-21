@@ -1,6 +1,6 @@
-# Third-party components bundled with Stuff 2 Video
+# Third-party components bundled with Grist
 
-Stuff 2 Video runs these programs as separate processes. Each keeps its own
+Grist runs these programs as separate processes. Each keeps its own
 license; review them before distributing the application.
 
 | Component | Version | License | Source |

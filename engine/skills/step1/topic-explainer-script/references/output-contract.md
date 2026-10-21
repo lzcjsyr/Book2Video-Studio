@@ -131,7 +131,7 @@
 
 - `total_length` 等于 Python `len(content)`。
 - `content` 的长度在 `SKILL.md` 的 `content_min_chars` 到 `content_max_chars` 之间（用户改了长度时，以 `length_override` 为准）。
-- `content` 的自然段之间用一个换行，不要空行：Studio 的 Word 文档会把空行合并掉。章节边界记在 `_beat_sheet.json` 里，正文靠口语过渡区分章节。
+- `content` 的自然段之间用一个换行，不要空行：万物成片的 Word 文档会把空行合并掉。章节边界记在 `_beat_sheet.json` 里，正文靠口语过渡区分章节。
 - `source_name` 会显示在开场卡片上，建议书名号内不超过 12 字。
 - 金句可以用一处 `【】` 标出重点词（见 `hook-playbook.md`），其他字段和 `content` 里不要用 `【】`。
 - 排在第一位的金句会被默认选用，把总分最高的放第一位。

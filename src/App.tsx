@@ -7,14 +7,14 @@ import { closeProjectTabs, MAX_PROJECT_TABS, newProjectTab, openProjectTab, rest
   type WorkspaceStatus, type WorkspaceTabs } from "./workspace-tabs";
 
 export default function App() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [workspace, setWorkspace] = useState(() => {
     try { return restoreTabs(localStorage.getItem(TABS_STORAGE_KEY)); }
     catch { return restoreTabs(null); }
   });
   const [status, setStatus] = useState<Record<string, WorkspaceStatus>>({});
   const [notice, setNotice] = useState("");
-  // The question asked before closing Studio (or one tab) with unsaved edits or running work.
+  // The question asked before closing Grist (or one tab) with unsaved edits or running work.
   const [closing, setClosing] = useState<{ tab?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const savers = useRef<Record<string, () => Promise<boolean>>>({});
@@ -124,6 +124,13 @@ export default function App() {
     })).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
     return () => { disposed = true; unlisten?.(); };
   }, []);
+  // The app's name in the interface language (setting it needs core:window:allow-set-title).
+  const appName = locale === "zh-CN" ? "万物成片" : "Grist";
+  useEffect(() => {
+    document.title = appName;
+    if (!isTauri()) return;
+    import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().setTitle(appName)).catch(() => {});
+  }, [appName]);
   useEffect(() => {
     if (!notice) return;
     const timeout = setTimeout(() => setNotice(""), 6000);
@@ -176,8 +183,8 @@ export default function App() {
       return <div className="modal-backdrop" onKeyDown={event => { if (event.key === "Escape" && !saving) setClosing(null); }}>
         <section className="modal closing-question" role="alertdialog" aria-modal="true" aria-labelledby="closing-title" aria-describedby="closing-body">
           <div className="modal-heading"><h2 id="closing-title">{edited.length
-            ? closing.tab ? t("Save changes to {name} before closing it?", { name: name(edited[0].key, edited[0].title) }) : t("Save changes before closing Studio?")
-            : t("Close Studio while work is running?")}</h2></div>
+            ? closing.tab ? t("Save changes to {name} before closing it?", { name: name(edited[0].key, edited[0].title) }) : t("Save changes before closing Grist?")
+            : t("Close Grist while work is running?")}</h2></div>
           <div className="modal-content" id="closing-body">
             {edited.length > 0 && <>
               <p className="muted">{t("Your changes will be lost if you don't save them.")}</p>
@@ -187,7 +194,7 @@ export default function App() {
                     ...(status[tab.key]?.manual ? [t("{editor} (save it in its window)", { editor: t(status[tab.key]!.manual!) })] : [])].join(" · ")}</span></li>)}
               </ul>
             </>}
-            {running.length > 0 && <p className="closing-running">{t("Closing Studio stops the running work in: {names}.", { names: running.map(tab => name(tab.key, tab.title)).join(", ") })}</p>}
+            {running.length > 0 && <p className="closing-running">{t("Closing Grist stops the running work in: {names}.", { names: running.map(tab => name(tab.key, tab.title)).join(", ") })}</p>}
           </div>
           <div className="modal-actions">
             {edited.length > 0 && <button className="button closing-discard" disabled={saving} onClick={discardAndClose}>{t("Don't save")}</button>}
@@ -195,7 +202,7 @@ export default function App() {
             {edited.length > 0
               ? <button className="button primary" disabled={saving} autoFocus onClick={saveAndClose}>
                   {saving && <Loader2 size={13} className="spin" />}{t("Save")}</button>
-              : <button className="button primary" onClick={discardAndClose}>{t("Close Studio")}</button>}
+              : <button className="button primary" onClick={discardAndClose}>{t("Close Grist")}</button>}
           </div>
         </section>
       </div>;

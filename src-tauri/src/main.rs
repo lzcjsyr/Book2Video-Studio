@@ -64,15 +64,16 @@ impl Installation {
         } else if cfg!(debug_assertions) {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build")
         } else {
-            return Err("This installation is incomplete. Reinstall Stuff 2 Video.".into());
+            return Err("This installation is incomplete. Reinstall Grist.".into());
         };
         let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        adopt_legacy_data(&data);
         let workspace = app
             .path()
             .video_dir()
             .or_else(|_| app.path().home_dir())
             .map_err(|e| e.to_string())?
-            .join("Stuff 2 Video");
+            .join("Grist");
         Self::new(&resources, data, workspace)
     }
 
@@ -82,7 +83,7 @@ impl Installation {
         let manifest: Manifest = std::fs::read(runtime.join("manifest.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .ok_or("The bundled runtime is missing. Reinstall Stuff 2 Video, or run `npm run stage` when developing.")?;
+            .ok_or("The bundled runtime is missing. Reinstall Grist, or run `npm run stage` when developing.")?;
         let source_backend = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../backend");
         let backend = if cfg!(debug_assertions) && source_backend.is_dir() {
             source_backend
@@ -160,6 +161,18 @@ impl Installation {
     }
 }
 
+/// The app data folder of the builds named Book2Video Studio and Stuff 2 Video, beside today's.
+const LEGACY_IDENTIFIER: &str = "com.book2video.studio";
+
+/// Keep the library, project list and settings of an earlier build: its data folder becomes this
+/// one the first time this build runs.
+fn adopt_legacy_data(data: &Path) {
+    let legacy = data.with_file_name(LEGACY_IDENTIFIER);
+    if !data.exists() && legacy.is_dir() {
+        let _ = std::fs::rename(&legacy, data);
+    }
+}
+
 /// Run blocking work (process start-up, keychain, file copies) off the main
 /// thread so the window stays responsive, for example during a system prompt.
 pub(crate) async fn off_main_thread<T: Send + 'static>(
@@ -193,7 +206,7 @@ pub(crate) fn project_root(info: &Bootstrap, project: &str) -> Result<PathBuf, S
         .query("project", project)
         .header("Authorization", format!("Bearer {}", info.token))
         .call()
-        .map_err(|_| "Cannot find this project. Restart Stuff 2 Video.".to_string())?;
+        .map_err(|_| "Cannot find this project. Restart Grist.".to_string())?;
     let value: serde_json::Value = response
         .body_mut()
         .read_json()
@@ -420,7 +433,7 @@ fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
             let MenuItemKind::Predefined(predefined) = entry else { continue };
             if predefined.text()?.starts_with("Quit") {
                 submenu.remove(&predefined)?;
-                submenu.append(&MenuItem::with_id(app, QUIT_MENU_ID, "Quit Stuff 2 Video", true, Some("CmdOrCtrl+Q"))?)?;
+                submenu.append(&MenuItem::with_id(app, QUIT_MENU_ID, "Quit Grist", true, Some("CmdOrCtrl+Q"))?)?;
             }
         }
     }
@@ -459,7 +472,7 @@ fn main() {
             terminal::terminal_stop
         ])
         .build(tauri::generate_context!())
-        .expect("Cannot build Stuff 2 Video")
+        .expect("Cannot build Grist")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 app.state::<terminal::Terminals>().stop_all();
@@ -499,6 +512,28 @@ mod library_tests {
             std::os::unix::fs::symlink(&unrelated, &link).unwrap();
             assert!(library_source_folder(&root, link.to_str().unwrap()).is_err());
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::{adopt_legacy_data, LEGACY_IDENTIFIER};
+    use std::{env, fs};
+
+    #[test]
+    fn earlier_data_folder_is_adopted_once() {
+        let root = env::temp_dir().join(format!("studio-legacy-{}", uuid::Uuid::new_v4()));
+        let (legacy, data) = (root.join(LEGACY_IDENTIFIER), root.join("app.grist.desktop"));
+        fs::create_dir_all(legacy.join("library")).unwrap();
+        fs::write(legacy.join("projects.json"), "{}").unwrap();
+        adopt_legacy_data(&data);
+        assert!(data.join("library").is_dir() && data.join("projects.json").is_file());
+        assert!(!legacy.exists());
+        // Data this build already keeps is never replaced.
+        fs::create_dir_all(&legacy).unwrap();
+        adopt_legacy_data(&data);
+        assert!(legacy.is_dir() && data.join("projects.json").is_file());
         fs::remove_dir_all(root).unwrap();
     }
 }

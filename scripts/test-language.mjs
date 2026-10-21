@@ -130,7 +130,7 @@ test("all static interface messages have Chinese translations", () => {
         const text = node.text.replace(/\s+/g, " ").trim();
         if (
           /[a-zA-Z]/.test(text) &&
-          !["Stuff 2", "Video", "English"].includes(text)
+          !["Grist", "English"].includes(text)
         )
           missing.add("Unlocalized text: " + text);
       }

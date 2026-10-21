@@ -39,6 +39,8 @@ SETTINGS_SECTIONS = {"global", "step1", "step2", "step3", "step4", "step4_summar
 PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill", "agent_music_mix"}
 LINKS_FILE = "projects.json"
 HIDDEN_FILE = "hidden-projects.json"
+# Default project folders of the app's earlier names, beside today's.
+LEGACY_WORKSPACES = ("Stuff 2 Video", "Book2Video Studio")
 GOOGLE_CHECK_FILE = "google-adc-check.json"
 LIBRARY_ENV = "AIGC_VIDEO_LIBRARY_DIR"
 VOICES_FILE = "voices.json"
@@ -197,12 +199,13 @@ class Studio:
         # The engine (code, bundled prompts and skills, music, defaults) is read-only.
         self.engine = engine.resolve()
         if not (self.engine / "core/pipeline/steps.py").exists():
-            raise ValueError("The production engine is missing. Reinstall Stuff 2 Video.")
+            raise ValueError("The production engine is missing. Reinstall Grist.")
         # User data: the editable library and the registry of projects kept
         # outside the workspace, the default folder for new projects.
         self.data = data.resolve()
         self.data.mkdir(parents=True, exist_ok=True)
         self.workspace = workspace.resolve()
+        adopt_legacy = not self.workspace.exists()
         self.workspace.mkdir(parents=True, exist_ok=True)
         # The native host also gives this path to the service and agents as AIGC_VIDEO_LIBRARY_DIR.
         self.library_root = self.data / "library"
@@ -220,6 +223,8 @@ class Studio:
         self.autoruns = {}
         # Received from the native host; never included in project data or API responses.
         self.credentials = {}
+        if adopt_legacy:
+            self.adopt_legacy_workspaces()
         # A terminal lease belongs to this service instance; recover after an app crash.
         for path in (root / ".studio/state.json" for root in self.roots()):
             recovery_error = False
@@ -292,6 +297,16 @@ class Studio:
             links[project_id] = str(path)
             atomic_json(self.links_path, links)
             return project_id
+
+    def adopt_legacy_workspaces(self):
+        """The first time the workspace is made, keep listing the projects in the earlier default folders, where they are."""
+        for name in LEGACY_WORKSPACES:
+            try:
+                folders = sorted(p for p in (self.workspace.parent / name).iterdir() if (p / "text").is_dir())
+            except OSError:
+                continue
+            for folder in folders:
+                self.link(folder)
 
     @property
     def hidden_path(self) -> Path:

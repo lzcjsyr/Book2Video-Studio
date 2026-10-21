@@ -235,7 +235,7 @@ export default function AgentPane({
           <span className="small-muted">
             {launch
               ? t("Session ended · outputs refreshed")
-              : t("You direct the step. Studio manages the project.")}
+              : t("You direct the step. Grist manages the project.")}
           </span>
         )}
       </div>

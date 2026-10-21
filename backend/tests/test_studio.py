@@ -44,7 +44,7 @@ class ProjectTests(unittest.TestCase):
             recording(self.p/f'voice/voice_{i}.wav')
     def open(self):
         """The service as the app starts it: read-only engine, user data, default projects folder."""
-        return Studio(self.engine, Path(self.temp.name)/'用户 data', Path(self.temp.name)/'Book2Video Studio')
+        return Studio(self.engine, Path(self.temp.name)/'用户 data', Path(self.temp.name)/'Grist')
     def tearDown(self): self.temp.cleanup()
     def test_system_check_finds_the_browser_library_folder(self):
         modules=self.engine.parent/'runtime/motion/node_modules'
@@ -1391,7 +1391,15 @@ class WorkspaceTests(unittest.TestCase):
         folder=Path(self.temp.name)/'别处 elsewhere';folder.mkdir();return folder
     def test_default_location_is_the_workspace_outside_the_engine(self):
         location=Path(self.studio.bootstrap()['default_location'])
-        self.assertEqual(location,(Path(self.temp.name)/'Book2Video Studio').resolve());self.assertFalse(location.is_relative_to(self.engine))
+        self.assertEqual(location,(Path(self.temp.name)/'Grist').resolve());self.assertFalse(location.is_relative_to(self.engine))
+    def test_projects_in_earlier_default_folders_stay_listed_where_they_are(self):
+        legacy=Path(self.temp.name)/'Stuff 2 Video'/'旧项目';(legacy/'text').mkdir(parents=True)
+        shutil.rmtree(self.studio.workspace)
+        self.assertEqual([p.resolve() for p in self.open().roots()],[legacy.resolve()])
+        # Adopted once: a project taken off the list later does not return.
+        atomic_json(self.studio.links_path,{})
+        self.assertEqual(self.open().roots(),[])
+        self.assertTrue((legacy/'text').is_dir())
     def test_new_project_without_location_goes_in_the_workspace_with_a_clean_name(self):
         created=self.studio.create({'name':'自由写作'})
         self.assertEqual(created['id'],'自由写作');self.assertEqual(Path(created['path']),self.studio.workspace/'自由写作')

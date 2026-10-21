@@ -1,4 +1,4 @@
-// Assemble everything Stuff 2 Video ships besides its own binary:
+// Assemble everything Grist ships besides its own binary:
 //   build/runtime  Python with the engine's packages (including the Claude Code
 //                  CLI bundled by claude-agent-sdk), Node.js, the pinned
 //                  browser automation libraries and Chrome, FFmpeg and FFprobe

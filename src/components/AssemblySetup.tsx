@@ -312,9 +312,9 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
       {mixField}
     </div>
     {openingHint}
-    {/* Motion, transitions, captions and sound levels are Claude Code's decisions; the 3:4 copy is still drawn by Studio. */}
+    {/* Motion, transitions, captions and sound levels are Claude Code's decisions; the 3:4 copy is still drawn by Grist. */}
     <details className="brief-more">
-      <summary>{t("3:4 panels")}<small>{t("Studio draws the 3:4 copy around the video Claude Code delivers.")}</small></summary>
+      <summary>{t("3:4 panels")}<small>{t("Grist draws the 3:4 copy around the video Claude Code delivers.")}</small></summary>
       <div className="brief-more-groups">{panelGroup}</div>
     </details>
   </section>;

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the bundle's Info.plist: the app is "Grist", and "万物成片" on a Chinese system (locales/zh-Hans.lproj). -->
+<plist version="1.0">
+<dict>
+  <key>LSHasLocalizedDisplayName</key>
+  <true/>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+  </array>
+</dict>
+</plist>

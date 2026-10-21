@@ -189,7 +189,7 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
 
   return <div className="auto-production">
     <div className="auto-steps">
-      <p className="auto-intro">{t("Set up how each remaining step works, then start. Studio makes them one after another in the background with these choices; they save at once and are the same ones each step's page uses.")}</p>
+      <p className="auto-intro">{t("Set up how each remaining step works, then start. Grist makes them one after another in the background with these choices; they save at once and are the same ones each step's page uses.")}</p>
 
       <StepCard number="2" name="Segments" icon={ListVideo} state={stateOf("2")} plan={textOf("2")} error={failure("2")} note={noteOf("2")}
         summary={t(splitNames[value("step2", "split_mode", "punctuation")] || "Split by punctuation")} onOpen={() => onOpenStep("2")}>
@@ -237,8 +237,8 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
         <VisualImageControls settings={settings.step4 || {}} library={bootstrap?.library} disabled={locked} onChange={set("step4")} onEdit={onLibrary} />
         {(motionCount > 0 || agentSplit) && <>
           <div className="auto-subhead">{t("Motion clips")}</div>
-          <p className="small-muted">{motionCount ? t("{count} segments use motion. Claude Code designs each clip without a terminal, then Studio renders it.", { count: motionCount })
-            : t("Agent segmentation may choose motion for some segments. Claude Code designs each clip without a terminal, then Studio renders it.")}</p>
+          <p className="small-muted">{motionCount ? t("{count} segments use motion. Claude Code designs each clip without a terminal, then Grist renders it.", { count: motionCount })
+            : t("Agent segmentation may choose motion for some segments. Claude Code designs each clip without a terminal, then Grist renders it.")}</p>
           <div className="form-grid">
             <label className="field"><span>{t("Animation style")}</span>
               <select value={value("step4", "motion_style_preset")} disabled={locked} onChange={(e) => onSettings("step4", { motion_style_preset: e.target.value })}>

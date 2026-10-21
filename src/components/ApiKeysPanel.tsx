@@ -11,7 +11,7 @@ type AdcCheck = { ok?: boolean; checked?: string; project?: string; location?: s
 
 const claudeModes: { id: ClaudeCodeMode; title: string; description: string }[] = [
   { id: "api_key", title: "Built-in Claude Code · API key",
-    description: "Studio's own Claude Code, connected to the language-model providers chosen for Writing, Motion, Assembly and HTML covers. Uses the keys below." },
+    description: "Grist's own Claude Code, connected to the language-model providers chosen for Writing, Motion, Assembly and HTML covers. Uses the keys below." },
   { id: "subscription", title: "Your Claude Code · subscription",
     description: "The Claude Code installed on this computer, signed in with your Claude account. Your Claude plan covers Writing, Motion, Assembly and HTML cover sessions; they need no key." },
 ];

@@ -149,21 +149,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "book2video-studio"
-version = "0.1.0"
-dependencies = [
- "keyring",
- "portable-pty",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "ureq",
- "uuid",
-]
-
-[[package]]
 name = "brotli"
 version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1194,6 +1179,21 @@ dependencies = [
  "glib-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "grist"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "ureq",
+ "uuid",
 ]
 
 [[package]]

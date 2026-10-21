@@ -825,7 +825,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       notice("Building the 3:4 copy from the landscape video…");
     });
   }
-  /** Copy a music file into Studio's music folder and use it for this video. */
+  /** Copy a music file into Grist's music folder and use it for this video. */
   async function addMusic() {
     if (!detail) return;
     if (!isTauri()) {
@@ -1055,7 +1055,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   function openNewProject() {
     if (detail) { onNewTab(true); return; }
     setNewName("");
-    // Start from the last location used, else the Stuff 2 Video projects folder.
+    // Start from the last location used, else the Grist projects folder.
     setNewLocation(localStorage.getItem("studio-location") || bootstrap?.default_location || "");
     setModal("new");
   }
@@ -1164,8 +1164,9 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       <header className="app-header">
         <div className="brand">
           <BrandMark size={26} />
+          {/* The Chinese name leads in Chinese, with the English one beside it. */}
           <span>
-            Stuff 2 <span className="brand-studio">Video</span>
+            {locale === "zh-CN" ? <>万物成片<span className="brand-studio">Grist</span></> : "Grist"}
           </span>
         </div>
         <span className="header-divider" />
@@ -1610,7 +1611,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                         <Zap size={18} />
                         <div>
                           <strong>{t(detail.segments.length ? "Update the rest of the production" : "Manuscript ready")}</strong>
-                          <span>{t("Set up Segments through Covers on one page, then Studio makes the video in the background.")}</span>
+                          <span>{t("Set up Segments through Covers on one page, then Grist makes the video in the background.")}</span>
                         </div>
                         <button className="button primary small" onClick={openAuto}>
                           {t("Set up auto production")} <ArrowRight size={13} />
@@ -2568,7 +2569,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
               {modal === "system" && bootstrap && (
                 <>
                   <p className="muted">
-                    {t("Everything production needs is included with Stuff 2 Video. Nothing else has to be installed.")}
+                    {t("Everything production needs is included with Grist. Nothing else has to be installed.")}
                   </p>
                   <div className="runtime-tools">
                     {bootstrap.components.map((c) => (

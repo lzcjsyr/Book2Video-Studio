@@ -302,8 +302,8 @@ export default function SettingsPanel({
               <section className="settings-part" aria-labelledby={`${uid}-settings-motion`}>
                 <h4 id={`${uid}-settings-motion`}>{t("Motion clips")}</h4>
                 <p className="small-muted">{t(subscription
-                  ? "Designed by your own Claude Code on your Claude subscription, then rendered by Studio. The agent provider below is not used now."
-                  : "Designed by Claude Code with HTML / Three.js, then rendered by Studio.")}</p>
+                  ? "Designed by your own Claude Code on your Claude subscription, then rendered by Grist. The agent provider below is not used now."
+                  : "Designed by Claude Code with HTML / Three.js, then rendered by Grist.")}</p>
                 <div className="form-grid">
                   {field(
                     "step4",

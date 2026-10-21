@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Stuff 2 Video — a dark editing-suite theme.
+   Grist — a dark editing-suite theme.
    Everything reads from the tokens below; components never hard-code colors.
    ========================================================================== */
 :root {
@@ -4583,7 +4583,7 @@ code {
   .checkbox.checkbox-hinted { margin-top: 2px; }
 }
 
-/* The question before closing Studio or a tab with unsaved edits or running work. */
+/* The question before closing Grist or a tab with unsaved edits or running work. */
 .closing-question { width: 460px; }
 .closing-question .modal-content > .muted { margin-bottom: 14px; }
 .closing-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

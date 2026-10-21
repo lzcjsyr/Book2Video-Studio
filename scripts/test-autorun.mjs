@@ -22,7 +22,7 @@ test("each step's plan reads as what the next run will make", () => {
   assert.equal(planText(en, { step: "4", run: true, images: 1 }, 4, settings), "Make 1 image");
   assert.equal(planText(en, { step: "5", run: true, jobs: ["three_by_four"] }, 4, settings), "Build the 3:4 copy");
   assert.equal(planText(en, { step: "5", run: true, jobs: ["assembly"] }, 4, { ...settings, step5: { assembly_method: "agent" } }),
-    "Claude Code edits the video; Studio draws the 3:4 copy");
+    "Claude Code edits the video; Grist draws the 3:4 copy");
   assert.equal(planText(en, { step: "6", run: true, jobs: ["covers"] }, 4, { step6: { cover_method: "agent" } }), "Render the saved HTML covers");
   assert.equal(planText(en, { step: "6", run: false, off: true }, 4, settings), "Left out of this run");
   assert.equal(planText(zh, { step: "4", run: true, images: 2, opening: true }, 4, settings), "制作 2 张图片、开场背景");
