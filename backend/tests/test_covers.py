@@ -95,18 +95,18 @@ class CoverAgentTests(unittest.TestCase):
         def save(value):
             item=library.item('templates','step6_cover_agent.md')
             return library.save({'group':'templates','id':item['id'],'value':value,'expected_hash':item['hash']})
-        save(original['value'].replace('<!-- section: main -->','<!-- section: main -->\nCUSTOM COVER DIRECTION V1'))
+        save(original['value'].replace('# 第六步：封面设计','# 第六步：封面设计\nCUSTOM COVER DIRECTION V1'))
         first=self.activate();first_prompt=Path(first['context']).read_text()
         self.assertIn('CUSTOM COVER DIRECTION V1',first_prompt)
         self.assertIn(first['cwd'],first_prompt)
         self.assertIn('cover_360x480_1.html',first_prompt)
         self.assertIn('{"imports":{"three":',first_prompt)
         self.compose(first);self.studio.finish_agent(self.id,{})
-        revision=save(original['value'].replace('<!-- section: main -->','<!-- section: main -->\nCUSTOM COVER DIRECTION V2'))['revision']
+        revision=save(original['value'].replace('# 第六步：封面设计','# 第六步：封面设计\nCUSTOM COVER DIRECTION V2'))['revision']
         second=self.activate(revise=True);second_prompt=Path(second['context']).read_text()
         self.assertIn('CUSTOM COVER DIRECTION V2',second_prompt)
         self.assertNotIn('CUSTOM COVER DIRECTION V1',second_prompt)
-        self.assertIn(library.prompt('step6_cover_agent.md', 'revise'),second_prompt)
+        self.assertIn('已经有 HTML',second_prompt)
         self.assertEqual(Path(first['context']).read_text(),first_prompt)
         self.assertEqual(library.item('templates','step6_cover.md')['value'],image)
         library.restore({'revision':revision})
@@ -117,7 +117,7 @@ class CoverAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'variables'):
             self.studio.library.save({'group':'templates','id':item['id'],'value':item['value'].replace('{covers}',''),'expected_hash':item['hash']})
         Path(item['path']).write_text('Invalid external edit {unknown}')
-        with self.assertRaisesRegex(ValueError,'sections'):self.activate()
+        with self.assertRaisesRegex(ValueError,'variables'):self.activate()
         self.assertNotIn('agent_active',self.studio.state(self.p))
     def test_revisions_copy_html_keep_original_and_refresh_previews(self):
         launch = self.activate(); work = self.compose(launch)

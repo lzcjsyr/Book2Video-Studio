@@ -39,7 +39,7 @@ export default function AssemblyEditing({ settings, edit, library, active, locke
         </div>
         <div className="editing-skill-row">
           <label className="field"><span>{t("Style direction")}</span>
-            <select aria-label={t("Style direction")} value={String(settings.agent_skill || "editorial-explainer")} disabled={locked || active}
+            <select aria-label={t("Style direction")} value={String(settings.agent_skill || "content-led")} disabled={locked || active}
               onChange={(e) => onChange({ agent_skill: e.target.value })}>
               {libraryChoices(library, "assembly_skills").map((skill) => <option key={skill.id} value={skill.id}>{t(styleLabels[skill.id] || skill.label)}</option>)}
             </select></label>

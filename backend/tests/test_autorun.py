@@ -156,6 +156,31 @@ class AutoRunTests(unittest.TestCase):
             {'step': '4', 'mode': 'segments', 'indices': [1, 2, 3], 'opening': True, 'batch': 'selected'},
             {'step': '5', 'mode': None, 'indices': None, 'opening': None, 'batch': None},
             {'step': '6', 'mode': None, 'indices': None, 'opening': None, 'batch': None}])
+
+    def test_retry_continues_failed_assembly_and_then_runs_covers(self):
+        self.settings({'step5': {'assembly_method': 'agent'}})
+        self.control(fail=['5'])
+        failed = self.run_to_end()
+        self.assertEqual(failed['status'], 'failed')
+        previous = self.studio.state(self.p)['assembly_edit']
+        first = self.p / previous['folder']
+        (first / 'completed-chunk.mp4').write_bytes(b'completed render')
+        detail = self.studio.detail(self.id)
+        self.assertNotIn('revise', autorun.next_job(self.studio, self.id, '5', {'scope': 'all'}, set(), detail)[1])
+        for key, value in [('current', False), ('skill', 'different-style')]:
+            changed = {**detail, 'assembly_edit': {**detail['assembly_edit'], key: value}}
+            self.assertNotIn('revise', autorun.next_job(self.studio, self.id, '5', {'scope': 'missing'}, set(), changed)[1])
+        self.control()
+        (self.p / 'requests.jsonl').unlink()
+        resumed = self.run_to_end()
+        self.assertEqual(resumed['status'], 'succeeded', resumed)
+        self.assertEqual([r['step'] for r in self.requests()], ['5', '6'])
+        latest = self.p / self.studio.state(self.p)['assembly_edit']['folder']
+        self.assertNotEqual(latest, first)
+        self.assertEqual((latest / 'completed-chunk.mp4').read_bytes(), b'completed render')
+        prompt = (self.p / '.studio/agent' / latest.name / 'context.md').read_text()
+        self.assertIn('继续上一次未完成的自动合成', prompt)
+        self.assertNotIn('然后等待用户的修改要求', prompt)
         detail = self.studio.detail(self.id)
         self.assertTrue(all(detail['ready'].values()), detail['ready'])
         self.assertEqual(detail['state']['stale'], {})

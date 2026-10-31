@@ -51,11 +51,13 @@ def prepare(studio, project, body):
         import editing
         if settings.get("step5", {}).get("assembly_method", "standard") != "agent":
             raise ValueError("Choose Claude Code editing in Assembly first.")
-        assembly_edit, work, prompt = editing.prepare(studio, project, settings, session, revise=body.get("revise", False))
+        revise = body.get("revise", False)
+        assembly_edit, work, prompt = editing.prepare(studio, project, settings, session, revise=revise,
+                                                    resume=bool(revise and body.get("headless")))
         scope = "Assembly · edit and render"
         skill_directories = [studio.library_root/'skills/step5'/assembly_edit['skill']]
         task = dict(inputs=[work/'materials.json'], writable=[work, project/'final_video.mp4', project/'final_video.srt'],
-            protected=[project/'text', project/'voice', project/'images', work/'materials.json', work/'studio_render.py', studio.engine, studio.library_root],
+            protected=[project/'text', project/'voice', project/'images', work/'materials.json', studio.engine, studio.library_root],
             facts={'style': assembly_edit['skill']})
         # Claude Code asks once per folder whether to trust it; starting in the project folder (as Writing
         # does) means one answer covers every edit, instead of a question for each new edit folder.
@@ -81,8 +83,7 @@ def prepare(studio, project, body):
                    "summary": summary.get("summary", ""), "manuscript_path": str(manuscript),
                    "style_id": style['id'], "style": style['value'], "entries": design["entries"]}
         (cwd / "studio-payload.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        prompt = library.prompt("step6_cover_agent.md", "main", title=title, subtitle=subtitle, design_dir=cwd,
-            revise=part("step6_cover_agent.md", "revise") + "\n\n" if body.get("revise") else "",
+        prompt = library.prompt("step6_cover_agent.md", title=title, subtitle=subtitle, design_dir=cwd,
             covers="\n".join(f"- {e['html']}：{e['width']}×{e['height']}" for e in design["entries"]))
         launch_design = design
         task = dict(inputs=[cwd/'studio-payload.json', cwd/'design.json', manuscript], optional_inputs=[manuscript], writable=[cwd],

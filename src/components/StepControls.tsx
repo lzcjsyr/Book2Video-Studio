@@ -29,7 +29,7 @@ function NumberSetting({ label, value, min, max, disabled, onSave }: {
 
 export function SegmentationControls({ settings, disabled, onChange }: Props) {
   const { t } = useI18n();
-  const mode = String(settings.split_mode || "punctuation") === "auto" ? "punctuation" : String(settings.split_mode || "punctuation");
+  const mode = String(settings.split_mode || "manual") === "auto" ? "punctuation" : String(settings.split_mode || "manual");
   const hints: Record<string, string> = {
     punctuation: "Each period, question mark, exclamation mark or semicolon ends a segment, in English or Chinese. Decimal numbers stay together.",
     manual: "Each manuscript line becomes a segment. Lines ending in 【motion】 become motion segments.",
@@ -62,7 +62,7 @@ export function VoiceFields({ settings, disabled, onChange }: Props) {
         <option value="seed-tts-2.0-expressive">{t("Expressive · seed-tts-2.0-expressive")}</option>
       </select>
     </label>
-    <NumberSetting label={t("Speaking rate")} value={Number(settings.speech_rate ?? 20)} min={-50} max={100}
+    <NumberSetting label={t("Speaking rate")} value={Number(settings.speech_rate ?? 25)} min={-50} max={100}
       disabled={disabled} onSave={(speech_rate) => onChange({ speech_rate })} />
     <label className="field"><span>{t("Emotion")}</span>
       <select aria-label={t("Emotion")} value={emotion} disabled={disabled}
@@ -73,7 +73,7 @@ export function VoiceFields({ settings, disabled, onChange }: Props) {
         <option value="sad">{t("sad")}</option>
       </select>
     </label>
-    <NumberSetting label={t("Emotion strength")} value={Number(settings.emotion_scale ?? 4)} min={1} max={5}
+    <NumberSetting label={t("Emotion strength")} value={Number(settings.emotion_scale ?? 5)} min={1} max={5}
       disabled={disabled} onSave={(emotion_scale) => onChange({ emotion_scale })} />
   </div>;
 }

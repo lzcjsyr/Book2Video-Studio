@@ -1,7 +1,8 @@
-"""Assembly with Claude Code: the agent gets the materials and one GPU rendering tool, and delivers the video."""
+"""Assembly's execution contract and the documented drawing API, without an LLM."""
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -38,26 +39,61 @@ class EditingTests(unittest.TestCase):
     def settings(self,**step5):
         state=self.studio.state(self.p);state['settings']['step5'].update(step5);self.studio.persist(self.p,state)
 
-    def test_the_agent_gets_the_materials_and_only_a_gpu_tool(self):
+    def api_worker(self, launch, work):
+        # Exercise the template's exact import example in an agent-owned script.
+        bootstrap=re.findall(r'(?ms)^```python\n(.*?)^```',Path(launch['context']).read_text())[0]
+        worker='''
+import argparse
+parser=argparse.ArgumentParser()
+parser.add_argument('command')
+parser.add_argument('html',nargs='?')
+parser.add_argument('--seconds',type=float,default=1)
+parser.add_argument('--output',default='sample.mp4')
+parser.add_argument('--at',default='0')
+args=parser.parse_args()
+if args.command=='capabilities':
+    report=inspect_machine(work,size,fps=30)
+else:
+    source=(work/args.html).resolve()
+    assert source.is_relative_to(work) and source.is_file() and source.suffix=='.html'
+    output=(work/args.output).resolve()
+    assert output.is_relative_to(work)
+    entry=source.relative_to(work).as_posix()
+    payload=dict(size,durationSeconds=args.seconds,fps=30)
+    if args.command=='snapshot':
+        report=capture(work,payload,mode='snapshot',fps=30,times=list(map(float,args.at.split(','))),entry=entry,
+                       caption_zone=False,destination=work/'build/snapshots'/source.stem)
+    else:
+        render_clip(work,payload,output,fps=30,entry=entry,caption_zone=False,ignore_media=True)
+        report=json.loads(output.with_suffix('.render.json').read_text())
+print(json.dumps(report))
+'''
+        (work/'run.py').write_text(bootstrap+worker,encoding='utf-8')
+        return [sys.executable,str(work/'run.py')]
+
+    def test_the_agent_gets_the_materials_and_contract_without_a_preset_runner(self):
         launch,work=self.prepare();found=editing.read(work/'materials.json');prompt=Path(launch['context']).read_text()
         segment=found['segments'][0]
         self.assertEqual((segment['index'],segment['text'],segment['visual_kind']),(1,'第一段。','image'))
         self.assertEqual(Path(segment['audio']),(self.p/'voice/voice_1.wav').resolve());self.assertAlmostEqual(segment['audio_seconds'],1,delta=.05)
         self.assertEqual(Path(segment['visual']),(self.p/'images/segment_1.png').resolve())
         self.assertEqual((found['video'],found['narration_speed'],found['subtitles'],found['opening']),({'width':320,'height':180},1.1,True,None))
-        # No plan format, renderer, styles or captions from Studio: only the materials and studio_render.py.
-        self.assertEqual(sorted(p.name for p in work.iterdir()),['materials.json','studio_render.py','vendor'])
-        for text in [str(work/'materials.json'),str(self.p/'final_video.mp4'),'320×180','1.10×','studio_render.py render','h264_videotoolbox']:self.assertIn(text,prompt)
-        for text in ['plan.json','captions','overlays']:self.assertNotIn(text,prompt)
+        self.assertEqual(sorted(p.name for p in work.iterdir()),['materials.json','vendor'])
+        for text in [str(work/'materials.json'),str(self.p/'final_video.mp4'),'320×180','1.10×','python run.py render','h264_videotoolbox']:self.assertIn(text,prompt)
+        for text in ['plan.json','overlays']:self.assertNotIn(text,prompt)
+        task=json.loads(Path(launch['task']).read_text())
+        self.assertNotIn(str(work/'run.py'),task['protected'])
+        self.assertIn(str(work),task['writable'])
         args=launch['args'];self.assertEqual(args[args.index('--add-dir')-1],'开始。');self.assertEqual(launch['cwd'],str(self.p))
         self.assertEqual(args[args.index('--allowedTools')+1:args.index('--session-id')],editing.ALLOWED_TOOLS)
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
 
     def test_the_render_tool_runs_as_claude_code_runs_it(self):
-        # The agent's shell has no PYTHONPATH in the app; the tool finds the backend and the engine itself.
+        # Capabilities must work before render.json exists, without PYTHONPATH.
         launch,work=self.prepare()
+        tool=self.api_worker(launch,work)
         env={k:v for k,v in os.environ.items() if k!='PYTHONPATH'}
-        result=subprocess.run([sys.executable,'studio_render.py','capabilities'],cwd=work,env=env,capture_output=True,text=True,timeout=180)
+        result=subprocess.run([*tool,'capabilities'],cwd=work,env=env,capture_output=True,text=True,timeout=180)
         self.assertEqual(result.returncode,0,result.stdout[-1500:]+result.stderr[-1500:])
         self.assertTrue(result.stdout.strip())
 
@@ -112,33 +148,54 @@ class EditingTests(unittest.TestCase):
         self.assertIn('5',Studio(ENGINE,self.studio.data,self.studio.workspace).state(self.p)['stale'])
 
     def test_a_revision_continues_in_a_copy_of_the_last_folder(self):
-        _,first=self.prepare();(first/'my_design.html').write_text('<p>mine</p>');self.studio.finish_agent(self.id,{})
+        _,first=self.prepare();(first/'my_design.html').write_text('<p>mine</p>')
+        (first/'run.py').write_text('# agent-owned runner\n')
+        (first/'studio_render.py').write_text('# legacy app wrapper\n')
+        self.studio.finish_agent(self.id,{})
         launch,revised=self.prepare(revise=True)
         self.assertNotEqual(first,revised);self.assertEqual((revised/'my_design.html').read_text(),'<p>mine</p>')
+        self.assertFalse((revised/'studio_render.py').exists())
+        self.assertEqual((first/'studio_render.py').read_text(),'# legacy app wrapper\n')
+        self.assertEqual((revised/'run.py').read_text(),'# agent-owned runner\n')
+        (revised/'run.py').write_text('# revised runner\n')
+        self.assertEqual((first/'run.py').read_text(),'# agent-owned runner\n')
         prompt=Path(launch['context']).read_text()
         self.assertIn('开始。',launch['args']);self.assertIn('修改上一次的合成',prompt)
         # Materials are refreshed for the revision; the copy does not change the earlier folder.
         (revised/'my_design.html').write_text('<p>changed</p>');self.assertEqual((first/'my_design.html').read_text(),'<p>mine</p>')
 
+    def test_background_resume_keeps_completed_files_and_does_not_wait_for_user(self):
+        from context import prepare
+        _, first = self.prepare()
+        (first / 'completed.html').write_text('<p>completed scene</p>')
+        self.studio.finish_agent(self.id, {})
+        launch = prepare(self.studio, self.p, {'step': '5', 'headless': True, 'revise': True})
+        resumed = self.p / launch['assembly_edit']['folder']
+        self.assertNotEqual(first, resumed)
+        self.assertEqual((resumed / 'completed.html').read_text(), '<p>completed scene</p>')
+        prompt = Path(launch['context']).read_text()
+        self.assertIn('复用已验证的产物，只补缺失或失败部分', prompt)
+        self.assertNotIn('然后等待用户的修改要求', prompt)
+
     def test_the_gpu_tool_renders_and_snapshots_a_page(self):
-        _,work=self.prepare()
+        launch,work=self.prepare()
         page='<!doctype html><style>html,body{margin:0;width:320px;height:180px;overflow:hidden;background:#123}</style><div id="b" style="position:absolute;width:40px;height:40px;background:#fc6;top:70px"></div><script>const b=document.getElementById("b");const p=window.clipPayload;window.clip={width:p.width,height:p.height,durationSeconds:p.durationSeconds,ready:Promise.resolve(),renderAt(t){b.style.left=(t*200)+"px"}};</script>'
         (work/'title.html').write_text(page)
-        tool=[sys.executable,str(work/'studio_render.py')]
-        result=subprocess.run([*tool,'render','title.html','--seconds','1','--output','title.mp4'],cwd=work,capture_output=True,text=True,timeout=180)
+        tool=self.api_worker(launch,work)
+        result=subprocess.run([*tool,'render-page','title.html','--seconds','1','--output','title.mp4'],cwd=work,capture_output=True,text=True,timeout=180)
         self.assertEqual(result.returncode,0,result.stderr[-2000:])
         report=json.loads(result.stdout.strip().splitlines()[-1]);self.assertEqual(report['frames'],30);self.assertTrue((work/'title.mp4').is_file())
         snapshot=subprocess.run([*tool,'snapshot','title.html','--seconds','1','--at','0,0.5'],cwd=work,capture_output=True,text=True,timeout=120)
-        self.assertEqual(snapshot.returncode,0,snapshot.stderr[-2000:]);self.assertEqual(len(list((work/'snapshots/title').glob('*.png'))),2)
-        outside=subprocess.run([*tool,'render','../../../text/raw.json','--seconds','1','--output','x.mp4'],cwd=work,capture_output=True,text=True,timeout=60)
+        self.assertEqual(snapshot.returncode,0,snapshot.stderr[-2000:]);self.assertEqual(len(list((work/'build/snapshots/title').glob('*.png'))),2)
+        outside=subprocess.run([*tool,'render-page','../../../text/raw.json','--seconds','1','--output','x.mp4'],cwd=work,capture_output=True,text=True,timeout=60)
         self.assertNotEqual(outside.returncode,0)
 
     def test_two_pages_render_at_the_same_time_in_one_folder(self):
-        _,work=self.prepare()
+        launch,work=self.prepare()
         for name,colour in [('one','#c33'),('two','#3c3')]:
             (work/f'{name}.html').write_text(f'<!doctype html><style>html,body{{margin:0;width:320px;height:180px;background:{colour}}}</style><div id="b"></div><script>const p=window.clipPayload;window.clip={{width:p.width,height:p.height,durationSeconds:p.durationSeconds,ready:Promise.resolve(),renderAt(t){{document.getElementById("b").textContent=t.toFixed(2)}}}};</script>')
-        tool=[sys.executable,str(work/'studio_render.py')]
-        runs=[subprocess.Popen([*tool,'render',f'{n}.html','--seconds','2','--output',f'{n}.mp4'],cwd=work,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for n in ['one','two']]
+        tool=self.api_worker(launch,work)
+        runs=[subprocess.Popen([*tool,'render-page',f'{n}.html','--seconds','2','--output',f'{n}.mp4'],cwd=work,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for n in ['one','two']]
         for run in runs:
             _,errors=run.communicate(timeout=240);self.assertEqual(run.returncode,0,errors[-1500:])
         for n in ['one','two']:self.assertEqual(json.loads((work/f'{n}.render.json').read_text())['frames'],60)

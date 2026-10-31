@@ -496,8 +496,8 @@ class Studio:
         data = yaml.safe_load((self.engine / "config.example.yaml").read_text())
         sections = {DESKTOP_SECTIONS.get(k, k): v for k, v in data.items() if isinstance(v, dict)}
         if "step5" in sections:
-            sections["step5"].setdefault("assembly_method", "standard")
-            sections["step5"].setdefault("agent_skill", "editorial-explainer")
+            sections["step5"].setdefault("assembly_method", "agent")
+            sections["step5"].setdefault("agent_skill", "content-led")
             # Claude Code editing may mix several library tracks instead of only the suggested one.
             sections["step5"].setdefault("agent_music_mix", False)
             # Music is licensed and not always bundled; the engine silently skips a missing track,
@@ -845,11 +845,21 @@ class Studio:
                 raise Conflict("This file changed outside the editor. Refresh before saving; your draft is kept.")
             value = dict(body["value"])
             previous = read_json(path, {})
+            script_path = p / "text/script.json"
+            script = read_json(script_path) if kind == "raw" else None
             visual_only = False
             if kind == "raw":
-                if not isinstance(value.get("content"), str) or not value["content"].strip():
+                content = value.get("content", "")
+                if not isinstance(content, str):
                     raise ValueError("The manuscript cannot be empty.")
-                if not isinstance(value.get("source_name"), str) or not value["source_name"].strip():
+                empty_draft = not content.strip()
+                # Before the first manuscript, metadata can be saved without blocking
+                # the writing agent. Never erase existing narration with an empty draft.
+                if empty_draft and (str(previous.get("content") or "").strip() or
+                                    isinstance(script, dict) and script.get("segments")):
+                    raise ValueError("The manuscript cannot be empty.")
+                value["content"] = "" if empty_draft else content
+                if not isinstance(value.get("source_name"), str) or (not empty_draft and not value["source_name"].strip()):
                     raise ValueError("The source name cannot be empty.")
                 value["source_name"] = value["source_name"].strip()
                 selections = body.get("selections", {})
@@ -885,8 +895,6 @@ class Studio:
             if editable(value) == editable(previous):
                 # Nothing changed (for example a switch flipped and flipped back): later steps stay current.
                 return self.detail(project_id)
-            script_path = p / "text/script.json"
-            script = read_json(script_path) if kind == "raw" else None
             # Titles, cover text, quotes and the source name reach the segments right away; only new manuscript text needs segmenting again.
             synced = {**script, **{k: value[k] for k in (*METADATA_FIELDS, "source_name")}} if isinstance(script, dict) else None
             if synced == script:
@@ -917,7 +925,7 @@ class Studio:
                     if synced:
                         self.resegmented(state, script, synced)
                         state.setdefault("hashes", {})["script"] = fingerprint(script_path)
-                    if value.get("content") != previous.get("content"):
+                    if value.get("content", "") != previous.get("content", ""):
                         self.invalidate(state, stage)
                     state["stale"].pop(stage, None)
             state.setdefault("hashes", {})[kind] = fingerprint(path)
@@ -1330,7 +1338,7 @@ class Studio:
             # "agent": Claude Code edits the video, or designs the covers, without a terminal (automatic production).
             if step == "5" and body.get("mode") not in {None, "three_by_four", "agent"}:
                 raise ValueError("Unknown assembly action.")
-            if step == "5" and body.get("mode") != "three_by_four" and (self.state(p).get("settings", {}).get("step5", {}).get("assembly_method") == "agent") != (body.get("mode") == "agent"):
+            if step == "5" and body.get("mode") != "three_by_four" and (self.effective(self.state(p)).get("step5", {}).get("assembly_method") == "agent") != (body.get("mode") == "agent"):
                 raise ValueError("Edit the video through the interactive Claude Code terminal." if body.get("mode") is None else "Choose Claude Code editing in Assembly first.")
             if step == "6":
                 if body.get("mode") not in {None, "cover_render", "agent"}:
@@ -1346,6 +1354,8 @@ class Studio:
                 elif body.get("mode") is None and self.state(p).get("settings", {}).get("step6", {}).get("cover_method", "api") == "agent":
                     raise ValueError("Design covers through the interactive Claude Code terminal.")
             # Earlier steps need their outputs; an outdated output still lets later steps run.
+            if step == "2" and not self.detail(project_id)["ready"]["1"]:
+                raise Conflict("Write and save the manuscript before generating segments.")
             if step == "5" and body.get("mode") == "three_by_four":
                 # The 3:4 copy is drawn around the landscape master.
                 detail = self.detail(project_id)
@@ -1432,7 +1442,7 @@ class Studio:
             launch = None
             if body.get("mode") == "agent":
                 from context import prepare
-                launch = prepare(self, p, {"step": step, "headless": True})
+                launch = prepare(self, p, {"step": step, "headless": True, "revise": bool(body.get("revise"))})
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
                        "music_dir": str(self.music_root)}

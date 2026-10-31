@@ -508,7 +508,9 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       });
       setDetail(updated);
       initializeDraft(updated, step);
-      notice("Saved. Affected outputs are marked for generation.");
+      notice(draftKind === "raw" && !String(updated.raw.content || "").trim()
+        ? "Writing draft saved. Generate to write the manuscript."
+        : "Saved. Affected outputs are marked for generation.");
     });
   }
   const directionHandle = useRef<DirectionHandle>(null);
@@ -1462,11 +1464,11 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                     <RefreshCw size={15} />
                   </button>
                   <span className="action-divider" />
-                  {dirty && (
+                  {(dirty || (step === "1" && writingPending)) && (
                     <button
                       className="button small primary"
-                      onClick={save}
-                      disabled={busy}
+                      onClick={saveEverything}
+                      disabled={busy || jobLock || activeAgent}
                     >
                       <Save size={13} /> {t("Save changes")}
                     </button>

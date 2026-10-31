@@ -43,7 +43,7 @@ class AgentTemplateTests(unittest.TestCase):
 
     def test_each_agents_studio_instructions_are_editable_and_reload_without_restart(self):
         for step,name,section in [('1','step1_agent.md','main'),('4','step4_motion_agent.md','main'),
-                                  ('5','step5_editing_agent.md',None),('6','step6_cover_agent.md','main')]:
+                                  ('5','step5_editing_agent.md',None),('6','step6_cover_agent.md',None)]:
             with self.subTest(step=step):
                 marker=f'CUSTOM STEP {step} INSTRUCTIONS'
                 revision=self.save(name,lambda value:value+'\n'+marker if section is None else
@@ -75,11 +75,23 @@ class AgentTemplateTests(unittest.TestCase):
         work=Path(assembly['cwd'])/assembly['assembly_edit']['folder']
         # Studio fills every variable: the materials, the person's choices, delivery and the GPU guide are all in this one prompt.
         for field in PROMPTS['step5_editing_agent.md'][2]:self.assertNotIn('{'+field+'}',prompt)
-        for text in ['## 用户的选择','320×180','## 交付','## GPU 加速',str(work),str(work/'materials.json'),'editorial-explainer/SKILL.md']:self.assertIn(text,prompt)
+        for text in ['## 用户的选择','320×180','## 交付','## GPU 与画面接口',str(work),str(work/'materials.json'),'content-led/SKILL.md']:self.assertIn(text,prompt)
         for gone in ['EDITING.md','plan.json','studio-payload.json']:self.assertFalse((work/gone).exists())
         # A template that loses one of its settings is refused rather than silently dropping it.
         with self.assertRaisesRegex(ValueError,'required template variables'):
             self.save('step5_editing_agent.md',lambda value:value.replace('{music}','music'))
+
+    def test_assembly_contract_edits_apply_to_new_sessions_without_a_required_script_block(self):
+        first = self.launch('5')
+        before = Path(first['context']).read_text()
+        marker = 'Keep a custom project execution convention.'
+        self.save('step5_editing_agent.md', lambda value: value + '\n' + marker)
+        second = self.launch('5')
+        self.assertIn(marker, Path(second['context']).read_text())
+        self.assertEqual(Path(first['context']).read_text(), before)
+        for launch in [first,second]:
+            self.assertFalse((self.p / launch['assembly_edit']['folder'] / 'run.py').exists())
+            self.assertNotIn('```python run.py', Path(launch['context']).read_text())
 
     def test_no_skill_writing_keeps_output_contract_without_loading_skill_files(self):
         import shutil

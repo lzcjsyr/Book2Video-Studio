@@ -44,15 +44,14 @@ PROMPTS = {
     "step4_opening_bg.md": ("Opening image template", True, {"summary", "style_block"}),
     "step4_safety.md": ("Image prompt refinement", True, {"prompt"}),
     "step6_cover.md": ("Cover image template", True, {"cover_title", "cover_subtitle", "style_block"}),
-    "step6_cover_agent.md": ("Claude Code cover template", True, {"revise", "title", "subtitle", "covers", "design_dir"}),
-    "step5_editing_agent.md": ("Claude Code assembly template", None, {"style", "skill_path", "materials", "video_size", "narration_speed", "subtitles", "music", "opening", "session", "work_dir", "delivery"}),
+    "step6_cover_agent.md": ("Claude Code cover template", True, {"title", "subtitle", "covers", "design_dir"}),
+    "step5_editing_agent.md": ("Claude Code assembly template", None, {"style", "skill_path", "materials", "video_size", "narration_speed", "subtitles", "music", "opening", "session", "work_dir", "delivery", "engine_path"}),
 }
 TEXT_EXTENSIONS = {".md", ".txt", ".yaml", ".yml", ".json", ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".toml"}
 TEMPLATE_SECTIONS = {
     "agent_rules.md": {"rules", "start", "automatic"},
     "step1_agent.md": {"main", "source", "direct", "skill", "no_skill"},
     "step4_motion_agent.md": {"main", "segment", "new"},
-    "step6_cover_agent.md": {"main", "revise"},
 }
 MAX_TEXT = 2_000_000
 MAX_PACKAGE = 128_000_000

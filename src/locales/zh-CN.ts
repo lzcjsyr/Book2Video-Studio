@@ -524,6 +524,9 @@ export const zh: Record<string, string> = {
   "This file changed outside the editor. Refresh before saving; your draft is kept.":
     "文件已被外部修改，请刷新后再保存。当前草稿已保留。",
   "The manuscript cannot be empty.": "文稿不能为空。",
+  "Writing draft saved. Generate to write the manuscript.": "写作草稿已保存。点击生成以撰写文稿。",
+  "Write and save the manuscript before generating segments.": "请先撰写并保存文稿，再生成分段。",
+  "Claude Code timed out. Completed files were kept; retry Missing and outdated to continue.": "Claude Code 运行超时。已完成的文件已保留；选择“仅补缺失与过期”重试即可继续。",
   "The script needs at least one segment.": "脚本至少需要一个分段。",
   "Segments must have consecutive indices, text, and image/hf visualizer.":
     "分段必须具有连续编号、文本及 image/hf 画面类型。",

@@ -2,7 +2,7 @@
 
 Studio gathers what earlier steps made (each segment's visual, narration text and recording, the
 opening's quote, background and recording, the music it may use) and the person's choices on the
-Assembly page, then gives Claude Code one tool: GPU-accelerated rendering. Structure, timing,
+Assembly page, then supplies the template's execution contract. The agent writes its own run.py. Structure, timing,
 motion, captions, transitions and sound are Claude Code's decisions.
 """
 from __future__ import annotations
@@ -15,8 +15,7 @@ import shutil
 ROOT = '.studio/edits'
 DELIVERY = 'final_video.mp4'
 # What an Assembly session may do without asking: work in its own folder, render and encode.
-ALLOWED_TOOLS = ['Edit', 'Write', 'Bash(cd:*)', 'Bash(python studio_render.py:*)', 'Bash(python3 studio_render.py:*)',
-                 'Bash(ffmpeg:*)', 'Bash(ffprobe:*)']
+ALLOWED_TOOLS = ['Edit', 'Write', 'Bash(cd:*)', 'Bash(python run.py:*)', 'Bash(python3 run.py:*)', 'Bash(ffmpeg:*)', 'Bash(ffprobe:*)']
 
 
 def read(path):
@@ -84,7 +83,7 @@ def materials(studio, project, settings):
             'opening': opening, 'segments': scenes}
 
 
-def template_values(found, skill, work, delivery, revise):
+def template_values(found, skill, work, delivery, revise, resume=False):
     """What the step 5 template's variables say for this session."""
     music = found['music']
     if music['suggested'] and music['mix']:
@@ -99,6 +98,8 @@ def template_values(found, skill, work, delivery, revise):
                else "不放开场，视频从正文开始")
     session = ("修改上一次的合成。先查看工作目录里已有的文件和成片，汇报现状和可改进之处，然后等待用户的修改要求" if revise
                else "新的合成，独立完成到交付")
+    if resume:
+        session = "继续上一次未完成的自动合成。先检查已保存的片段、字幕、音频和日志，复用已验证的产物，只补缺失或失败部分，独立完成到交付，不等待用户确认"
     return {'style': skill['id'], 'skill_path': skill['path'], 'materials': str(work / 'materials.json'),
             'video_size': f"{found['video']['width']}×{found['video']['height']}",
             'narration_speed': f"{found['narration_speed']:.2f}×（相对原录音）",
@@ -106,9 +107,9 @@ def template_values(found, skill, work, delivery, revise):
             'session': session, 'work_dir': str(work), 'delivery': str(delivery)}
 
 
-def prepare(studio, project, settings, session, revise=False):
+def prepare(studio, project, settings, session, revise=False, resume=False):
     found = materials(studio, project, settings)
-    style = settings.get('step5', {}).get('agent_skill', 'editorial-explainer')
+    style = settings.get('step5', {}).get('agent_skill', 'content-led')
     skill = studio.library.item('assembly_skills', style)
     work = project / ROOT / session
     previous = studio.state(project).get('assembly_edit')
@@ -127,13 +128,13 @@ def prepare(studio, project, settings, session, revise=False):
     write(work / 'materials.json', found)
     from core.infra.motion.runtime import prepare_assets
     prepare_assets(work)
-    tool = (f'import sys\nfrom pathlib import Path\nsys.path[:0] = {[str(Path(__file__).parent), str(studio.engine)]!r}\n'
-            f'from gpu_render import main\nmain(Path({str(work)!r}))\n')
-    (work / 'studio_render.py').write_text(tool, encoding='utf-8')
+    # Remove the app-owned legacy wrapper only in this new session's copy.
+    (work / 'studio_render.py').unlink(missing_ok=True)
     delivery = project / DELIVERY
     edit = {'folder': str(work.relative_to(project)), 'source': signature(found), 'skill': style,
             'delivered_before': stamp(delivery)}
-    prompt = studio.library.prompt('step5_editing_agent.md', **template_values(found, skill, work, delivery, revise))
+    prompt = studio.library.prompt('step5_editing_agent.md', engine_path=repr(str(studio.engine)),
+                                  **template_values(found, skill, work, delivery, revise, resume))
     return edit, work, prompt
 
 

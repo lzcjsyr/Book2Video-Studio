@@ -175,7 +175,7 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
   const opening = settings.global?.opening_quote !== false;
   const quote = String(detail.raw.golden_quotes?.[0] || "").trim();
   const motionCount = detail.segments.filter((s) => s.visualizer === "hf").length;
-  const agentSplit = value("step2", "split_mode", "punctuation") === "agent";
+  const agentSplit = value("step2", "split_mode", "manual") === "agent";
   const assemblyAgent = value("step5", "assembly_method") === "agent";
   const coverAgent = value("step6", "cover_method") === "agent";
   const claudeSteps = [motionCount || agentSplit ? t("the motion clips") : "", assemblyAgent ? t("the video edit") : "", coverAgent && options.covers ? t("the HTML covers") : ""].filter(Boolean);
@@ -192,7 +192,7 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
       <p className="auto-intro">{t("Set up how each remaining step works, then start. Grist makes them one after another in the background with these choices; they save at once and are the same ones each step's page uses.")}</p>
 
       <StepCard number="2" name="Segments" icon={ListVideo} state={stateOf("2")} plan={textOf("2")} error={failure("2")} note={noteOf("2")}
-        summary={t(splitNames[value("step2", "split_mode", "punctuation")] || "Split by punctuation")} onOpen={() => onOpenStep("2")}>
+        summary={t(splitNames[value("step2", "split_mode", "manual")] || "One segment per line")} onOpen={() => onOpenStep("2")}>
         <SegmentationControls settings={settings.step2 || {}} disabled={locked} onChange={set("step2")} />
         <p className="small-muted">{t("Each segment becomes one recording and one picture or motion clip. Agent segmentation also chooses which segments get motion.")}</p>
         {agentSplit && <ProviderFields section="step2" settings={settings} labels={["Agent provider", "Agent model"]} disabled={locked} onChange={onSettings} />}
@@ -264,7 +264,7 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
         </div>
         {assemblyAgent && <div className="form-grid">
           <label className="field"><span>{t("Style direction")}</span>
-            <select value={value("step5", "agent_skill", "editorial-explainer")} disabled={locked} onChange={(e) => onSettings("step5", { agent_skill: e.target.value })}>
+            <select value={value("step5", "agent_skill", "content-led")} disabled={locked} onChange={(e) => onSettings("step5", { agent_skill: e.target.value })}>
               {libraryChoices(bootstrap?.library, "assembly_skills").map((skill) => <option key={skill.id} value={skill.id}>{t(styleLabels[skill.id] || skill.label)}</option>)}
             </select>
           </label>

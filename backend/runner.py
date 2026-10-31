@@ -212,6 +212,8 @@ def run(request):
 
 
 if __name__ == "__main__":
+    from headless import install_signal_handlers
+    install_signal_handlers()
     try:
         result = run(json.loads(sys.argv[1]))
         print("STUDIO_RESULT:" + json.dumps(result, ensure_ascii=False, default=str), flush=True)

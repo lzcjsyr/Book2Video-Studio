@@ -28,6 +28,27 @@ def verify_sources(payload):
         raise ValueError('Narration or recording changed. Refresh this motion session before rendering.')
 
 
+def verify_export(candidate, width, height, fps, frames):
+    # Our H.264 MP4 has one packet per encoded frame. Count packets without
+    # decoding the whole clip, so a valid long render is not discarded by a
+    # short decode timeout and captured all over again.
+    probe = subprocess.run([_tool('ffprobe'), '-v', 'error', '-count_packets', '-show_streams', '-show_format',
+                            '-of', 'json', str(candidate)], check=True, capture_output=True, text=True,
+                           timeout=max(30, frames / fps))
+    metadata = json.loads(probe.stdout)
+    videos = [s for s in metadata['streams'] if s['codec_type'] == 'video']
+    if len(videos) != 1:
+        raise RuntimeError('Export must contain exactly one video stream.')
+    video = videos[0]
+    if ((video['width'], video['height']) != (width, height) or int(video['nb_read_packets']) != frames
+            or abs(float(metadata['format']['duration']) - frames / fps) > 1 / fps + .001
+            or video['codec_name'] != 'h264'
+            or abs(float(video['avg_frame_rate'].split('/')[0]) / float(video['avg_frame_rate'].split('/')[1]) - fps) > .001
+            or any(s['codec_type'] == 'audio' for s in metadata['streams'])):
+        raise RuntimeError('Export failed dimensions, frame count, duration or silent-video validation.')
+    return metadata
+
+
 def capture(work, payload, *, mode='check', fps=30, destination=None, times=None, caption_zone=True, entry='index.html'):
     work = Path(work).resolve()
     verify_sources(payload)
@@ -118,19 +139,7 @@ def render_clip(work, payload, output, *, fps=30, caption_zone=True, entry='inde
             print(f'{encoder} failed; falling back to libx264: {error.stderr}', flush=True)
             encoder = 'libx264'
             encode(encoder)
-        probe = subprocess.run([_tool('ffprobe'), '-v', 'error', '-count_frames', '-show_streams', '-show_format',
-                                '-of', 'json', str(candidate)], check=True, capture_output=True, text=True, timeout=30)
-        metadata = json.loads(probe.stdout)
-        videos = [s for s in metadata['streams'] if s['codec_type'] == 'video']
-        if len(videos) != 1:
-            raise RuntimeError('Export must contain exactly one video stream.')
-        video = videos[0]
-        if ((video['width'], video['height']) != (width, height) or int(video['nb_read_frames']) != report['frames']
-                or abs(float(metadata['format']['duration']) - report['frames'] / fps) > 1 / fps + .001
-                or video['codec_name'] != 'h264'
-                or abs(float(video['avg_frame_rate'].split('/')[0]) / float(video['avg_frame_rate'].split('/')[1]) - fps) > .001
-                or any(s['codec_type'] == 'audio' for s in metadata['streams'])):
-            raise RuntimeError('Export failed dimensions, frame count, duration or silent-video validation.')
+        verify_export(candidate, width, height, fps, report['frames'])
         if revision!=signature(work,payload,entry=entry,fps=fps,output=output,ignore_media=ignore_media):
             raise RuntimeError('Composition sources changed during rendering; render again.')
         verify_sources(payload)

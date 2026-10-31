@@ -39,7 +39,7 @@ step1_5:
   # - punctuation：按中英文句号、问号、感叹号、分号切分；保留标点，不按目标段数归并
   # - manual：按 raw 文稿中的换行切分；段尾带【motion】的段落会写为 visualizer=hf，否则为 image
   # - agent：调用 Claude Agent 进行意群分段，并为每段选择 image / hf
-  split_mode: punctuation
+  split_mode: manual
 
 # =============================================================================
 # 步骤2：描述小结
@@ -64,9 +64,9 @@ step3:
   tts_model: seed-tts-2.0-standard
   # 情感示例：neutral / happy / sad 等，具体取决于供应商支持。
   emotion: neutral
-  emotion_scale: 4
+  emotion_scale: 5
   # 语速、音量范围通常为 -50 到 100；0 表示正常。
-  speech_rate: 20
+  speech_rate: 25
   loudness_rate: 0
 
   # 静音切除。threshold <= 0 表示禁用。
@@ -99,20 +99,20 @@ step4:
   # - google：使用 GOOGLE_CLOUD_API_KEY
   # - google_adc：使用本机 Google ADC / Vertex AI
   # - doubao：火山引擎 Seedream
-  image_server: doubao
+  image_server: google_adc
   # 常用模型示例：
   # - gemini-3.1-flash-image
   # - doubao-seedream-5-0-260128
   # - doubao-seedream-4-0-250828
-  image_model: doubao-seedream-5-0-pro-260628
+  image_model: gemini-3.1-flash-image
   # 图像生成尺寸。建议与目标视频比例一致，例如 2560x1440 / 1920x1080 / 1080x1920。
   image_size: 2560x1440
   # 段落图像风格预设，见 core/prompts.py 的 IMAGE_STYLE_PRESETS。
-  image_style_preset: style02
+  image_style_preset: style12
   # 静态生图提示词模板，定义在 prompts/step4_image_templates.yaml：
-  # - keywords：原有图示+中文关键词模板（默认）
-  # - pure_images：无文字的电影感叙事画面
-  image_prompt_template: keywords
+  # - keywords：原有图示+中文关键词模板
+  # - pure_images：无文字的电影感叙事画面（默认）
+  image_prompt_template: pure_images
   # 图像生成并发。Google API key / ADC 的请求上限固定为 1。
   max_concurrent_image_generation: 1
   # Seedream（doubao）最多并发 5 个请求；可调低。上限跨项目、封面和画面任务共享。
@@ -150,11 +150,11 @@ step5:
 
   enable_subtitles: true
   # 背景音乐文件名，位于 music/ 目录；设为 null 表示不加 BGM。
-  bgm_filename: The Bandari - 寂静之声（The Sounds of Silence）.mp3
+  bgm_filename: null
   bgm_default_volume: 0.1
   narration_default_volume: 2.0
   # 口播整体变速，1.0 表示原速。
-  narration_speed_factor: 1.05
+  narration_speed_factor: 1.0
 
   # 静态图片线性 Zoom In 的终点倍率；1.0 表示关闭。
   # 最后一张图片始终保持 1.0，不应用 Zoom In。
@@ -190,7 +190,7 @@ step5:
 # =============================================================================
 three_by_four:
   # 是否同时导出 3:4 贴片版。
-  enabled: true
+  enabled: false
   # 贴片风格：ink（深色）/ paper（浅色纸张）/ blur（以模糊的主画面作背景）
   theme: ink
   # 主画面上方留白占全部留白的比例。0.5 居中；越小主画面越靠上。范围 0.15-0.85。

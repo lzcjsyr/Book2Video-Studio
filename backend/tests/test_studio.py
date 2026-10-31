@@ -144,6 +144,48 @@ class ProjectTests(unittest.TestCase):
         after = self.studio.save(self.p.name, {'kind': 'raw', 'value': value, 'selections': {'cover_subtitles': None, 'golden_quotes': None}, 'expected_hash': d['hashes']['raw']})
         self.assertEqual(after['raw']['cover_subtitles'], [])
         self.assertEqual(after['raw']['golden_quotes'], [])
+    def test_first_writing_draft_saves_without_a_manuscript_and_can_start_writing(self):
+        from unittest.mock import patch
+        created = self.studio.create({'name': 'First writing draft'})
+        project_id = created['id']
+        before = self.studio.detail(project_id)
+        value = {**copy.deepcopy(RAW), 'source_name': '', 'content': ' \n ', 'video_titles': ['Draft title']}
+        after = self.studio.save(project_id, {'kind': 'raw', 'value': value, 'expected_hash': before['hashes']['raw']})
+        self.assertEqual(after['raw']['content'], '')
+        self.assertEqual(after['raw']['total_length'], 0)
+        self.assertEqual(after['raw']['video_titles'], ['Draft title'])
+        self.assertFalse(after['ready']['1'])
+        self.assertFalse(after['state']['stale'])
+        self.assertEqual(self.open().detail(project_id)['raw'], after['raw'])
+        with self.assertRaisesRegex(Conflict, 'manuscript before generating segments'):
+            self.studio.run_job(project_id, {'step': '2'})
+        with patch('context.prepare', return_value={'id': 'first-writing-session'}):
+            self.studio.prepare_agent(project_id, {'step': '1'})
+        self.assertEqual(self.studio.state(self.studio.project(project_id))['agent_active']['step'], '1')
+    def test_first_writing_draft_accepts_missing_content_then_a_complete_manuscript(self):
+        project_id = self.studio.create({'name': 'Draft to manuscript'})['id']
+        value = copy.deepcopy(RAW); value.pop('content')
+        draft = self.studio.save(project_id, {'kind': 'raw', 'value': value, 'expected_hash': ''})
+        self.assertFalse(draft['ready']['1'])
+        ready = self.studio.save(project_id, {'kind': 'raw', 'value': copy.deepcopy(RAW), 'expected_hash': draft['hashes']['raw']})
+        self.assertTrue(ready['ready']['1'])
+        self.assertEqual(ready['raw']['content'], RAW['content'])
+    def test_empty_draft_cannot_erase_existing_manuscript_or_segmented_narration(self):
+        before = self.studio.detail(self.p.name)
+        value = {**copy.deepcopy(RAW), 'content': ''}
+        with self.assertRaisesRegex(ValueError, 'manuscript cannot be empty'):
+            self.studio.save(self.p.name, {'kind': 'raw', 'value': value, 'expected_hash': before['hashes']['raw']})
+        self.assertEqual(fingerprint(self.p/'text/raw.json'), before['hashes']['raw'])
+        (self.p/'text/raw.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'manuscript cannot be empty'):
+            self.studio.save(self.p.name, {'kind': 'raw', 'value': value, 'expected_hash': ''})
+        self.assertFalse((self.p/'text/raw.json').exists())
+        self.assertEqual(fingerprint(self.p/'text/script.json'), before['hashes']['script'])
+    def test_first_writing_draft_rejects_non_text_content(self):
+        project_id = self.studio.create({'name': 'Invalid draft'})['id']
+        for content in [None, [], {}, 0]:
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, 'manuscript cannot be empty'):
+                self.studio.save(project_id, {'kind': 'raw', 'value': {**copy.deepcopy(RAW), 'content': content}, 'expected_hash': ''})
     def test_external_recording_invalidates_assembly_not_cover(self):
         self.studio.detail(self.p.name)
         recording(self.p/'voice/voice_1.wav')
@@ -392,6 +434,20 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(self.spawn_job({'step':'5'})['step'],'5')
         (self.p/'voice/voice_2.wav').unlink()
         with self.assertRaises(Conflict):self.studio.run_job(self.p.name,{'step':'5'})
+    def test_assembly_uses_the_default_method_and_respects_a_saved_override(self):
+        from unittest.mock import patch
+        (self.engine/'config.example.yaml').write_text('global:\n  opening_quote: false\nstep5: {}\n')
+        with self.assertRaisesRegex(ValueError, 'interactive Claude Code terminal'):
+            self.studio.run_job(self.p.name, {'step':'5'})
+        launch = {'assembly_edit': {'folder':'.studio/edits/test', 'skill':'content-led', 'source':'', 'delivered_before':None}}
+        with patch('context.prepare', return_value=launch):
+            self.assertEqual(self.spawn_job({'step':'5', 'mode':'agent'})['mode'], 'agent')
+        state = self.studio.state(self.p)
+        state['settings'] = {'step5': {'assembly_method':'standard'}}
+        self.studio.persist(self.p, state)
+        self.assertEqual(self.spawn_job({'step':'5'})['step'], '5')
+        with self.assertRaisesRegex(ValueError, 'Choose Claude Code editing'):
+            self.studio.run_job(self.p.name, {'step':'5', 'mode':'agent'})
     def post_settings(self, settings):
         server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
@@ -886,7 +942,7 @@ class PipelineTests(unittest.TestCase):
         (self.p/opening.RECORD).write_text(json.dumps({'signature':opening.signature(self.p,motion)}))
         for enabled in [True, False]:
             with self.subTest(opening=enabled):
-                self.run_worker('5',{'global':{'opening_quote':enabled},'step5':{'video_size':'320x180','video_output_fps':12,'video_codec':'h264','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0}})
+                self.run_worker('5',{'global':{'opening_quote':enabled},'step5':{'video_size':'320x180','video_output_fps':12,'video_codec':'h264','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0},'three_by_four':{'enabled':True}})
                 for name in ['final_video.mp4','final_video_3x4.mp4']:
                     target=self.p/name;self.assertGreater(target.stat().st_size,1000);self.assertAlmostEqual(duration(target),3.0 if enabled else 2.0,delta=.5)
                 with VideoFileClip(str(self.p/'final_video.mp4')) as video:

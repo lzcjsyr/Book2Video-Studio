@@ -214,19 +214,19 @@ HTML cover designs live in `.studio/cover-designs/<session>/`, with `studio-payl
 
 ### Step 5: Claude Code editing
 
-Choose **Standard assembly** or **Claude Code editing** on the Assembly page; the standard assembler remains the default. The editing agent uses the same Claude Code login, provider and model as Writing.
+Choose **Standard assembly** or **Claude Code editing** on the Assembly page. New projects default to Claude Code editing with **Free design**. The editing agent uses the same Claude Code login, provider and model as Writing.
 
-In Claude Code mode the agent is the editor. **New video edit** gives it the materials earlier steps made, listed in `.studio/edits/<session>/materials.json`: each segment's picture or clip, narration text and recording, the opening's quote, source name, background and recording, and the music it may use. It also gets your choices on the page: export size, narration speed, subtitles on or off, suggested music and whether it may mix tracks, and a style direction (**Free design**, which leaves the style entirely to the agent based on the content, or **Editorial explainer**, **Cinematic essay** or **Kinetic social**; all editable in the library). Structure, pacing, motion, caption design, transitions, the opening and the sound are its decisions. Grist provides one tool, `studio_render.py`: GPU capability detection, and GPU-backed rendering of HTML pages to video with the hardware encoder. The agent delivers `final_video.mp4` (and an optional `.srt`) to the project; the previous video is kept in revision history first. **Revise last edit** continues in a copy of the last session's folder. Grist still draws the optional 3:4 copy around the delivered video.
+In Claude Code mode the agent is the editor. **New video edit** gives it the materials earlier steps made, listed in `.studio/edits/<session>/materials.json`: each segment's picture or clip, narration text and recording, the opening's quote, source name, background and recording, and the music it may use. It also gets your choices on the page: export size, narration speed, subtitles on or off, suggested music and whether it may mix tracks, and a style direction (**Free design**, which leaves the style entirely to the agent based on the content, or **Editorial explainer**, **Cinematic essay** or **Kinetic social**; all editable in the library). Structure, pacing, motion, caption design, transitions, the opening and the sound are its decisions. The editable step 5 template states the execution contract and shared drawing API. The agent writes one project-local `run.py` for capability checks, GPU rendering, snapshots, retries and composition; the app provides materials and local animation assets without generating or replacing that script. The agent delivers `final_video.mp4` (and an optional `.srt`) to the project; the previous video is kept in revision history first. **Revise last edit** continues in a copy of the last session's folder. Grist still draws the optional 3:4 copy around the delivered video.
 
 ### 步骤 5：Claude Code 剪辑
 
-“合成”页面可选择标准合成或 Claude Code 剪辑。剪辑沿用写作的 Claude Code 登录、服务商和模型。Claude Code 模式下由智能体担任剪辑师：万物成片只提供前面步骤的素材（每段画面、正文和录音，开场的金句、书名、背景和录音，可用音乐）和你在页面上的选择（尺寸、语速、字幕、配乐、风格方向；“自由设计”不预设风格，由智能体按内容决定），以及一个 GPU 加速渲染工具 `studio_render.py`。结构、节奏、画面运动、字幕样式、转场、开场和声音都由智能体决定，最后把成片交付到项目的 `final_video.mp4`；旧成片会先保存在修订历史中。3:4 副本仍由万物成片围绕交付的视频生成。
+“合成”页面可选择标准合成或 Claude Code 剪辑，新项目默认使用 Claude Code 剪辑和“自由设计”。剪辑沿用写作的 Claude Code 登录、服务商和模型。Claude Code 模式下由智能体担任剪辑师：万物成片提供前面步骤的素材（每段画面、正文和录音，开场的金句、书名、背景和录音，可用音乐）和你在页面上的选择（尺寸、语速、字幕、配乐、风格方向；“自由设计”不预设风格，由智能体按内容决定）。第五步 Agent 模板集中保存简短的执行约定与共享绘制接口；智能体据此在项目中编写唯一入口 `run.py`，负责能力检测、GPU 渲染、截图、批量重试和合成。应用提供素材清单与本地动画库，保留修订副本中已有的脚本供智能体续用。结构、节奏、画面运动、字幕样式、转场、开场和声音都由智能体决定，最后把成片交付到项目的 `final_video.mp4`；旧成片会先保存在修订历史中。3:4 副本仍由万物成片围绕交付的视频生成。
 
 ### 中文制作指令与硬件加速
 
 桌面版的写作、画面、精剪和封面会话模板使用简体中文。写作技能沿用引擎中的中文稿件；HTML 动画与三种精剪技能使用桌面版中文入口。`scripts/stage.mjs` 先复制引擎，再覆盖桌面版的 `prompts/` 与 `skills/`，因此打包和开发环境使用同一套说明。命令、JSON 字段、占位变量和风格标识保留原名，保证模板仍可执行。两个阶段共用浏览器渲染契约和本机能力报告，Agent 负责渲染、检查和修复循环。
 
-所有 Apple Silicon M 系列 Mac（各代基础款、Pro、Max、Ultra 及后续型号）均优先使用原生 Metal GPU 绘制和 VideoToolbox 视频编码。保存的动态片段和精剪 HTML 渲染显式请求 `--browser-gpu --gpu`；精剪时智能体先用 `studio_render.py capabilities` 检测硬件，编码优先使用硬件编码器，只有不可用或实际失败时才回退 CPU。浏览器 GPU 绘制与媒体引擎编码分别核实，不能只凭 GPU 占用率判断。
+Apple Silicon Mac 优先通过浏览器的 Metal 后端绘制，使用 VideoToolbox 视频编码。精剪时智能体在 `run.py` 内通过共享接口检测本机能力，具体参数见该项目脚本的 `--help`。默认自动检测；引擎支持环境变量 `AIGC_BROWSER_MODE=auto|hardware|software` 和 `AIGC_VIDEO_ENCODER=auto|software`。硬件编码不可用或实际失败时回退 `libx264`，浏览器绘制与媒体编码分别核实。
 
 Windows 指南包含 NVIDIA NVENC、Intel QSV、AMD AMF 的驱动检查和短片测试，集成显卡同样应检查。完整说明在共享 HTML 动画技能中；Windows 后端选择以模拟测试验证，当前打包脚本仍仅支持 macOS arm64。
 
@@ -244,7 +244,7 @@ Visuals uses local HTML/SVG/GSAP/Three.js, Chrome frame capture and FFmpeg encod
 
 ### Agent-controlled rendering
 
-Motion agents run `python render.py capabilities`, `check --snapshots`, `preview` and `render`. Editing agents use `python studio_render.py capabilities`, `render` and `snapshot` for GPU rendering, and decide everything else themselves. Renderer scripts control Chrome/FFmpeg and return measured capabilities, progress and screenshots. Agents review real frames before delivering; an ended session never launches another export. The app discovers the files and displays progress/results.
+Motion agents run `python render.py capabilities`, `check --snapshots`, `preview` and `render`. Editing agents write their own `run.py` from the template contract, providing `render`, `compose` and `all`, with other operations documented in the script's `--help`. The script calls the shared Chrome/FFmpeg engine for measured capabilities, rendering and screenshots. Agents review real frames before delivering; an ended session never launches another export. The app discovers the files and displays progress/results.
 
 Use `--browser-mode auto|hardware|software` and `--encoder auto|software`; hardware is tried first and software fallback reasons are recorded. Packaged dependencies use `AIGC_MOTION_MODULES`, `AIGC_BROWSER_PATH`, `AIGC_FFMPEG_PATH` and `AIGC_FFPROBE_PATH`. Earlier custom framework references and incompatible prompts are archived outside the active library. Current packaging supports macOS arm64; Windows encoder selection has mocked tests, and native Windows/Linux exports need platform testing.
 

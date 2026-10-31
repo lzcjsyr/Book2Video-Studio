@@ -294,8 +294,8 @@ assert 'CUSTOM COVER TEMPLATE' in captured['cover'] and 'CUSTOM COVER STYLE' in 
 
 
 
-# A step 5 template in the current shape: every variable Studio fills in.
-BUNDLED_STEP5 = "".join("{" + v + "}" for v in ["style", "skill_path", "materials", "video_size", "narration_speed", "subtitles", "music", "opening", "session", "work_dir", "delivery"])
+# Use the shipped template and its execution contract.
+BUNDLED_STEP5 = (ENGINE / "prompts/step5_editing_agent.md").read_text(encoding="utf-8")
 
 
 class BundledLibraryTests(unittest.TestCase):

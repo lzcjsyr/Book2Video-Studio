@@ -90,7 +90,14 @@ def next_job(studio, project_id, step, options, done, d=None):
         return kind, {"step": "4", "mode": "segments", "batch": "selected", "indices": indices, "opening": with_opening}
     if step == "5":
         if "assembly" not in done and (everything or not d["ready"]["5"] or stale):
-            return "assembly", {"step": "5", **({"mode": "agent"} if settings.get("step5", {}).get("assembly_method") == "agent" else {})}
+            body = {"step": "5"}
+            if settings.get("step5", {}).get("assembly_method") == "agent":
+                body["mode"] = "agent"
+                edit = d.get("assembly_edit")
+                if not everything and edit and edit["current"] and not edit["delivered"] \
+                        and edit.get("skill") == settings.get("step5", {}).get("agent_skill", "content-led"):
+                    body["revise"] = True
+            return "assembly", body
         # Claude Code delivers only the 16:9 video; Studio draws the 3:4 copy around it.
         if settings.get("three_by_four", {}).get("enabled", True) is not False and "three_by_four" not in done and d["ready"]["5"] \
                 and (state.get("three_by_four_stale") or "final_video_3x4.mp4" not in d["exports"]):
