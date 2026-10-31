@@ -69,7 +69,8 @@ step3:
   speech_rate: 25
   loudness_rate: 0
 
-  # 静音切除。threshold <= 0 表示禁用。
+  # 静音切除：删掉录音里过长的停顿。设置里可关闭；threshold <= 0 同样表示禁用。
+  trim_silence: true
   mute_cut_threshold: 400
   mute_cut_min_silence_ms: 300
   mute_cut_remain_ms: 200

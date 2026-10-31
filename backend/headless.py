@@ -6,6 +6,8 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import threading
+import time
 
 PROVIDER_ENV = (
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
@@ -19,36 +21,50 @@ TOOLS = "Read,Write,Edit,Bash,Glob,Grep"
 # How many turns each session may take and how long it may run (seconds).
 SESSIONS = {"5": (200, 3 * 3600), "6": (100, 3600)}
 _running = {}
+# Held while a CLI starts, so a cancelled job neither misses a session nor starts another one.
+_starting = threading.RLock()
+_cancelled = False
 
 
-def stop_session(process):
-    """Stop the CLI and its renders, including background shells it started."""
+def _signal_group(process, sig):
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def stop_sessions(*processes):
+    """Stop CLIs and their renders, including background shells they started."""
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        for process in processes:
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
     else:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
+        for process in processes:
+            _signal_group(process, signal.SIGTERM)
+        deadline = time.monotonic() + 3
+        for process in processes:
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
         # A shell can exit before its background render. Reap the whole group.
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    process.wait()
+        for process in processes:
+            _signal_group(process, signal.SIGKILL)
+    for process in processes:
+        process.wait()
 
 
 def install_signal_handlers():
-    """The job runner forwards cancellation to each separately supervised CLI."""
+    """Cancelling a job stops each separately supervised CLI, then ends the job at once: work still
+    queued in a thread pool must not start, and a thread waiting on a provider must not hold the exit."""
     def stop(signum, _frame):
-        for process in _running.copy().values():
-            stop_session(process)
-        raise SystemExit(128 + signum)
+        global _cancelled
+        with _starting:
+            _cancelled = True
+            sessions = list(_running.values())
+        stop_sessions(*sessions)
+        os._exit(128 + signum)
     signal.signal(signal.SIGTERM, stop)
 
 
@@ -101,14 +117,17 @@ def claude_command(saved, step="4"):
 def run_claude(program, env, launch, prompt, max_turns, timeout, logs: Path):
     """One print-mode session with the launch's context; returns its result, or raises when it did not finish."""
     with (logs / "claude-session.json").open("w", encoding="utf-8") as log, (logs / "claude-stderr.log").open("w", encoding="utf-8") as errors:
-        process = subprocess.Popen([
-            program, "-p", prompt, *launch["args"], "--output-format", "json", "--max-turns", str(max_turns),
-            "--permission-mode", "acceptEdits", "--tools", TOOLS, "--allowedTools", TOOLS, "--setting-sources", "project,local",
-            *(["--model", env["ANTHROPIC_MODEL"]] if env.get("ANTHROPIC_MODEL") else []),
-        ], cwd=launch["cwd"], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=errors, text=True,
-            start_new_session=os.name != "nt",
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        _running[process.pid] = process
+        with _starting:
+            if _cancelled:
+                raise ValueError("The job was stopped.")
+            process = subprocess.Popen([
+                program, "-p", prompt, *launch["args"], "--output-format", "json", "--max-turns", str(max_turns),
+                "--permission-mode", "acceptEdits", "--tools", TOOLS, "--allowedTools", TOOLS, "--setting-sources", "project,local",
+                *(["--model", env["ANTHROPIC_MODEL"]] if env.get("ANTHROPIC_MODEL") else []),
+            ], cwd=launch["cwd"], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=errors, text=True,
+                start_new_session=os.name != "nt",
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            _running[process.pid] = process
         try:
             try:
                 code = process.wait(timeout=timeout)
@@ -116,7 +135,7 @@ def run_claude(program, env, launch, prompt, max_turns, timeout, logs: Path):
                 raise ValueError("Claude Code timed out. Completed files were kept; retry Missing and outdated to continue.") from None
         finally:
             try:
-                stop_session(process)
+                stop_sessions(process)
             finally:
                 _running.pop(process.pid, None)
     # Check the result as well as the exit code: max-turns and tool failures can exit with zero.

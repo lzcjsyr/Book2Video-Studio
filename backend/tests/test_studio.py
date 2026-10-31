@@ -407,9 +407,35 @@ class ProjectTests(unittest.TestCase):
         with patch('server.subprocess.Popen'), patch('server.threading.Thread'):
             running=self.studio.run_job(self.p.name,{'step':'3'})
         queued=self.studio.queue_image(self.p.name,{'index':1})
-        with patch('server.os.killpg'):self.studio.cancel_job(running['id'])
+        with patch('server.os.killpg'), patch('server.threading.Timer'):self.studio.cancel_job(running['id'])
         self.assertIsNone(self.studio.queued(self.p.name))
         self.assertNotIn(queued['id'],self.studio.jobs)
+    @unittest.skipIf(os.name=='nt','POSIX process groups')
+    def test_a_job_that_ignores_stop_is_killed_after_the_grace_period(self):
+        """Regression: Stop left a job cancelling (and auto production stopping) while its process kept retrying a provider."""
+        from unittest.mock import patch
+        import time
+        stubborn=subprocess.Popen([sys.executable,'-c','import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint("ready",flush=True)\ntime.sleep(60)'],
+                                  stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
+        try:
+            with patch('server.subprocess.Popen',return_value=stubborn), patch('server.STOP_GRACE',.5):
+                job=self.studio.run_job(self.p.name,{'step':'3'})
+                deadline=time.time()+10
+                while not self.studio.jobs[job['id']]['log'] and time.time()<deadline:time.sleep(.05)
+                self.assertEqual(self.studio.cancel_job(job['id'])['status'],'cancelling')
+                while self.studio.jobs[job['id']]['status']=='cancelling' and time.time()<deadline:time.sleep(.05)
+            self.assertEqual(self.studio.jobs[job['id']]['status'],'cancelled')
+            self.assertIsNotNone(stubborn.poll())
+        finally:
+            if stubborn.poll() is None:stubborn.kill()
+    def test_a_result_cut_short_still_ends_the_job(self):
+        from unittest.mock import patch
+        with patch('server.subprocess.Popen'), patch('server.threading.Thread'):
+            running=self.studio.run_job(self.p.name,{'step':'3'})
+        process=subprocess.Popen([sys.executable,'-c','print(\'STUDIO_RESULT:{"success":tr\')'],stdout=subprocess.PIPE,text=True)
+        job=self.studio.jobs[running['id']]
+        self.studio.observe_job(job,process)
+        self.assertEqual((job['status'],job['result']),('failed',None))
     def test_clearing_the_queue_leaves_the_running_job(self):
         from unittest.mock import patch
         with patch('server.subprocess.Popen'), patch('server.threading.Thread'):

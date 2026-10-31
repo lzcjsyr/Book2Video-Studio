@@ -63,6 +63,8 @@ DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step6": {"cover_method"}, "step5
 # runs beside the jobs that leave the text as it is: recordings, visuals and assembly.
 BESIDE_COVERS = {"3", "4", "5"}
 PROVIDER_KEYS = {"OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "MIMO_API_KEY", "KIMI_API_KEY", "SILICONFLOW_KEY", "VOLCENGINE_API_KEY", "GOOGLE_CLOUD_API_KEY", "BYTEDANCE_TTS_API_KEY"}
+# Seconds a stopped job has to end (its Claude Code sessions included) before it is killed.
+STOP_GRACE = 10
 
 
 def read_json(path: Path, default=None):
@@ -176,6 +178,17 @@ def engine_settings(settings):
     """Project settings as the engine's configuration accepts them (its section names, no desktop-only keys)."""
     return {ENGINE_SECTIONS.get(section, section): {k: v for k, v in values.items() if k not in DESKTOP_SETTINGS.get(section, ())}
             for section, values in settings.items()}
+
+
+def signal_job(process, force=False):
+    """Ask a job and everything it started to stop, or (force) kill them."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+    except ProcessLookupError:
+        pass
 
 
 def segmentation_output(values):
@@ -431,7 +444,7 @@ class Studio:
         new = after.get("segments", [])
         spoken = {s["index"] for s in new if (old.get(s["index"]) or {}).get("content") != s.get("content")}
         shown = spoken | {s["index"] for s in new if s["index"] in old and old[s["index"]].get("visualizer", "image") != s.get("visualizer", "image")}
-        opening = {**self.defaults().get("global", {}), **state.get("settings", {}).get("global", {})}.get("opening_quote", True)
+        opening = self.opening_on(state)
         quote = opening and first_text(before.get("golden_quotes")) != first_text(after.get("golden_quotes"))
         if quote:
             # The opening (0) speaks the chosen golden quote; assembly draws it over the opening's background.
@@ -799,8 +812,7 @@ class Studio:
             opening_audio = self.asset(p, "voice", "opening", [".wav"])
             covers = [str(f.relative_to(p)) for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA]
             ready = {"1": bool(raw.get("content")), "2": bool(segments), "3": bool(segments) and all(s["audio"] for s in segments), "4": bool(segments) and all(s["visual"] for s in segments), "5": (p / "final_video.mp4").is_file(), "6": bool(covers)}
-            opening_required = state.get("settings", {}).get("global", self.defaults().get("global", {})).get("opening_quote", True)
-            if opening_required:
+            if self.opening_on(state):
                 ready["3"] = ready["3"] and bool(opening_audio)
                 ready["4"] = ready["4"] and bool(parts[0]["visual"])
             self.persist(p, state)
@@ -1055,7 +1067,7 @@ class Studio:
             if self.busy(project_id):
                 raise Conflict("Stop production before changing its settings.")
             state = self.state(p)
-            previous = state.get("settings", {}).get("global", {}).get("opening_quote", self.defaults().get("global", {}).get("opening_quote", True))
+            previous = self.opening_on(state)
             if "expected" in body and body["expected"] != previous:
                 raise Conflict("Opening quote setting changed elsewhere. Refresh before changing it.")
             if previous != enabled:
@@ -1377,7 +1389,7 @@ class Studio:
                     if body["visualizer"] != "hf" or batch != "selected":
                         raise ValueError("Choose selected segments to generate a new motion clip.")
                     candidates = [{**s, "visualizer": "hf"} for s in candidates]
-                enabled = {**self.defaults().get("global", {}), **detail["state"].get("settings", {}).get("global", {})}.get("opening_quote", True)
+                enabled = self.opening_on(detail["state"])
                 if batch == "selected":
                     indices = body.get("indices")
                     available = {s["index"] for s in candidates}
@@ -1402,9 +1414,7 @@ class Studio:
                     raise Conflict("Generate segments before generating all images.")
                 candidates = [s for s in detail["segments"] if s.get("visualizer", "image") == "image"]
                 indices = [s["index"] for s in candidates if body["batch"] == "all" or not self.asset(p, "images", f"segment_{s['index']}", [".png", ".jpg", ".jpeg", ".webp"])]
-                global_settings = {**self.defaults().get("global", {}), **detail["state"].get("settings", {}).get("global", {})}
-                opening_enabled = global_settings.get("opening_quote", True)
-                opening = bool(opening_enabled and (body["batch"] == "all" or not detail["opening"]["visual"]))
+                opening = bool(self.opening_on(detail["state"]) and (body["batch"] == "all" or not detail["opening"]["visual"]))
                 if not indices and not opening:
                     raise ValueError("All static images are already available.")
                 body = {**body, "indices": indices, "opening": opening, "mode": "static"}
@@ -1500,23 +1510,29 @@ class Studio:
         return {k: v for k, v in job.items() if k != "process" and not k.startswith("_")}
 
     def observe_job(self, job, process):
-        for line in process.stdout:
+        try:
+            for line in process.stdout:
+                with self.lock:
+                    for secret in job.get("_secrets", []):
+                        line = line.replace(secret, "[hidden API key]")
+                    if line.startswith("STUDIO_RESULT:"):
+                        try:
+                            job["result"] = json.loads(line[len("STUDIO_RESULT:"):])
+                        except ValueError:
+                            pass  # Cut short by a stop: the job has no result.
+                    else:
+                        job["log"].append(line.rstrip())
+                        job["log"] = job["log"][-300:]
+        finally:
+            # Whatever happened to its output, the job ends with its process.
+            code = process.wait()
+            process.stdout.close()
             with self.lock:
-                for secret in job.get("_secrets", []):
-                    line = line.replace(secret, "[hidden API key]")
-                if line.startswith("STUDIO_RESULT:"):
-                    job["result"] = json.loads(line[len("STUDIO_RESULT:"):])
-                else:
-                    job["log"].append(line.rstrip())
-                    job["log"] = job["log"][-300:]
-        code = process.wait()
-        process.stdout.close()
-        with self.lock:
-            try:
-                self.job_ended(job, code)
-            finally:
-                # Images queued behind this job start as soon as it ends.
-                self.start_queued(job["project"])
+                try:
+                    self.job_ended(job, code)
+                finally:
+                    # Images queued behind this job start as soon as it ends.
+                    self.start_queued(job["project"])
 
     def job_ended(self, job, code):
         with self.lock:
@@ -1587,8 +1603,7 @@ class Studio:
                 script = read_json(p / "text/script.json", {})
                 segments = script.get("segments", [])
                 all_indices = {s["index"] for s in segments}
-                global_settings = {**self.defaults().get("global", {}), **state.get("settings", {}).get("global", {})}
-                if global_settings.get("opening_quote", True):
+                if self.opening_on(state):
                     all_indices.add(0)
                 completed = generated if generated is not None else set(job["scope"] if job["scope"] is not None else all_indices - {0})
                 if job["step"] == "4" and job["mode"] in {"static", "render"}:
@@ -1618,7 +1633,7 @@ class Studio:
                 raise Conflict("Finish the Claude Code session first.")
             index = body.get("index")
             available = {s.get("index") for s in read_json(p / "text/script.json", {}).get("segments", [])}
-            if self.opening_enabled(p):
+            if self.opening_on(self.state(p)):
                 available.add(0)
             if type(index) is not int or index not in available:
                 raise ValueError("Choose segment numbers that exist in this project.")
@@ -1647,8 +1662,9 @@ class Studio:
             # A queue left behind with nothing running (never expected) starts rather than waits forever.
             return self.start_queued(project_id) or self.public_job(queued)
 
-    def opening_enabled(self, p: Path) -> bool:
-        return {**self.defaults().get("global", {}), **self.state(p).get("settings", {}).get("global", {})}.get("opening_quote", True)
+    def opening_on(self, state) -> bool:
+        """Whether the production opens with its quote: the project's choice, else the default."""
+        return self.effective(state).get("global", {}).get("opening_quote", True)
 
     def start_queued(self, project_id):
         """Start the project's queued images once nothing they wait for runs; the started job, or None."""
@@ -1662,7 +1678,7 @@ class Studio:
                 p = self.project(project_id)
                 available = {s.get("index") for s in read_json(p / "text/script.json", {}).get("segments", [])}
                 indices = [i for i in queued["scope"] if i in available]
-                opening = queued["opening"] and self.opening_enabled(p)
+                opening = queued["opening"] and self.opening_on(self.state(p))
                 if not indices and not opening:
                     return None
                 return self.run_job(project_id, {"step": "4", "mode": "static", "indices": indices, "opening": opening})
@@ -1685,14 +1701,36 @@ class Studio:
             queued = self.queued(job["project"])
             if queued and not self.beside("4", job["step"]):
                 self.jobs.pop(queued["id"])
-            if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(job["process"].pid), "/T", "/F"], capture_output=True)
-            else:
-                try:
-                    os.killpg(job["process"].pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
+            signal_job(job["process"])
+            # A job that does not end in time (a provider call that ignores the request) is killed.
+            timer = threading.Timer(STOP_GRACE, self.kill_if_stopping, args=(job,))
+            timer.daemon = True
+            timer.start()
             return self.public_job(job)
+
+    def kill_if_stopping(self, job):
+        with self.lock:
+            if job["status"] == "cancelling":
+                signal_job(job["process"], force=True)
+
+    def stop_all(self, grace=5):
+        """On shutdown: queued images are dropped, automatic runs and jobs stop, and whatever still runs after
+        `grace` seconds is killed, so no job outlives the service."""
+        with self.lock:
+            for queued in [j for j in self.jobs.values() if j["status"] == "queued"]:
+                del self.jobs[queued["id"]]
+            for run in list(self.autoruns.values()):
+                autorun.stop(self, run["id"])
+            jobs = [j for j in self.jobs.values() if j["status"] in {"running", "cancelling"}]
+            for job in jobs:
+                self.cancel_job(job["id"])
+        deadline = time.monotonic() + grace
+        for job in jobs:
+            try:
+                job["process"].wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+            signal_job(job["process"], force=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1987,16 +2025,8 @@ def main():
     try:
         server.serve_forever()
     finally:
-        for job in studio.jobs.values():
-            if job["status"] in {"running", "cancelling"}:
-                studio.cancel_job(job["id"])
-                try:
-                    job["process"].wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    if os.name == "nt":
-                        job["process"].kill()
-                    else:
-                        os.killpg(job["process"].pid, signal.SIGKILL)
+        # Within the native host's wait (7 seconds) for the service to end.
+        studio.stop_all()
         server.server_close()
 
 

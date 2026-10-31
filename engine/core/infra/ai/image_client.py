@@ -7,6 +7,7 @@ import os
 import concurrent.futures
 import base64
 import datetime
+import re
 import time
 
 from core.config import config
@@ -17,7 +18,7 @@ from core.prompts import (
     IMAGE_PROMPT_SAFETY_TEMPLATE,
     get_step4_image_description_prompt_template,
 )
-from core.shared import logger, ensure_directory_exists
+from core.shared import logger, ensure_directory_exists, ContentBlocked, is_retryable
 from core.infra.ai.image_providers import IMAGE_PROVIDERS
 from core.infra.ai.image_concurrency import provider_slot
 from core.infra.ai.llm_client import text_to_text
@@ -221,8 +222,10 @@ def _generate_single_image(args) -> Dict[str, Any]:
     desensitize_attempts = 0
     max_desensitize = int(safety_options.get("max_attempts", 0)) if safety_options else 0
 
+    error_msg = ""
     attempt = 0
-    max_attempts = 5
+    # 服务商调用自身已重试限流与超时（Google 6 次），这里只再补两轮。
+    max_attempts = 3
     while attempt < max_attempts:
         try:
             image_path = os.path.join(output_dir, f"segment_{segment_index}.png")
@@ -238,7 +241,8 @@ def _generate_single_image(args) -> Dict[str, Any]:
             error_msg = str(exc)
             lower_error = error_msg.lower()
             is_sensitive_error = (
-                "outputimagesensitivecontentdetected" in lower_error
+                isinstance(exc, ContentBlocked)
+                or "outputimagesensitivecontentdetected" in lower_error
                 or "sensitive" in lower_error
                 or "content policy" in lower_error
             )
@@ -259,8 +263,10 @@ def _generate_single_image(args) -> Dict[str, Any]:
                     continue
                 logger.warning(f"第{segment_index}段提示词脱敏失败")
 
+            # 内容审核、缺少配置、凭据或模型错误：原样重试只会以同样方式失败。
+            if not is_retryable(exc):
+                break
             attempt += 1
-
             if attempt < max_attempts:
                 if is_rate_limit_error:
                     wait_seconds = min(2 ** attempt, 8)
@@ -271,13 +277,10 @@ def _generate_single_image(args) -> Dict[str, Any]:
                 logger.warning(
                     f"第{segment_index}段图像生成失败：{error_msg}，准备重试（第{attempt + 1}/{max_attempts}次）"
                 )
-                continue
 
-            logger.warning(f"第{segment_index}段图像生成失败，已跳过。错误：{error_msg}")
-            print(f"第{segment_index}段图像生成失败，已跳过")
-            break
-
-    return {"success": False, "segment_index": segment_index, "image_path": ""}
+    logger.warning(f"第{segment_index}段图像生成失败，已跳过。错误：{error_msg}")
+    print(f"第{segment_index}段图像生成失败，已跳过：{error_msg}")
+    return {"success": False, "segment_index": segment_index, "image_path": "", "error": error_msg}
 
 
 def image_generation_workers(image_server: str) -> int:
@@ -285,6 +288,20 @@ def image_generation_workers(image_server: str) -> int:
     key = "SEEDREAM_MAX_CONCURRENT_IMAGE_GENERATION" if image_server == "doubao" else "MAX_CONCURRENT_IMAGE_GENERATION"
     ceiling = 5 if image_server == "doubao" else 1
     return min(ceiling, max(1, int(getattr(config, key, ceiling) or 1)))
+
+
+def image_style_text(preset: Optional[str]) -> str:
+    """The style preset without its font clause: generated images carry no text."""
+    style = IMAGE_STYLE_PRESETS.get(preset, next(iter(IMAGE_STYLE_PRESETS.values()), ""))
+    return re.sub(r'[；，]?字体为[^；。，]*', '', style).strip().lstrip("；，。")
+
+
+def image_safety_options(llm_model: Optional[str], llm_server: Optional[str], llm_base_url: Optional[str]) -> Dict[str, Any]:
+    """How a prompt the image service blocked is reworded with Visuals' LLM; {} without one."""
+    if not (llm_model and llm_server and llm_base_url):
+        return {}
+    return {"llm_model": llm_model, "llm_server": llm_server, "llm_base_url": llm_base_url,
+            "max_attempts": 3, "max_tokens": 800, "temperature": 0.2}
 
 
 def generate_images_for_segments(
@@ -303,16 +320,7 @@ def generate_images_for_segments(
 ) -> Dict[str, Any]:
     """为每个段落生成图像（支持多线程并发）"""
     try:
-        try:
-            image_style = IMAGE_STYLE_PRESETS.get(
-                image_style_preset,
-                next(iter(IMAGE_STYLE_PRESETS.values()))
-            )
-            # 动态移除任何关于字体的描述以避免生图带文字
-            import re
-            image_style = re.sub(r'[；，]?字体为[^；。，]*[；。，]?', '', image_style).strip()
-        except Exception:
-            image_style = ""
+        image_style = image_style_text(image_style_preset)
         logger.info(
             f"使用图像服务: {image_server}，风格: {image_style_preset} -> {image_style}，"
             f"提示词模板: {image_prompt_template or 'keywords'}"
@@ -378,22 +386,14 @@ def generate_images_for_segments(
                 if os.path.exists(existing_path):
                     image_paths[position] = existing_path
         failed_segments: List[int] = []
-        safety_options: Optional[Dict[str, Any]] = None
-        if llm_model and llm_server and llm_base_url:
-            safety_options = {
-                "llm_model": llm_model,
-                "llm_server": llm_server,
-                "llm_base_url": llm_base_url,
-                "max_attempts": 3,
-                "max_tokens": 800,
-                "temperature": 0.2,
-            }
+        errors: Dict[int, str] = {}
+        safety_options = image_safety_options(llm_model, llm_server, llm_base_url)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_index = {
                 executor.submit(
                     _generate_single_image,
-                    (int(idx), prompt, model, image_size, output_dir, image_server, safety_options or {})
+                    (int(idx), prompt, model, image_size, output_dir, image_server, safety_options)
                 ): int(idx)
                 for idx, prompt in prompt_payload
             }
@@ -406,12 +406,14 @@ def generate_images_for_segments(
                     image_paths[position] = result["image_path"]
                 else:
                     failed_segments.append(segment_index)
+                    errors[segment_index] = result.get("error", "")
                     if 0 <= position < segment_count:
                         image_paths[position] = ""
 
         return {
             "image_paths": image_paths,
             "failed_segments": failed_segments,
+            "errors": errors,
             "processed_segments": sorted(target_set) if target_set else list(range(1, segment_count + 1)),
         }
 

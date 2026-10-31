@@ -11,7 +11,6 @@
 
 import json
 import os
-import re
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from core.config import Config, config
@@ -26,6 +25,8 @@ from core.domain.metadata import (
 from core.infra.ai.image_client import (
     generate_cover_images,
     generate_images_for_segments,
+    image_safety_options,
+    image_style_text,
     synthesize_voice_for_segments,
     _generate_single_image,
 )
@@ -458,35 +459,11 @@ def run_step_4(
             if not summary_text:
                 summary_text = get_primary_video_title(script_data or {}, "视频开场")
 
-            # 1.2 解析风格设置
-            from core.infra.ai.image_client import IMAGE_STYLE_PRESETS
-            try:
-                image_style = IMAGE_STYLE_PRESETS.get(
-                    image_style_preset,
-                    next(iter(IMAGE_STYLE_PRESETS.values()))
-                )
-                import re
-                image_style = re.sub(r'[；，]?字体为[^；。，]*[；。，]?', '', image_style).strip()
-            except Exception:
-                image_style = ""
-            style_block = image_style or "画面需保持信息清晰、构图稳定、色彩和谐。"
-
-            # 1.3 组合提示词并调用 API 生成
+            # 1.2 组合提示词并调用 API 生成
             bg_prompt = OPENING_BG_PROMPT_TEMPLATE.format(
                 summary=summary_text,
-                style_block=style_block
+                style_block=image_style_text(image_style_preset) or "画面需保持信息清晰、构图稳定、色彩和谐。"
             )
-
-            safety_options = None
-            if llm_model and llm_server and llm_base_url:
-                safety_options = {
-                    "llm_model": llm_model,
-                    "llm_server": llm_server,
-                    "llm_base_url": llm_base_url,
-                    "max_attempts": 3,
-                    "max_tokens": 800,
-                    "temperature": 0.2,
-                }
 
             logger.info("🎨 正在生成开场背景图 (opening_bg.png)...")
             bg_args = (
@@ -496,7 +473,7 @@ def run_step_4(
                 image_size,
                 paths.images,
                 image_server,
-                safety_options or {}
+                image_safety_options(llm_model, llm_server, llm_base_url)
             )
             bg_res = _generate_single_image(bg_args)
             if bg_res.get("success") and bg_res.get("image_path"):
@@ -557,20 +534,11 @@ def run_step_4(
     failed_segments = image_result.get("failed_segments", [])
     if failed_segments:
         failed_str = "、".join(str(idx) for idx in failed_segments)
-        missing_audio_segments = image_result.get("missing_audio_segments", [])
-        if missing_audio_segments:
-            missing_str = "、".join(str(idx) for idx in missing_audio_segments)
-            return {
-                "success": False,
-                "message": f"第 {missing_str} 段缺少音频，请先完成步骤3语音合成。",
-                "failed_segments": failed_segments,
-                "missing_audio_segments": missing_audio_segments,
-                "image_paths": image_result.get("image_paths", []),
-                "opening_image_path": opening_image_path,
-            }
+        # 每种原因只说一次（例如内容审核拦截了哪段提示词）。
+        reasons = "；".join(dict.fromkeys(e for e in image_result.get("errors", {}).values() if e))
         return {
             "success": False,
-            "message": f"第 {failed_str} 段画面生成失败，请调整提示或稍后重试。",
+            "message": f"第 {failed_str} 段画面生成失败：{reasons}" if reasons else f"第 {failed_str} 段画面生成失败，请调整提示或稍后重试。",
             "failed_segments": failed_segments,
             "image_paths": image_result.get("image_paths", []),
             "opening_image_path": opening_image_path,

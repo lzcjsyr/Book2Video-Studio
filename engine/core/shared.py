@@ -34,6 +34,11 @@ class APIError(Exception):
         super().__init__(message)
         self.retryable = retryable
 
+class ContentBlocked(APIError):
+    """服务商的内容审核拦截了提示词或生成结果：原样重试必然再被拦截，只有改写提示词才可能成功。"""
+    def __init__(self, message: str = ""):
+        super().__init__(message, retryable=False)
+
 class FileProcessingError(Exception):
     """文件处理异常类"""
     pass
@@ -158,7 +163,7 @@ def handle_video_operation(operation_name: str, critical: bool = False, fallback
 
 # 导出主要函数和类
 __all__ = [
-    'VideoProcessingError', 'APIError', 'FileProcessingError',
-    'ensure_directory_exists', 'load_json_file', 'format_file_size',
-    'get_file_info', 'http_status', 'is_retryable', 'retry_on_failure', 'handle_video_operation', 'logger',
+    'VideoProcessingError', 'APIError', 'ContentBlocked', 'FileProcessingError',
+    'ensure_directory_exists', 'load_json_file',
+    'http_status', 'is_retryable', 'retry_on_failure', 'handle_video_operation', 'logger',
 ]

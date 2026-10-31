@@ -8,7 +8,7 @@ import random
 from openai import OpenAI
 
 from core.config import config
-from core.shared import logger, APIError, http_status, retry_on_failure
+from core.shared import logger, APIError, ContentBlocked, http_status, retry_on_failure
 
 def _get_openai_api_key(server: str) -> str:
     server = (server or "").strip().lower()
@@ -293,19 +293,6 @@ def text_to_image_google(prompt, size="1024x1024", model="gemini-3.1-flash-image
             contents=contents,
             config=generate_content_config,
         )
-        candidates = getattr(response, "candidates", None) or []
-        for candidate in candidates:
-            content = getattr(candidate, "content", None)
-            parts = getattr(content, "parts", None) or []
-            for part in parts:
-                inline_data = getattr(part, "inline_data", None)
-                image_bytes = getattr(inline_data, "data", None) if inline_data else None
-                if not image_bytes:
-                    continue
-                if isinstance(image_bytes, memoryview):
-                    image_bytes = image_bytes.tobytes()
-                if isinstance(image_bytes, (bytes, bytearray)):
-                    return {"type": "bytes", "data": bytes(image_bytes)}
     except Exception as e:
         status = http_status(e)
         if status == 404:
@@ -317,7 +304,34 @@ def text_to_image_google(prompt, size="1024x1024", model="gemini-3.1-flash-image
         logger.error(message)
         raise APIError(message) from e
 
-    raise APIError("Google官方图像生成未返回图片数据")
+    candidates = getattr(response, "candidates", None) or []
+    for candidate in candidates:
+        for part in getattr(getattr(candidate, "content", None), "parts", None) or []:
+            image_bytes = getattr(getattr(part, "inline_data", None), "data", None)
+            if isinstance(image_bytes, memoryview):
+                image_bytes = image_bytes.tobytes()
+            if image_bytes and isinstance(image_bytes, (bytes, bytearray)):
+                return {"type": "bytes", "data": bytes(image_bytes)}
+    raise _google_missing_image(response, candidates)
+
+
+# 内容审核导致的结束原因：同一提示词重试必然再被拦截。
+GOOGLE_BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT"}
+
+
+def _google_missing_image(response, candidates) -> APIError:
+    """Google 回复了但没有图片时，说明原因：内容审核拦截（提示词或生成结果）不重试，交给调用方改写提示词。"""
+    name = lambda value: getattr(value, "name", None) or (str(value) if value else "")
+    feedback = getattr(response, "prompt_feedback", None)
+    if getattr(feedback, "block_reason", None):
+        detail = getattr(feedback, "block_reason_message", "") or ""
+        return ContentBlocked(f"Google 内容审核拦截了提示词（{name(feedback.block_reason)}）" + (f"：{detail}" if detail else ""))
+    reason = name(getattr(candidates[0], "finish_reason", None)) if candidates else ""
+    if reason in GOOGLE_BLOCKED:
+        return ContentBlocked(f"Google 内容审核拦截了生成的图片（{reason}）")
+    text = " ".join(part.text for candidate in candidates for part in getattr(getattr(candidate, "content", None), "parts", None) or []
+                    if getattr(part, "text", None)).strip()
+    return APIError("Google官方图像生成未返回图片数据" + (f"（{reason}）" if reason else "") + (f"：{text[:200]}" if text else ""))
 
 
 

@@ -1,0 +1,484 @@
+{
+  "about": "内置音效库：全部为 CC0（公共领域），可免费商用、无需署名。文件均为 48 kHz 16-bit WAV，已去掉首尾静音并把峰值统一到 -3 dBFS。",
+  "usage": "suggested_gain_db 是叠在约 -16 LUFS 口播下的起始增益，按实际听感微调；peak_at 是峰值所在秒数——起音型音效从开头对齐动作，渐强型（swell、riser）应让 peak_at 落在切点或揭示的那一帧。",
+  "sounds": [
+    {
+      "name": "pop",
+      "file": "pop.wav",
+      "category": "弹出",
+      "use": "图标、关键词、数据卡片出现",
+      "seconds": 0.1,
+      "peak_at": 0.01,
+      "suggested_gain_db": -14,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "pluck_001.ogg"
+      }
+    },
+    {
+      "name": "pop_drop",
+      "file": "pop_drop.wav",
+      "category": "弹出",
+      "use": "元素落位、贴纸放下",
+      "seconds": 0.188,
+      "peak_at": 0.01,
+      "suggested_gain_db": -14,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "drop_002.ogg"
+      }
+    },
+    {
+      "name": "click",
+      "file": "click.wav",
+      "category": "点击",
+      "use": "高亮、勾选、指针点按",
+      "seconds": 0.04,
+      "peak_at": 0.01,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "select_001.ogg"
+      }
+    },
+    {
+      "name": "tick",
+      "file": "tick.wav",
+      "category": "点击",
+      "use": "逐条列出、计数跳动（可连续使用）",
+      "seconds": 0.02,
+      "peak_at": 0.01,
+      "suggested_gain_db": -20,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "tick_002.ogg"
+      }
+    },
+    {
+      "name": "ding",
+      "file": "ding.wav",
+      "category": "提示",
+      "use": "轻提示、小结论",
+      "seconds": 0.276,
+      "peak_at": 0.01,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "glass_001.ogg"
+      }
+    },
+    {
+      "name": "bell",
+      "file": "bell.wav",
+      "category": "提示",
+      "use": "重点结论、关键数字落定",
+      "seconds": 0.637,
+      "peak_at": 0.05,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "starninjas",
+        "license": "CC0 1.0",
+        "pack": "4 Metal Dings/Rings",
+        "url": "https://opengameart.org/content/4-metal-dingsrings",
+        "file": "ding.4.ogg"
+      }
+    },
+    {
+      "name": "chime_long",
+      "file": "chime_long.wav",
+      "category": "提示",
+      "use": "章节收束、结尾余音",
+      "seconds": 2.588,
+      "peak_at": 0.07,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "starninjas",
+        "license": "CC0 1.0",
+        "pack": "4 Metal Dings/Rings",
+        "url": "https://opengameart.org/content/4-metal-dingsrings",
+        "file": "ding.1.ogg"
+      }
+    },
+    {
+      "name": "correct",
+      "file": "correct.wav",
+      "category": "提示",
+      "use": "正确、达成、答案揭晓",
+      "seconds": 0.29,
+      "peak_at": 0.01,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "confirmation_001.ogg"
+      }
+    },
+    {
+      "name": "wrong",
+      "file": "wrong.wav",
+      "category": "提示",
+      "use": "误区、否定、被划掉的说法",
+      "seconds": 0.256,
+      "peak_at": 0.09,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "error_006.ogg"
+      }
+    },
+    {
+      "name": "question",
+      "file": "question.wav",
+      "category": "提示",
+      "use": "抛出问题、疑惑",
+      "seconds": 0.491,
+      "peak_at": 0.17,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "question_001.ogg"
+      }
+    },
+    {
+      "name": "rise",
+      "file": "rise.wav",
+      "category": "数据",
+      "use": "数字上涨、曲线向上",
+      "seconds": 0.39,
+      "peak_at": 0.29,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Digital SFX",
+        "url": "https://opengameart.org/content/63-digital-sound-effects-lasers-phasers-space-etc",
+        "file": "phaserUp1.mp3"
+      }
+    },
+    {
+      "name": "fall",
+      "file": "fall.wav",
+      "category": "数据",
+      "use": "下跌、缩水、下降",
+      "seconds": 0.356,
+      "peak_at": 0.11,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Digital SFX",
+        "url": "https://opengameart.org/content/63-digital-sound-effects-lasers-phasers-space-etc",
+        "file": "phaserDown1.mp3"
+      }
+    },
+    {
+      "name": "level_up",
+      "file": "level_up.wav",
+      "category": "数据",
+      "use": "突破、升级、跨过门槛",
+      "seconds": 0.195,
+      "peak_at": 0.09,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Digital SFX",
+        "url": "https://opengameart.org/content/63-digital-sound-effects-lasers-phasers-space-etc",
+        "file": "powerUp2.mp3"
+      }
+    },
+    {
+      "name": "expand",
+      "file": "expand.wav",
+      "category": "界面",
+      "use": "图表或画面展开、放大细节",
+      "seconds": 0.258,
+      "peak_at": 0.25,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "maximize_001.ogg"
+      }
+    },
+    {
+      "name": "collapse",
+      "file": "collapse.wav",
+      "category": "界面",
+      "use": "收起、缩回、回到全局",
+      "seconds": 0.258,
+      "peak_at": 0.01,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "minimize_001.ogg"
+      }
+    },
+    {
+      "name": "swipe_fast",
+      "file": "swipe_fast.wav",
+      "category": "转场",
+      "use": "文字或卡片快速划入",
+      "seconds": 0.119,
+      "peak_at": 0.03,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "artisticdude",
+        "license": "CC0 1.0",
+        "pack": "Swishes Sound Pack",
+        "url": "https://opengameart.org/content/swishes-sound-pack",
+        "file": "swish-3.wav"
+      }
+    },
+    {
+      "name": "swipe_light",
+      "file": "swipe_light.wav",
+      "category": "转场",
+      "use": "轻快切换、元素横移",
+      "seconds": 0.152,
+      "peak_at": 0.03,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "artisticdude",
+        "license": "CC0 1.0",
+        "pack": "Swishes Sound Pack",
+        "url": "https://opengameart.org/content/swishes-sound-pack",
+        "file": "swish-7.wav"
+      }
+    },
+    {
+      "name": "whoosh",
+      "file": "whoosh.wav",
+      "category": "转场",
+      "use": "段落转场、镜头切换（起音在开头）",
+      "seconds": 0.529,
+      "peak_at": 0.19,
+      "suggested_gain_db": -14,
+      "source": {
+        "author": "qubodup",
+        "license": "CC0 1.0",
+        "pack": "Wind, Hit, Time Morph",
+        "url": "https://opengameart.org/content/wind-hit-time-morph",
+        "file": "qubodup-megaswosh1.wav"
+      }
+    },
+    {
+      "name": "whoosh_alt",
+      "file": "whoosh_alt.wav",
+      "category": "转场",
+      "use": "与 whoosh 交替使用，避免重复感",
+      "seconds": 0.591,
+      "peak_at": 0.09,
+      "suggested_gain_db": -14,
+      "source": {
+        "author": "qubodup",
+        "license": "CC0 1.0",
+        "pack": "Wind, Hit, Time Morph",
+        "url": "https://opengameart.org/content/wind-hit-time-morph",
+        "file": "qubodup-megaswosh2.wav"
+      }
+    },
+    {
+      "name": "whoosh_short",
+      "file": "whoosh_short.wav",
+      "category": "转场",
+      "use": "短促的嗖声，快速切换、元素飞入（起音在开头）",
+      "seconds": 0.32,
+      "peak_at": 0.07,
+      "suggested_gain_db": -14,
+      "source": {
+        "author": "qubodup",
+        "license": "CC0 1.0",
+        "pack": "Wind, Hit, Time Morph",
+        "url": "https://opengameart.org/content/wind-hit-time-morph",
+        "file": "60009__qubodup__swosh_22.flac"
+      }
+    },
+    {
+      "name": "swell",
+      "file": "swell.wav",
+      "category": "转场",
+      "use": "慢速渐强，揭示前铺垫，峰值在结尾",
+      "seconds": 0.968,
+      "peak_at": 0.81,
+      "suggested_gain_db": -14,
+      "source": {
+        "author": "qubodup",
+        "license": "CC0 1.0",
+        "pack": "Wind, Hit, Time Morph",
+        "url": "https://opengameart.org/content/wind-hit-time-morph",
+        "file": "qubodup-slomo1.wav"
+      }
+    },
+    {
+      "name": "whoosh_soft",
+      "file": "whoosh_soft.wav",
+      "category": "转场",
+      "use": "舒缓转场、风声过渡，适合慢节奏",
+      "seconds": 1.373,
+      "peak_at": 0.31,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "pyranostudios",
+        "license": "CC0 1.0",
+        "pack": "Air Whoosh",
+        "url": "https://opengameart.org/content/air-whoosh",
+        "file": "whoosh2_0.wav"
+      }
+    },
+    {
+      "name": "paper_slide",
+      "file": "paper_slide.wav",
+      "category": "质感",
+      "use": "纸片、卡片、剪报滑入",
+      "seconds": 0.498,
+      "peak_at": 0.05,
+      "suggested_gain_db": -14,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Casino Audio",
+        "url": "https://opengameart.org/content/54-casino-sound-effects-cards-dice-chips",
+        "file": "card-slide-1.ogg"
+      }
+    },
+    {
+      "name": "page_flip",
+      "file": "page_flip.wav",
+      "category": "质感",
+      "use": "翻页、换一本书、引用文献",
+      "seconds": 0.394,
+      "peak_at": 0.03,
+      "suggested_gain_db": -14,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "RPG Audio",
+        "url": "https://opengameart.org/content/50-rpg-sound-effects",
+        "file": "bookFlip2.ogg"
+      }
+    },
+    {
+      "name": "typing",
+      "file": "typing.wav",
+      "category": "质感",
+      "use": "打字机逐字出现、标题打出",
+      "seconds": 0.65,
+      "peak_at": 0.09,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "cassie-orbitgames",
+        "license": "CC0 1.0",
+        "pack": "Typewriter Sounds",
+        "url": "https://opengameart.org/content/typewriter-sounds",
+        "file": "typewriter1.wav"
+      }
+    },
+    {
+      "name": "coins",
+      "file": "coins.wav",
+      "category": "质感",
+      "use": "金钱、成本、收益",
+      "seconds": 0.716,
+      "peak_at": 0.11,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "RPG Audio",
+        "url": "https://opengameart.org/content/50-rpg-sound-effects",
+        "file": "handleCoins.ogg"
+      }
+    },
+    {
+      "name": "scratch",
+      "file": "scratch.wav",
+      "category": "质感",
+      "use": "划掉、涂改、急停",
+      "seconds": 0.139,
+      "peak_at": 0.03,
+      "suggested_gain_db": -18,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "scratch_001.ogg"
+      }
+    },
+    {
+      "name": "bong",
+      "file": "bong.wav",
+      "category": "提示",
+      "use": "低沉的提示、转折",
+      "seconds": 0.12,
+      "peak_at": 0.01,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "pack": "Interface Sounds",
+        "url": "https://opengameart.org/content/interface-sounds",
+        "file": "bong_001.ogg"
+      }
+    },
+    {
+      "name": "riser",
+      "file": "riser.wav",
+      "category": "合成",
+      "use": "张力上升 2.5 秒，峰值在结尾，接重击或揭示",
+      "seconds": 2.5,
+      "peak_at": 2.45,
+      "suggested_gain_db": -16,
+      "source": {
+        "author": "Grist（ffmpeg 合成）",
+        "license": "CC0 1.0",
+        "pack": "本程序原创",
+        "url": ""
+      }
+    },
+    {
+      "name": "impact",
+      "file": "impact.wav",
+      "category": "合成",
+      "use": "低频重击，揭示、反转、结论落地（起音在开头）",
+      "seconds": 1.86,
+      "peak_at": 0.11,
+      "suggested_gain_db": -12,
+      "source": {
+        "author": "Grist（ffmpeg 合成）",
+        "license": "CC0 1.0",
+        "pack": "本程序原创",
+        "url": ""
+      }
+    }
+  ]
+}

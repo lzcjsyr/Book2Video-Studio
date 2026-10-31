@@ -57,7 +57,7 @@ def prepare(studio, project, body):
         scope = "Assembly · edit and render"
         skill_directories = [studio.library_root/'skills/step5'/assembly_edit['skill']]
         task = dict(inputs=[work/'materials.json'], writable=[work, project/'final_video.mp4', project/'final_video.srt'],
-            protected=[project/'text', project/'voice', project/'images', work/'materials.json', studio.engine, studio.library_root],
+            protected=[project/'text', project/'voice', project/'images', work/'materials.json', work/editing.TIMING, studio.engine, studio.library_root],
             facts={'style': assembly_edit['skill']})
         # Claude Code asks once per folder whether to trust it; starting in the project folder (as Writing
         # does) means one answer covers every edit, instead of a question for each new edit folder.

@@ -40,6 +40,7 @@ TTS_EMOTION: str = ""
 TTS_EMOTION_SCALE: int = 0
 TTS_SPEECH_RATE: int = 0
 TTS_LOUDNESS_RATE: int = 0
+TRIM_SILENCE: bool = True
 MUTE_CUT_THRESHOLD: int = 0
 MUTE_CUT_MIN_SILENCE_MS: int = 0
 MUTE_CUT_REMAIN_MS: int = 0
@@ -158,6 +159,7 @@ _YAML_SCHEMA: Dict[str, Dict[str, str]] = {
         "emotion_scale": "TTS_EMOTION_SCALE",
         "speech_rate": "TTS_SPEECH_RATE",
         "loudness_rate": "TTS_LOUDNESS_RATE",
+        "trim_silence": "TRIM_SILENCE",
         "mute_cut_threshold": "MUTE_CUT_THRESHOLD",
         "mute_cut_min_silence_ms": "MUTE_CUT_MIN_SILENCE_MS",
         "mute_cut_remain_ms": "MUTE_CUT_REMAIN_MS",
@@ -286,6 +288,7 @@ _PARAM_CONSTANTS = {
     "emotion_scale": "TTS_EMOTION_SCALE",
     "speech_rate": "TTS_SPEECH_RATE",
     "loudness_rate": "TTS_LOUDNESS_RATE",
+    "trim_silence": "TRIM_SILENCE",
     "mute_cut_threshold": "MUTE_CUT_THRESHOLD",
     "mute_cut_min_silence_ms": "MUTE_CUT_MIN_SILENCE_MS",
     "mute_cut_remain_ms": "MUTE_CUT_REMAIN_MS",
@@ -402,6 +405,9 @@ def get_generation_params(config_path: Optional[str | os.PathLike[str]] = None) 
     params = _base_generation_params()
     if config_path:
         _apply_param_overrides(params, _load_yaml_overrides(config_path))
+    if not params.get("trim_silence", True):
+        # Settings turned pause trimming off: recordings keep the pauses the voice made.
+        params["mute_cut_threshold"] = 0
     return params
 
 

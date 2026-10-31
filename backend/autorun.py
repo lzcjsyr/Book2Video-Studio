@@ -51,7 +51,7 @@ def blocked(studio, detail):
         return "Write and save the manuscript before automatic production."
     if detail["state"]["stale"].get("1"):
         return detail["state"]["stale"]["1"]["reason"]
-    opening = studio.effective(detail["state"]).get("global", {}).get("opening_quote", True)
+    opening = studio.opening_on(detail["state"])
     if opening and not first_text(detail["raw"].get("golden_quotes")):
         return "Choose an opening quote in Writing, or turn the opening off."
     return None
@@ -65,7 +65,7 @@ def next_job(studio, project_id, step, options, done, d=None):
     state, everything = d["state"], options["scope"] == "all"
     stale = state["stale"].get(step)
     settings = studio.effective(state)
-    opening = settings.get("global", {}).get("opening_quote", True)
+    opening = studio.opening_on(state)
     if step == "2":
         if "segments" not in done and (everything or not d["ready"]["2"] or stale):
             return "segments", {"step": "2"}
@@ -124,7 +124,6 @@ def plan(studio, project_id, body):
     options = options_from(body)
     with studio.lock:
         d = studio.detail(project_id)
-        settings = studio.effective(d["state"])
         steps, running = [], set()
         for step in STEPS:
             if step == "6" and not options["covers"]:
@@ -147,7 +146,7 @@ def plan(studio, project_id, body):
                 job = work.get("voice") or work.get("visuals")
                 # A new content summary outdates every visual, so all of them follow it.
                 if "summary" in work:
-                    indices, opening = list(kinds), settings.get("global", {}).get("opening_quote", True)
+                    indices, opening = list(kinds), studio.opening_on(d["state"])
                 else:
                     indices, opening = (job["indices"], job["opening"]) if job else ([], False)
                 entry.update(segments=len(indices), opening=bool(opening))
@@ -187,7 +186,7 @@ def stop(studio, run_id):
         if run["status"] == "running":
             run["status"] = "stopping"
             # The job it waits for stops too; between jobs, the run stops before the next one.
-            if run["job"] and studio.jobs.get(run["job"], {}).get("status") == "running":
+            if run["job"]:
                 studio.cancel_job(run["job"])
         return public(run)
 

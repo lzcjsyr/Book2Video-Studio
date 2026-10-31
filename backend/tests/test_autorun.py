@@ -326,7 +326,6 @@ class AutoRunTests(unittest.TestCase):
         job = self.studio.run_job(self.id, {'step': '5', 'mode': 'agent'})
         self.wait()
         args = self.studio.jobs[job['id']]['result']['args']
-        import editing
         self.assertNotIn('开始。', args)
         self.assertNotIn('--allowedTools', args)
         self.assertEqual(args[args.index('--add-dir') - 2], '--append-system-prompt-file')

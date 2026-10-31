@@ -2,7 +2,7 @@
 //   build/runtime  Python with the engine's packages (including the Claude Code
 //                  CLI bundled by claude-agent-sdk), Node.js, the pinned
 //                  browser automation libraries and Chrome, FFmpeg and FFprobe
-//   build/engine   the production engine (engine/): code, prompts, skills, music
+//   build/engine   the production engine (engine/): code, prompts, skills, sound effects, music
 //                  and defaults
 //   build/backend  the desktop's project service
 // Downloads are pinned, checksum-verified and cached in build/downloads. The
@@ -216,7 +216,7 @@ function stageFolder(name, fill) {
   fs.renameSync(work, target);
 }
 
-const ENGINE_PARTS = ["core/pipeline/steps.py", "prompts", "skills", "config.example.yaml"];
+const ENGINE_PARTS = ["core/pipeline/steps.py", "prompts", "skills", "sfx", "config.example.yaml"];
 const junk = (parts) => parts.some((p) => p === "__pycache__" || p === ".DS_Store" || p === "node_modules" || p.endsWith(".pyc") || p.endsWith(".log"));
 
 // Only the engine's shipped parts: never .env, config.yaml, input or output.
@@ -225,7 +225,8 @@ function stageEngine() {
   if (missing.length) throw new Error(`The engine in ${engineSource} is incomplete (missing ${missing.join(", ")}).`);
   stageFolder("engine", (target) => {
     copyTree(path.join(engineSource, "core"), path.join(target, "core"), (parts) => junk(parts) || parts[0] === "tests");
-    for (const folder of ["prompts", "skills"]) copyTree(path.join(engineSource, folder), path.join(target, folder), junk);
+    // Sound effects are CC0 and live in git (engine/sfx/CREDITS.md); assembly hands them to the editing agent.
+    for (const folder of ["prompts", "skills", "sfx"]) copyTree(path.join(engineSource, folder), path.join(target, folder), junk);
     // Background music is licensed and kept out of git: ship whatever is in engine/music.
     fs.mkdirSync(path.join(target, "music"));
     const music = path.join(engineSource, "music");

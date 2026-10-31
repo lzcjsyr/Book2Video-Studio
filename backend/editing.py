@@ -14,6 +14,7 @@ import shutil
 
 ROOT = '.studio/edits'
 DELIVERY = 'final_video.mp4'
+TIMING = 'timing.jsonl'
 # What an Assembly session may do without asking: work in its own folder, render and encode.
 ALLOWED_TOOLS = ['Edit', 'Write', 'Bash(cd:*)', 'Bash(python run.py:*)', 'Bash(python3 run.py:*)', 'Bash(ffmpeg:*)', 'Bash(ffprobe:*)']
 
@@ -39,6 +40,11 @@ def stamp(path):
 
 
 def signature(value):
+    # The bundled sound effects belong to the app, not the project, and a recording's timing changes only with the
+    # recording, whose stamp is already here: neither may make an edit look stale on its own.
+    value = {key: item for key, item in value.items() if key != 'sound_effects'}
+    untimed = lambda part: {key: item for key, item in part.items() if key != 'timing'} if isinstance(part, dict) else part
+    value.update(segments=[untimed(s) for s in value.get('segments', [])], opening=untimed(value.get('opening')))
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -58,7 +64,7 @@ def materials(studio, project, settings):
         if not str(segment.get('content', '')).strip() or not audio or not visual or not duration(audio):
             raise ValueError(f'Segment {index} needs narration text, a recording and a visual before editing the video.')
         scenes.append({'index': index, 'text': segment['content'], 'audio': path(audio), 'audio_seconds': duration(audio),
-                       'visual': path(visual), 'visual_kind': 'video' if visual.suffix.lower() in {'.mp4', '.mov', '.webm'} else 'image',
+                       'timing': timing(audio), 'visual': path(visual), 'visual_kind': 'video' if visual.suffix.lower() in {'.mp4', '.mov', '.webm'} else 'image',
                        'stamps': [stamp(audio), stamp(visual)]})
     opening = None
     if settings.get('global', {}).get('opening_quote', True):
@@ -69,7 +75,7 @@ def materials(studio, project, settings):
             raise ValueError('The opening needs its quote, recording and background before editing the video.')
         opening = {'quote': quote, 'source_name': str(script.get('source_name') or raw.get('source_name') or '').strip(),
                    'background': path(background), 'audio': path(audio), 'audio_seconds': duration(audio),
-                   'stamps': [stamp(audio), stamp(background)]}
+                   'timing': timing(audio), 'stamps': [stamp(audio), stamp(background)]}
     step5 = settings.get('step5', {})
     available = studio.music()['music']
     suggested = step5.get('bgm_filename') if step5.get('bgm_filename') in available else None
@@ -80,7 +86,61 @@ def materials(studio, project, settings):
             'video': {'width': width, 'height': height}, 'narration_speed': float(step5.get('narration_speed_factor', 1) or 1),
             'subtitles': bool(step5.get('enable_subtitles')),
             'music': {'suggested': suggested, 'mix': mix, 'tracks': [{'name': n, 'path': str(studio.music_file(n))} for n in tracks]},
-            'opening': opening, 'segments': scenes}
+            'sound_effects': sound_effects(studio.engine / 'sfx'), 'opening': opening, 'segments': scenes}
+
+
+def timing(audio):
+    """Sentence and character times Voice saved beside a recording (voice_N.json), or None for older recordings.
+    Only a file written after the recording describes it: an older one belongs to an earlier take."""
+    found = Path(audio).with_suffix('.json')
+    if not found.is_file() or found.stat().st_mtime_ns < Path(audio).stat().st_mtime_ns:
+        return None
+    try:
+        value = read(found)
+    except (OSError, ValueError):
+        return None
+    return {'sentences': value['sentences'], 'seconds': value.get('seconds')} if isinstance(value.get('sentences'), list) else None
+
+
+def split_timing(found, work):
+    """What the agent reads: materials.json keeps each recording's sentences, small enough to read whole; the
+    character times, too many to read, go to one timing.jsonl in the edit folder (a line per sentence) for its scripts."""
+    lines = []
+
+    def part(item, key):
+        if not item:
+            return item
+        sentences = (item.get('timing') or {}).get('sentences')
+        for number, sentence in enumerate(sentences or []):
+            words = [[w['text'], w['start'], w['end'], w.get('confidence')] for w in sentence['words']]
+            lines.append(json.dumps({'part': key, 'sentence': number, 'text': sentence['text'], 'start': sentence['start'],
+                                     'end': sentence['end'], 'words': words}, ensure_ascii=False))
+        shown = {k: v for k, v in item.items() if k != 'timing'}
+        shown['sentences'] = [{k: s[k] for k in ('text', 'start', 'end')} for s in sentences] if sentences is not None else None
+        return shown
+
+    shown = {**found, 'opening': part(found['opening'], 'opening'), 'segments': [part(s, s['index']) for s in found['segments']]}
+    target = work / TIMING
+    if lines:
+        # A revision's copy may share files with the earlier session: replace, never rewrite in place.
+        temp = target.with_name(TIMING + '.tmp')
+        temp.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        temp.replace(target)
+    else:
+        target.unlink(missing_ok=True)
+    shown['word_timing'] = TIMING if lines else None
+    return shown
+
+
+def sound_effects(folder):
+    """The bundled sound effects (engine/sfx/sfx.json), each with its absolute path."""
+    manifest = Path(folder) / 'sfx.json'
+    if not manifest.is_file():
+        return {'sounds': []}
+    found = read(manifest)
+    sounds = [{key: value for key, value in sound.items() if key not in {'file', 'source'}} | {'path': str((Path(folder) / sound['file']).resolve())}
+              for sound in found['sounds'] if (Path(folder) / sound['file']).is_file()]
+    return {'about': found.get('about', ''), 'usage': found.get('usage', ''), 'sounds': sounds}
 
 
 def template_values(found, skill, work, delivery, revise, resume=False):
@@ -125,7 +185,7 @@ def prepare(studio, project, settings, session, revise=False, resume=False):
                 shutil.copy2(source, target)
         shutil.copytree(folder(project, previous), work, copy_function=link)
     work.mkdir(parents=True, exist_ok=True)
-    write(work / 'materials.json', found)
+    write(work / 'materials.json', split_timing(found, work))
     from core.infra.motion.runtime import prepare_assets
     prepare_assets(work)
     # Remove the app-owned legacy wrapper only in this new session's copy.

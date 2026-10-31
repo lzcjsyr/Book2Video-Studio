@@ -88,6 +88,40 @@ print(json.dumps(report))
         self.assertEqual(args[args.index('--allowedTools')+1:args.index('--session-id')],editing.ALLOWED_TOOLS)
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
 
+    def test_the_agent_gets_the_bundled_sound_effects(self):
+        launch,work=self.prepare();found=editing.read(work/'materials.json');sounds=found['sound_effects']['sounds']
+        self.assertGreaterEqual(len(sounds),20);self.assertIn('sound_effects',Path(launch['context']).read_text())
+        for sound in sounds:
+            self.assertTrue(Path(sound['path']).is_file(),sound['name'])
+            self.assertTrue({'name','category','use','seconds','peak_at','suggested_gain_db'}<=set(sound),sound['name'])
+            self.assertLessEqual(sound['peak_at'],sound['seconds'],sound['name'])
+        # The library belongs to the app: changing it must not make the last edit look stale.
+        current=editing.materials(self.studio,self.p,self.studio.state(self.p)['settings'])
+        self.assertTrue(editing.detail(self.p,launch['assembly_edit'],{**current,'sound_effects':{'sounds':[]}})['current'])
+
+    def test_the_agent_gets_each_recordings_timing(self):
+        sentences=[{'text':'第一段。','start':0.1,'end':0.9,'words':[{'text':'第','start':0.1,'end':0.3,'confidence':0.9}]}]
+        (self.p/'voice/voice_1.json').write_text(json.dumps({'seconds':1.0,'sentences':sentences}),encoding='utf-8')
+        os.utime(self.p/'voice/voice_2.wav');(self.p/'voice/voice_2.json').write_text('{"sentences":[]}',encoding='utf-8')
+        os.utime(self.p/'voice/voice_2.json',ns=(1,1))  # older than its recording: an earlier take's timing
+        launch,work=self.prepare();found=editing.read(work/'materials.json')
+        # The agent reads sentences in materials.json; character times are one line per sentence in timing.jsonl.
+        self.assertEqual(found['segments'][0]['sentences'],[{'text':'第一段。','start':0.1,'end':0.9}])
+        self.assertIsNone(found['segments'][1]['sentences']);self.assertNotIn('timing',found['segments'][0])
+        self.assertEqual(found['word_timing'],'timing.jsonl')
+        lines=[json.loads(line) for line in (work/'timing.jsonl').read_text(encoding='utf-8').splitlines()]
+        self.assertEqual(lines,[{'part':1,'sentence':0,'text':'第一段。','start':0.1,'end':0.9,'words':[['第',0.1,0.3,0.9]]}])
+        self.assertIn('timing.jsonl',Path(launch['context']).read_text())
+        self.assertIn(str(work/'timing.jsonl'),json.loads(Path(launch['task']).read_text())['protected'])
+        # Timing follows the recording: it alone never makes the last edit look stale.
+        current=editing.materials(self.studio,self.p,self.studio.state(self.p)['settings'])
+        stale={**current,'segments':[{**s,'timing':None} for s in current['segments']]}
+        self.assertTrue(editing.detail(self.p,launch['assembly_edit'],stale)['current'])
+        # Without any timing, a revision does not keep the earlier session's file.
+        (self.p/'voice/voice_1.json').unlink();self.studio.finish_agent(self.id,{})
+        launch,work=self.prepare(revise=True)
+        self.assertFalse((work/'timing.jsonl').exists());self.assertIsNone(editing.read(work/'materials.json')['word_timing'])
+
     def test_the_render_tool_runs_as_claude_code_runs_it(self):
         # Capabilities must work before render.json exists, without PYTHONPATH.
         launch,work=self.prepare()

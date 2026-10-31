@@ -1,6 +1,5 @@
 """Cover agent contracts, retained candidates, and real bundled WebGL rendering."""
 import copy
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -173,7 +172,6 @@ class CoverAgentTests(unittest.TestCase):
         self.assertEqual(len(self.studio.detail(self.id)['covers']),5)
     def test_the_agents_render_script_and_the_render_job_work_as_the_app_runs_them(self):
         """Regression: both started a Python that could not import the engine (No module named 'core')."""
-        from PIL import Image
         launch=self.activate();work=self.compose(launch)
         # Claude Code previews with render.py from its own shell.
         result=subprocess.run([sys.executable,'render.py'],cwd=work,env=packaged(),capture_output=True,text=True,timeout=300)

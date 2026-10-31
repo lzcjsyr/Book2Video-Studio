@@ -399,6 +399,8 @@ export const zh: Record<string, string> = {
   "Voice ID": "音色 ID",
   "TTS model": "语音合成模型",
   "Speaking rate": "语速",
+  "Trim long pauses from recordings": "删除录音中过长的停顿",
+  "Off keeps the pauses the voice makes. Applies to new recordings.": "关闭后保留配音原有的停顿。对之后新生成的录音生效。",
   Emotion: "情绪",
   "Image model": "图像模型",
   "Seedream images at once": "Seedream 同时生成数",

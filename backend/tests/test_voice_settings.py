@@ -27,5 +27,15 @@ class VoiceSettingsTests(unittest.TestCase):
             passed = {k: params[k] for k in inspect.signature(stage).parameters if k in params}
             self.assertEqual({k: passed.get(k) for k in chosen}, chosen, stage.__name__)
 
+    def test_turning_off_pause_trimming_keeps_recordings_untrimmed(self):
+        from core.config import get_generation_params
+        for trim, expected in ((True, 400), (False, 0)):
+            with tempfile.TemporaryDirectory() as folder:
+                merged = yaml.safe_load((ENGINE / 'config.example.yaml').read_text())
+                merged['step3'].update(trim_silence=trim, mute_cut_threshold=400)
+                path = Path(folder) / 'job-config.yaml'
+                path.write_text(yaml.safe_dump(merged, allow_unicode=True))
+                self.assertEqual(get_generation_params(path)['mute_cut_threshold'], expected, trim)
+
 
 if __name__ == '__main__': unittest.main()

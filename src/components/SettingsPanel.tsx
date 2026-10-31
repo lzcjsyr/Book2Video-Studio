@@ -268,6 +268,12 @@ export default function SettingsPanel({
               {step(3, "Voice")}
               <VoicePicker value={String(settings.step3?.voice ?? "S_MKj17k802")} voices={bootstrap.voices ?? []}
                 onChange={(voice) => set("step3", "voice", voice)} />
+              <label className="checkbox">
+                <input type="checkbox" checked={settings.step3?.trim_silence !== false}
+                  onChange={(e) => set("step3", "trim_silence", e.target.checked)} />
+                {t("Trim long pauses from recordings")}
+              </label>
+              <p className="small-muted">{t("Off keeps the pauses the voice makes. Applies to new recordings.")}</p>
               {step(4, "Visuals")}
               {/* Visuals has three parts: the summary every visual draws on, still images, and motion clips. */}
               <section className="settings-part" aria-labelledby={`${uid}-settings-summary`}>

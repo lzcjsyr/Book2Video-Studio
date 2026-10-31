@@ -66,6 +66,43 @@ class HeadlessTests(unittest.TestCase):
                 runner.terminate()
                 runner.communicate(timeout=10)
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX signals')
+    def test_cancelling_runner_neither_waits_for_busy_threads_nor_starts_queued_work(self):
+        """Regression: a stopped image job ran on until its provider retries ended, then started the next image."""
+        started = self.root / 'started'
+        code = (f'import sys,time\nsys.path.insert(0,{str(Path(headless.__file__).parent)!r})\n'
+                'import headless\nfrom concurrent.futures import ThreadPoolExecutor\nheadless.install_signal_handlers()\n'
+                'with ThreadPoolExecutor(max_workers=1) as pool:\n'
+                '    pool.submit(time.sleep, 60)\n'
+                f'    pool.submit(open, {str(started)!r}, "w")\n'
+                '    print("ready", flush=True)\n'
+                '    time.sleep(60)\n')
+        runner = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(runner.stdout.readline().strip(), 'ready')
+            stopped = time.monotonic()
+            runner.terminate()
+            runner.wait(timeout=10)
+            self.assertLess(time.monotonic() - stopped, 5)
+            self.assertEqual(runner.returncode, 128 + signal.SIGTERM)
+            self.assertFalse(started.exists())
+        finally:
+            if runner.poll() is None:
+                runner.kill()
+            runner.wait()
+            runner.stdout.close()
+
+    def test_no_session_starts_once_the_job_is_stopped(self):
+        self.script('from pathlib import Path\nPath(__file__).with_name("ran").write_text("")\n')
+        headless._cancelled = True
+        try:
+            with self.assertRaisesRegex(ValueError, 'stopped'):
+                self.run_session()
+        finally:
+            headless._cancelled = False
+        self.assertFalse((self.root / 'ran').exists())
+        self.assertFalse(headless._running)
+
     def test_one_timed_out_session_does_not_cancel_a_parallel_session(self):
         self.script('import json,sys,time\ntime.sleep(60 if sys.argv[2]=="slow" else .5)\nprint(json.dumps({"is_error":False,"result":"done"}))\n')
         slow, fast = self.root / 'slow', self.root / 'fast'
