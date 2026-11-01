@@ -512,7 +512,7 @@ class Studio:
             sections["step5"].setdefault("assembly_method", "agent")
             sections["step5"].setdefault("agent_skill", "content-led")
             # Claude Code editing may mix several library tracks instead of only the suggested one.
-            sections["step5"].setdefault("agent_music_mix", False)
+            sections["step5"].setdefault("agent_music_mix", True)
             # Music is licensed and not always bundled; the engine silently skips a missing track,
             # so start new projects without one rather than with a track that cannot play.
             track = str(sections["step5"].get("bgm_filename") or "")

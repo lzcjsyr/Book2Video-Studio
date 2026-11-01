@@ -31,7 +31,7 @@ class EditingTests(unittest.TestCase):
         for i in [1,2]:
             Image.new('RGB',(320,180),(30*i,60,120)).save(self.p/f'images/segment_{i}.png')
             ffmpeg('-f','lavfi','-i',f'sine=frequency={400+i*100}:duration=1','-ac','1','-ar','48000',self.p/f'voice/voice_{i}.wav')
-        state=self.studio.state(self.p);state['settings']={'global':{'opening_quote':False},'step5':{'assembly_method':'agent','agent_skill':'editorial-explainer','video_size':'320x180','narration_speed_factor':1.1,'enable_subtitles':True,'bgm_filename':None},'three_by_four':{'enabled':False}}
+        state=self.studio.state(self.p);state['settings']={'global':{'opening_quote':False},'step5':{'assembly_method':'agent','agent_skill':'editorial-explainer','video_size':'320x180','narration_speed_factor':1.1,'enable_subtitles':True,'bgm_filename':None,'agent_music_mix':False},'three_by_four':{'enabled':False}}
         self.studio.persist(self.p,state);self.id=self.studio.project_id(self.p)
     def tearDown(self):self.tmp.cleanup()
     def prepare(self,**body):
@@ -84,7 +84,7 @@ print(json.dumps(report))
         task=json.loads(Path(launch['task']).read_text())
         self.assertNotIn(str(work/'run.py'),task['protected'])
         self.assertIn(str(work),task['writable'])
-        args=launch['args'];self.assertEqual(args[args.index('--add-dir')-1],'开始。');self.assertEqual(launch['cwd'],str(self.p))
+        args=launch['args'];self.assertEqual(args[args.index('--add-dir')-2:args.index('--add-dir')],['--append-system-prompt-file',launch['context']]);self.assertEqual(launch['cwd'],str(self.p))
         self.assertEqual(args[args.index('--allowedTools')+1:args.index('--session-id')],editing.ALLOWED_TOOLS)
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
 
@@ -194,7 +194,7 @@ print(json.dumps(report))
         (revised/'run.py').write_text('# revised runner\n')
         self.assertEqual((first/'run.py').read_text(),'# agent-owned runner\n')
         prompt=Path(launch['context']).read_text()
-        self.assertIn('开始。',launch['args']);self.assertIn('修改上一次的合成',prompt)
+        self.assertNotIn('开始。',launch['args']);self.assertIn('修改上一次的合成',prompt);self.assertIn('按用户在对话里提出的要求修改',prompt)
         # Materials are refreshed for the revision; the copy does not change the earlier folder.
         (revised/'my_design.html').write_text('<p>changed</p>');self.assertEqual((first/'my_design.html').read_text(),'<p>mine</p>')
 

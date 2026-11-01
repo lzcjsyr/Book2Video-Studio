@@ -49,7 +49,7 @@ PROMPTS = {
 }
 TEXT_EXTENSIONS = {".md", ".txt", ".yaml", ".yml", ".json", ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".toml"}
 TEMPLATE_SECTIONS = {
-    "agent_rules.md": {"rules", "start", "automatic"},
+    "agent_rules.md": {"rules", "automatic"},
     "step1_agent.md": {"main", "source", "direct", "skill", "no_skill"},
     "step4_motion_agent.md": {"main", "segment", "new"},
 }

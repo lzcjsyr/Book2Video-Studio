@@ -156,7 +156,7 @@ def template_values(found, skill, work, delivery, revise, resume=False):
         sound = "不用背景音乐"
     opening = ("先放开场：金句、书名、背景图和录音都在素材清单的 opening 里，开场画面由你设计" if found['opening']
                else "不放开场，视频从正文开始")
-    session = ("修改上一次的合成。先查看工作目录里已有的文件和成片，汇报现状和可改进之处，然后等待用户的修改要求" if revise
+    session = ("修改上一次的合成。工作目录里是上一次的文件和成片；按用户在对话里提出的要求修改，动手前先看相关文件" if revise
                else "新的合成，独立完成到交付")
     if resume:
         session = "继续上一次未完成的自动合成。先检查已保存的片段、字幕、音频和日志，复用已验证的产物，只补缺失或失败部分，独立完成到交付，不等待用户确认"
