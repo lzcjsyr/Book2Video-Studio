@@ -1,5 +1,5 @@
 ---
-name: html-motion-animation
+name: motion-animation
 description: 按旁白设计对比、因果、数量和空间动画。
 ---
 

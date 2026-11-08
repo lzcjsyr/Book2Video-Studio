@@ -9,6 +9,7 @@ import { imageModelChoices, imageModelFor, imageServiceChoices, languageModelCho
 import { autoStatus, planText } from "../autorun";
 import type { AutoPlan, AutoRun, AutoRunOptions, Bootstrap, Detail, Job, Settings, Stage } from "../types";
 import { SegmentationControls, VoiceFields } from "./StepControls";
+import { SavedVoiceSelect } from "./VoiceSource";
 import VisualImageControls from "./VisualImageControls";
 import AssemblySetup from "./AssemblySetup";
 import CoverSetup from "./CoverSetup";
@@ -182,8 +183,10 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
   const startProblem = locked ? lockReason : plan?.blocked || (missing.length ? "Add the missing API keys first." : nothingToDo ? "Everything is up to date. Choose Everything again to remake it." : "");
   const summaryText = String(detail.summary.summary || "").trim();
 
-  const step3Summary = [bootstrap?.voices?.find((v) => v.id === value("step3", "voice"))?.name || value("step3", "voice"),
-    value("step3", "tts_model").replace(/^seed-tts-2\.0-/, ""), t("Speaking rate {rate}", { rate: value("step3", "speech_rate", "0") })].filter(Boolean).join(" · ");
+  const localVoice = settings.step3?.tts_provider === "voxcpm2";
+  const step3Summary = (localVoice ? [t("Local clone · VoxCPM2"), detail.voice_reference] :
+    [bootstrap?.voices?.find((v) => v.id === value("step3", "voice"))?.name || value("step3", "voice"),
+      value("step3", "tts_model").replace(/^seed-tts-2\.0-/, ""), t("Speaking rate {rate}", { rate: value("step3", "speech_rate", "0") })]).filter(Boolean).join(" · ");
   const styleLabel = libraryChoices(bootstrap?.library, "image_styles").find((c) => c.id === value("step4", "image_style_preset"))?.label;
   const coverSizes = Array.isArray(settings.step6?.cover_image_size_keys) ? (settings.step6.cover_image_size_keys as string[]).join(", ") : "";
 
@@ -200,16 +203,13 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
 
       <StepCard number="3" name="Voice" icon={Music2} state={stateOf("3")} plan={textOf("3")} error={failure("3")} note={noteOf("3")}
         summary={step3Summary} onOpen={() => onOpenStep("3")}>
-        <div className="form-grid">
-          <label className="field"><span>{t("Voice")}</span>
-            <select value={value("step3", "voice")} disabled={locked} onChange={(e) => onSettings("step3", { voice: e.target.value })}>
-              {!bootstrap?.voices?.some((v) => v.id === value("step3", "voice")) && <option value={value("step3", "voice")}>{value("step3", "voice") || t("Default voice")}</option>}
-              {(bootstrap?.voices || []).map((v) => <option key={v.id} value={v.id}>{`${v.name} · ${v.id}`}</option>)}
-            </select>
-            <small className="field-hint">{t("Add voices in Settings → Production.")}</small>
-          </label>
-        </div>
-        <VoiceFields settings={settings.step3 || {}} disabled={locked} onChange={set("step3")} />
+        {localVoice ? <p className="small-muted">{t("Manage the model and reference recording in Step 3.")}</p> : <>
+          <div className="form-grid">
+            <SavedVoiceSelect value={value("step3", "voice")} voices={bootstrap?.voices} disabled={locked}
+              onChange={(voice) => onSettings("step3", { voice })} />
+          </div>
+          <VoiceFields settings={settings.step3 || {}} disabled={locked} onChange={set("step3")} />
+        </>}
       </StepCard>
 
       <StepCard number="4" name="Visuals" icon={Image} state={stateOf("4")} plan={textOf("4")} error={failure("4")} note={noteOf("4")}

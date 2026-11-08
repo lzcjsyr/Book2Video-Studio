@@ -24,6 +24,10 @@ test("segmentation needs a model key only in agent mode", () => {
   const agent = { ...settings, step2: { split_mode: "agent", llm_server: "kimi" } };
   assert.equal(keys(keyNeeds(agent)).segments, "KIMI_API_KEY");
 });
+test("local VoxCPM2 does not require a cloud TTS key", () => {
+  assert.equal(keyNeeds({ ...settings, step3: { tts_provider: "voxcpm2" } }).some((n) => n.id === "voice"), false);
+  assert.equal(keys(keyNeeds({ ...settings, step3: { tts_provider: "bytedance" } })).voice, "BYTEDANCE_TTS_API_KEY");
+});
 test("missing keys and unsupported providers are reported; Google ADC needs no key", () => {
   const saved = { DEEPSEEK_API_KEY: true, VOLCENGINE_API_KEY: false, BYTEDANCE_TTS_API_KEY: true };
   assert.deepEqual(unmet(keyNeeds(settings, { motion: true }), saved).map((n) => n.id), ["motion_agent", "images"]);

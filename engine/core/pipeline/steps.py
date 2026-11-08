@@ -90,6 +90,7 @@ def _ensure_opening_narration(
     mute_cut_threshold: int = 400,
     mute_cut_min_silence_ms: int = 200,
     mute_cut_remain_ms: int = 100,
+    synthesize=None,
 ) -> Optional[str]:
     """Generate or reuse opening narration audio when required."""
     opening_golden_quote = get_primary_golden_quote(script_data or {}, "")
@@ -103,19 +104,19 @@ def _ensure_opening_narration(
     try:
         os.makedirs(voice_dir, exist_ok=True)
         opening_path = os.path.join(voice_dir, "opening.wav")
-        if force_regenerate and os.path.exists(opening_path):
+        if not synthesize and force_regenerate and os.path.exists(opening_path):
             try:
                 os.remove(opening_path)
             except Exception:
                 if announce:
                     print("⚠️ 开场音频删除失败，尝试直接覆盖")
 
-        if os.path.exists(opening_path):
+        if os.path.exists(opening_path) and (not synthesize or not force_regenerate):
             if announce:
                 print(f"✅ 开场音频已存在: {opening_path}")
             return opening_path
 
-        ok = text_to_audio_bytedance(
+        ok = (synthesize or text_to_audio_bytedance)(
             opening_golden_quote,
             opening_path,
             voice=voice,
@@ -135,6 +136,8 @@ def _ensure_opening_narration(
         if announce:
             print("❌ 开场音频生成失败")
     except Exception:
+        if synthesize:
+            raise
         if announce:
             print("❌ 开场音频生成失败")
     return None
@@ -286,6 +289,7 @@ def run_step_3(
     mute_cut_threshold: int = 400,
     mute_cut_min_silence_ms: int = 200,
     mute_cut_remain_ms: int = 100,
+    synthesize=None,
 ) -> Dict[str, Any]:
     paths = ProjectPaths(project_output_dir)
     paths.ensure_dirs_exist()
@@ -327,6 +331,7 @@ def run_step_3(
         mute_cut_threshold=mute_cut_threshold,
         mute_cut_min_silence_ms=mute_cut_min_silence_ms,
         mute_cut_remain_ms=mute_cut_remain_ms,
+        synthesize=synthesize,
     )
     audio_paths = voice_result.get("audio_paths", [])
     missing_segments = voice_result.get("missing_segments", [])
@@ -348,6 +353,7 @@ def run_step_3(
         mute_cut_threshold=mute_cut_threshold,
         mute_cut_min_silence_ms=mute_cut_min_silence_ms,
         mute_cut_remain_ms=mute_cut_remain_ms,
+        synthesize=synthesize,
     )
 
     opening_refreshed = bool(opening_quote and narration_path and (regenerate_opening or not opening_previously_exists))

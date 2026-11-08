@@ -1135,6 +1135,12 @@ code {
 .voice-controls .step-controls-fields .field { width: 100%; }
 .voice-controls .small-muted { line-height: 1.6; }
 .voice-controls .step-controls-fields + .small-muted { margin-top: 18px; }
+.voice-source-fields { display: grid; gap: 12px; min-width: 0; }
+.voice-controls > .voice-source-fields { margin-bottom: 18px; }
+.voice-source-fields .field { min-width: 0; }
+.voice-source-fields .button { justify-self: start; max-width: 100%; }
+.voice-source-fields progress { width: 100%; accent-color: var(--accent); }
+.voice-reference-name { overflow-wrap: anywhere; }
 .voice-workspace .audio-preview {
   min-height: 0;
   padding: 20px;

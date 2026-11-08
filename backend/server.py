@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -28,6 +29,7 @@ import editing
 import opening
 import exports
 import autorun
+import local_voice
 
 STAGES = ["1", "2", "3", "4", "5", "6"]
 # The CLI engine numbers Segments 1.5 and keeps the content summary (part of step 4 here) as its
@@ -58,7 +60,7 @@ TYPE_REASONS = {"Visual type changed", RENDER_REASON}
 TEXT_FILES = {"raw": "raw.json", "script": "script.json", "summary": "mini_summary.json"}
 METADATA_FIELDS = ("video_titles", "cover_titles", "cover_subtitles", "golden_quotes")
 # Settings the desktop keeps for itself; the engine's configuration rejects unknown keys.
-DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step6": {"cover_method"}, "step5": {"assembly_method", "agent_skill", "agent_music_mix"}}
+DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step3": {"tts_provider"}, "step6": {"cover_method"}, "step5": {"assembly_method", "agent_skill", "agent_music_mix"}}
 # Covers are drawn by an image service from the text alone and write only cover files, so a cover job
 # runs beside the jobs that leave the text as it is: recordings, visuals and assembly.
 BESIDE_COVERS = {"3", "4", "5"}
@@ -229,6 +231,7 @@ class Studio:
                 self.library.retire_invalid(name, self.engine / "prompts" / name)
         # Music the user adds; the bundled tracks stay in the read-only engine.
         self.music_root = self.data / "music"
+        self.local_voice = local_voice.Installer(self.data)
         self.lock = threading.RLock()
         self.preview_lock = threading.Lock()
         self.jobs = {}
@@ -508,6 +511,8 @@ class Studio:
         import yaml
         data = yaml.safe_load((self.engine / "config.example.yaml").read_text())
         sections = {DESKTOP_SECTIONS.get(k, k): v for k, v in data.items() if isinstance(v, dict)}
+        if "step3" in sections:
+            sections["step3"].setdefault("tts_provider", "bytedance")
         if "step5" in sections:
             sections["step5"].setdefault("assembly_method", "agent")
             sections["step5"].setdefault("agent_skill", "content-led")
@@ -519,7 +524,7 @@ class Studio:
             if not track or Path(track).name != track or not (self.engine / "music" / track).is_file():
                 sections["step5"]["bgm_filename"] = None
         if "step6" in sections:
-            sections["step6"].setdefault("cover_method", "api")
+            sections["step6"].setdefault("cover_method", "agent")
         return {k: v for k, v in sections.items() if k in SETTINGS_SECTIONS}
 
     def google_adc_status(self):
@@ -577,6 +582,64 @@ class Studio:
         ):
             raise ValueError("The saved voice library is invalid.")
         return saved["voices"]
+
+    def uses_local_voice(self, state):
+        return self.effective(state).get("step3", {}).get("tts_provider") == local_voice.PROVIDER
+
+    def voice_problem(self, detail):
+        if not self.uses_local_voice(detail["state"]):
+            return None
+        status = self.local_voice.status()
+        if status["state"] == "unsupported":
+            return status["error"]
+        if status["state"] != "ready":
+            return "Install VoxCPM2 in Step 3 before generating recordings."
+        if not detail["voice_reference"]:
+            return "Choose a reference recording in Step 3 before generating recordings."
+        return None
+
+    def import_voice_reference(self, project_id, name, source, length):
+        p = self.project(project_id)
+        name = name.replace("\\", "/").rsplit("/", 1)[-1].strip()
+        suffix = Path(name).suffix.lower()
+        if not name or len(name) > 255 or suffix not in local_voice.REFERENCE_FORMATS:
+            raise ValueError("Choose a supported audio file for the reference recording.")
+        if not 0 < length <= local_voice.REFERENCE_LIMIT:
+            raise ValueError("Choose a reference audio file up to 64 MB.")
+        folder = p / ".studio" / "voice-references"
+        with self.lock:
+            if self.busy(project_id):
+                raise Conflict("Stop production before changing its settings.")
+            folder.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=folder) as work:
+            upload, converted = Path(work) / f"audio{suffix}", Path(work) / "reference.wav"
+            with upload.open("wb") as out:
+                while length:
+                    chunk = source.read(min(length, 1024 * 1024))
+                    if not chunk:
+                        raise ValueError("The reference recording upload was interrupted.")
+                    out.write(chunk)
+                    length -= len(chunk)
+            local_voice.prepare_reference(upload, converted)
+            with self.lock:
+                if self.busy(project_id):
+                    raise Conflict("Stop production before changing its settings.")
+                state = self.state(p)
+                previous = local_voice.reference(p, state)
+                ident = uuid.uuid4().hex
+                state["voice_reference"] = {"id": ident, "name": name}
+                if self.uses_local_voice(state):
+                    self.mark_stale(state, "3", "Reference recording changed")
+                target = folder / f"{ident}.wav"
+                converted.replace(target)
+                try:
+                    self.persist(p, state)
+                except OSError:
+                    target.unlink(missing_ok=True)
+                    raise
+                if previous:
+                    previous.unlink(missing_ok=True)
+                return self.detail(project_id)
 
     def save_voice(self, body):
         if not isinstance(body, dict):
@@ -828,8 +891,9 @@ class Studio:
                 except (ValueError, OSError, KeyError):
                     edit_source = {}
                 assembly_edit = editing.detail(p, state["assembly_edit"], edit_source)
-            revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design, assembly_edit], sort_keys=True).encode()).hexdigest()
-            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio),
+            voice_reference = state["voice_reference"]["name"] if local_voice.reference(p, state) else None
+            revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design, assembly_edit, voice_reference], sort_keys=True).encode()).hexdigest()
+            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "voice_reference": voice_reference, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio),
                                                   "clip": str(opening_clip.relative_to(p)) if opening_clip else None}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
 
     @staticmethod
@@ -1055,7 +1119,7 @@ class Studio:
         settings = {**self.defaults().get("step1", {}), **state.get("settings", {}).get("step1", {})}
         source = state.get("source", "")
         return {"mode": settings.get("writing_mode", "source" if source else "direct"), "source": source,
-                "agent_skill": str(settings.get("agent_skill", "sample_writer")),
+                "agent_skill": str(settings.get("agent_skill", "book-seller")),
                 "llm_server": str(settings.get("llm_server", "")), "llm_model": str(settings.get("llm_model", ""))}
 
     def set_opening(self, project_id, body):
@@ -1345,6 +1409,13 @@ class Studio:
                 raise Conflict("Finish the active project job or agent first.")
             if step not in STAGES or step == "1":
                 raise ValueError("Step 1 runs interactively through Activate Claude Code.")
+            voice_request = None
+            if step == "3" and self.uses_local_voice(self.state(p)):
+                detail = self.detail(project_id)
+                if problem := self.voice_problem(detail):
+                    raise ValueError(problem)
+                voice_request = {"root": str(self.local_voice.root),
+                                 "reference": str(local_voice.reference(p, detail["state"]))}
             if step == "4" and body.get("mode") not in {"segments", "static", "render", "opening", "summary"}:
                 raise ValueError("Unknown visual generation action.")
             # "agent": Claude Code edits the video, or designs the covers, without a terminal (automatic production).
@@ -1355,7 +1426,8 @@ class Studio:
             if step == "6":
                 if body.get("mode") not in {None, "cover_render", "agent"}:
                     raise ValueError("Unknown cover action.")
-                if body.get("mode") == "agent" and self.state(p).get("settings", {}).get("step6", {}).get("cover_method", "api") != "agent":
+                cover_agent = self.effective(self.state(p)).get("step6", {}).get("cover_method") == "agent"
+                if body.get("mode") == "agent" and not cover_agent:
                     raise ValueError("Choose Claude Code + HTML / Three.js in Cover setup first.")
                 if body.get("mode") == "cover_render":
                     info = self.detail(project_id).get("cover_design")
@@ -1363,7 +1435,7 @@ class Studio:
                         raise ValueError("Save every cover HTML design with Claude Code before rendering.")
                     if not info["current"]:
                         raise ValueError("Cover copy or setup changed. Revise the HTML design before rendering.")
-                elif body.get("mode") is None and self.state(p).get("settings", {}).get("step6", {}).get("cover_method", "api") == "agent":
+                elif body.get("mode") is None and cover_agent:
                     raise ValueError("Design covers through the interactive Claude Code terminal.")
             # Earlier steps need their outputs; an outdated output still lets later steps run.
             if step == "2" and not self.detail(project_id)["ready"]["1"]:
@@ -1455,7 +1527,7 @@ class Studio:
                 launch = prepare(self, p, {"step": step, "headless": True, "revise": bool(body.get("revise"))})
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
-                       "music_dir": str(self.music_root)}
+                       "music_dir": str(self.music_root), "local_voice": voice_request}
             motion_takes = {}
             if step == "4" and body.get("mode") == "segments":
                 for segment in candidates:
@@ -1716,6 +1788,7 @@ class Studio:
     def stop_all(self, grace=5):
         """On shutdown: queued images are dropped, automatic runs and jobs stop, and whatever still runs after
         `grace` seconds is killed, so no job outlives the service."""
+        self.local_voice.stop()
         with self.lock:
             for queued in [j for j in self.jobs.values() if j["status"] == "queued"]:
                 del self.jobs[queued["id"]]
@@ -1777,7 +1850,9 @@ class Handler(BaseHTTPRequestHandler):
         studio = self.server.studio
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length > 8_000_000:
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "voice-reference" and method == "POST":
+                return self.json(studio.import_voice_reference(parts[2], query.get("name", [""])[0], self.rfile, length))
+            if not 0 <= length <= 8_000_000:
                 raise ValueError("Request too large.")
             body = json.loads(self.rfile.read(length)) if length else {}
             if parts == ["api", "credentials"] and method == "POST":
@@ -1791,6 +1866,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(studio.bootstrap())
             if parts == ["api", "voices"]:
                 return self.json(studio.save_voice(body) if method == "POST" else {"voices": studio.voices()})
+            if parts == ["api", "local-voice"]:
+                return self.json(studio.local_voice.start() if method == "POST" else studio.local_voice.status())
             if parts == ["api", "library"] and method == "GET":
                 return self.json(studio.library.catalog())
             if parts == ["api", "library", "item"] and method == "GET":
@@ -1881,6 +1958,8 @@ class Handler(BaseHTTPRequestHandler):
                             settings = copy.deepcopy(old)
                             for section, fields in body["settings"].items():
                                 settings[section] = {**old.get(section, {}), **fields} if isinstance(fields, dict) else fields
+                            if settings.get("step3", {}).get("tts_provider", "bytedance") not in {"bytedance", local_voice.PROVIDER}:
+                                raise ValueError("Choose a supported voice source.")
                             output = lambda values: {k: v for k, v in values.items() if k not in PROVIDER_SETTINGS}
                             def differs(k):
                                 before, after = effective.get(k, {}), {**effective.get(k, {}), **settings[k]}

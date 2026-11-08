@@ -132,7 +132,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri -- build --bundles app
 ```
 
-To make the installer, run `npm run desktop:build` on a Mac with Apple silicon. It stages the runtime, builds the app and writes the `.app` and the `.dmg` under `src-tauri/target/release/bundle/`. The disk image is large (about a gigabyte) because it carries Python, Node.js, Chrome, FFmpeg and Claude Code, so nothing needs to be installed on the other computer.
+To make the installer, run `npm run desktop:build` on a Mac with Apple silicon. It stages the runtime, builds the app and writes the `.dmg` under `src-tauri/target/release/bundle/dmg/`. The intermediate `.app` is deleted afterwards so Launchpad does not list it next to the installed copy. The disk image is large (about a gigabyte) because it carries Python, Node.js, Chrome, FFmpeg and Claude Code, so nothing needs to be installed on the other computer.
 
 **Writing files.** The Step 1 agent works in the project folder. Its prompt tells it to keep every intermediate file in the project's `text` folder (even where a skill still says `output/<project>/text`) and to save the manuscript only as `text/raw.json`. When the session ends, the service checks `raw.json`: text fields must be non-empty, the title, cover and quote candidates must be lists of separate strings, and `total_length` is corrected to the real character count. A manuscript left in a legacy `output/` folder is moved to `text/raw.json`; otherwise the project shows a warning. The agent's shell finds the bundled `python` (with PyMuPDF, pdfplumber, ebooklib, mobi and python-docx), so it does not depend on anything installed on the computer.
 

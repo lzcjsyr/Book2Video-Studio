@@ -66,7 +66,7 @@ Requirements: macOS on Apple silicon, Node.js 22+, Rust (stable), and an interne
 npm install
 npm run stage           # assemble build/runtime, build/engine and build/backend
 npm run desktop         # run the app in development
-npm run desktop:build   # make the .app and .dmg (about 2 GB: it carries every runtime)
+npm run desktop:build   # make the .dmg installer (about 2 GB: it carries every runtime)
 ```
 
 `npm run stage` downloads pinned, checksum-verified copies of Python, Node.js, FFmpeg/FFprobe and Chrome into `build/downloads`, installs `runtime/requirements.lock` and `runtime/motion/package-lock.json`, copies the engine and smoke-tests every component. It is rebuilt only when a pin or lock file changes. The engine's `.env`, `config.yaml`, `input/` and `output/` are never copied.
@@ -170,7 +170,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 npm install
 npm run stage           # 组装 build/runtime、build/engine 和 build/backend
 npm run desktop         # 开发模式运行
-npm run desktop:build   # 生成 .app 和 .dmg（约 2 GB，因为内置了全部运行环境）
+npm run desktop:build   # 生成 .dmg 安装包（约 2 GB，因为内置了全部运行环境）
 ```
 
 `npm run stage` 会下载固定版本并校验过校验和的 Python、Node.js、FFmpeg/FFprobe 和 Chrome 到 `build/downloads`，安装 `runtime/requirements.lock` 与 `runtime/motion/package-lock.json`，复制引擎并对每个组件做冒烟测试。只有版本或锁定文件变化时才会重新构建。引擎的 `.env`、`config.yaml`、`input/` 和 `output/` 绝不会被复制。
@@ -234,6 +234,8 @@ Windows 指南包含 NVIDIA NVENC、Intel QSV、AMD AMF 的驱动检查和短片
 
 ### 音色库与模型选择
 
+在第三步「配音」的「语音来源」选择「本地克隆 · VoxCPM2」，点「一键安装 VoxCPM2」，再选择一段参考录音。Apple 芯片 Mac（macOS 14 或更新版本）会下载约 3.23 GB 模型及运行组件，安装后可离线生成开场和正文。参考录音随当前项目保存。火山引擎仍可通过音色 ID 选音色。
+
 “设置 → 制作设置”中，语音合成模型可选择 `seed-tts-2.0-standard`（标准版）或 `seed-tts-2.0-expressive`（表现力增强版）。默认音色为 `S_MKj17k802`。填写音色 ID 和便于辨认的名称，点击“保存音色”，即可在本机所有项目中复用；再次保存相同 ID 会更新名称。音色库保存在应用资料目录的 `voices.json`，应用重启后仍可使用。选择音色后，点击“保存设置”才应用到当前项目。
 
 火山引擎生图预设为 `doubao-seedream-5-0-pro-260628`、`doubao-seedream-5-0-260128`、`doubao-seedream-5-0-flash-260915`；Google API 与 ADC 均提供 `gemini-nano-banana-2.1` 和 `gemini-3.1-flash-image`。分段配图和 API 封面共用这些选项，均可选“自定义”输入其他模型 ID，已有自定义配置不会被列表覆盖。
@@ -252,7 +254,7 @@ Use `--browser-mode auto|hardware|software` and `--encoder auto|software`; hardw
 
 Step 2 contains **Split method** and, in **Agent (split by meaning)** mode, **Target segments**. **Split by punctuation** splits at English/Chinese periods, question marks, exclamation marks and semicolons, retaining punctuation and closing quotes. It keeps decimal numbers together and does not group sentences to meet a target count. **One segment per line** remains available. Existing `auto` settings now use punctuation mode; existing segments remain until regenerated.
 
-Step 3 contains **TTS model**, **Speaking rate** (−50 to 100, 0 is normal) and **Emotion**. These controls save automatically and apply to new recordings. Agent provider/model and voice selection remain in Settings.
+In Step 3, **Voice source** chooses Volcengine TTS or **Local clone · VoxCPM2**. On Apple silicon with macOS 14 or later, **Install VoxCPM2** downloads the model (3.23 GB) and its runtime. Choose a reference recording to keep with the project and generate the opening and narration offline. The Volcengine source uses the voice ID and exposes **TTS model**, **Speaking rate** (−50 to 100, 0 is normal) and **Emotion**.
 
 Writing setup offers **No skill**. This applies to direct writing and writing from a document: Claude Code follows the user’s instructions without loading a writing skill, while retaining Grist’s raw JSON output contract. Save the setup or activate Claude Code to apply it to the next session.
 

@@ -140,8 +140,8 @@ class CoverAgentTests(unittest.TestCase):
         self.assertFalse(self.studio.detail(self.id)['cover_design']['current'])
         with self.assertRaisesRegex(ValueError,'setup changed'):
             self.studio.run_job(self.id,{'step':'6','mode':'cover_render'})
-    def test_api_mode_remains_default_and_agent_requires_selection(self):
-        state=self.studio.state(self.p);state['settings']['step6'].pop('cover_method');self.studio.persist(self.p,state)
+    def test_api_mode_overrides_default_and_disables_agent(self):
+        state=self.studio.state(self.p);state['settings']['step6']['cover_method']='api';self.studio.persist(self.p,state)
         with self.assertRaisesRegex(ValueError,'Choose Claude Code'):
             self.activate()
         self.assertNotIn('agent_active',self.studio.state(self.p))

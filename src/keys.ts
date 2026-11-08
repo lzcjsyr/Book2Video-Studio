@@ -90,7 +90,7 @@ export function keyNeeds(settings: Settings, { motion = false, subscription = fa
     agent("writing", "Writing agent", "step1"),
     // Segmentation only calls a model when its split mode is "agent".
     ...(value("step2", "split_mode") === "agent" ? [model("segments", "Agent segmentation", "step2")] : []),
-    { id: "voice", use: "Voice", provider: "bytedance", key: "BYTEDANCE_TTS_API_KEY" },
+    ...(value("step3", "tts_provider") === "voxcpm2" ? [] : [{ id: "voice" as const, use: "Voice", provider: "bytedance", key: "BYTEDANCE_TTS_API_KEY" }]),
     model("direction", "Content summary", "step4_summary"),
     ...(motion ? [agent("motion_agent", "Motion agent (Claude Code)", "step4")] : []),
     ...(value("step5", "assembly_method") === "agent" ? [agent("assembly_agent", "Assembly agent (Claude Code)", "step1")] : []),

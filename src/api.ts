@@ -9,13 +9,14 @@ export async function connect() {
   }
 }
 export async function api<T>(path: string, body?: unknown): Promise<T> {
+  const file = body instanceof Blob ? body : undefined;
   const response = await fetch(`${origin}/api${path}`, {
     method: body === undefined ? "GET" : "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": file ? "application/octet-stream" : "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: file ?? (body === undefined ? undefined : JSON.stringify(body)),
   });
   const result = await response.json();
   if (!response.ok)

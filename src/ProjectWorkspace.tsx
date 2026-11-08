@@ -814,6 +814,9 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     });
     return saved;
   }
+  function voiceReferenceChanged(updated: Detail) {
+    if (projectRef.current === updated.id) setDetail(updated);
+  }
   const saveCoverSetting = (key: string, value: string | number | string[]) => saveSettings("step6", { [key]: value });
   /** Redraw only the 3:4 copy around the current 16:9 video. */
   async function buildPortrait() {
@@ -2042,7 +2045,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                         </div>
                       </div>
                     )}
-                    {step === "3" && <VoiceControls settings={keySettings.step3 || {}} disabled={busy || activeAgent || jobLock}
+                    {step === "3" && <VoiceControls detail={detail} voices={bootstrap?.voices} onReference={voiceReferenceChanged}
+                      settings={keySettings.step3 || {}} disabled={busy || activeAgent || jobLock}
                       onChange={(patch) => saveSettings("step3", patch)} />}
                     {step === "6" && detail.covers.length > 0 && (
                       <div className="cover-grid">
@@ -2219,6 +2223,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
           onClaudeMode={setClaudeMode}
           onKeyStatus={setKeyStatus}
           onDirtyChange={setModalDirty}
+          onVoiceReference={voiceReferenceChanged}
           onLibraryChanged={refreshLibrary}
           onClose={() => setModal(null)}
           onSave={(settings: Settings) =>

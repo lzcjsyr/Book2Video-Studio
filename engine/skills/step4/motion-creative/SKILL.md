@@ -1,5 +1,5 @@
 ---
-name: html-motion-creative
+name: motion-creative
 description: HTML 动画的排版、配色和解释画面设计。
 ---
 

@@ -23,7 +23,7 @@ step1:
   # 默认使用 DeepSeek 的 deepseek-flash；切换供应商时按其要求填写完整模型名。
   llm_model: deepseek-flash
   # 使用根目录 skills/step1/ 下的写作 skill；一般不需要改。
-  agent_skill: book-commerce-video-script
+  agent_skill: book-seller
 
 # =============================================================================
 # 步骤1.5：脚本分段
@@ -252,7 +252,7 @@ step6:
     "3:4": 2250x3000
     "1:1": 2500x2500
   # 一次生成的封面尺寸（预设 key，可多选）：16:9 / 9:16 / 4:3 / 3:4 / 1:1
-  cover_image_size_keys: ["16:9", "3:4"]
+  cover_image_size_keys: ["16:9", "4:3", "3:4"]
   cover_image_model: gemini-3.1-flash-image
   # 可选：google / google_adc / doubao
   cover_image_server: google_adc

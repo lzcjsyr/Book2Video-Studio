@@ -427,7 +427,7 @@ def _resolve_existing_voice_path(output_dir: str, segment_index: int) -> Optiona
     return path if os.path.exists(path) else None
 
 
-def _synthesize_single_voice(args) -> Dict[str, Any]:
+def _synthesize_single_voice(args, synthesize=None) -> Dict[str, Any]:
     """
     合成单个语音的辅助函数（用于多线程）
     """
@@ -441,8 +441,8 @@ def _synthesize_single_voice(args) -> Dict[str, Any]:
     audio_path = os.path.join(output_dir, audio_filename)
 
     try:
-        if server == "bytedance":
-            success = text_to_audio_bytedance(
+        if synthesize or server == "bytedance":
+            success = (synthesize or text_to_audio_bytedance)(
                 text=content,
                 output_filename=audio_path,
                 voice=voice,
@@ -482,6 +482,7 @@ def synthesize_voice_for_segments(
     mute_cut_threshold: int = 400,
     mute_cut_min_silence_ms: int = 200,
     mute_cut_remain_ms: int = 100,
+    synthesize=None,
 ) -> Dict[str, Any]:
     """
     为每个段落合成语音（支持多线程并发）
@@ -531,7 +532,13 @@ def synthesize_voice_for_segments(
             content = segment.get("content", "")
             task_args.append((segment_index, content, server, voice, tts_model, output_dir, speech_rate, loudness_rate, emotion, emotion_scale, mute_cut_threshold, mute_cut_min_silence_ms, mute_cut_remain_ms))
 
-        if task_args:
+        if synthesize and task_args:
+            for args in task_args:
+                result = _synthesize_single_voice(args, synthesize)
+                if not result["success"]:
+                    raise ValueError(result["error"])
+                audio_paths[result["segment_index"] - 1] = result["audio_path"]
+        elif task_args:
             max_workers = getattr(config, "MAX_CONCURRENT_VOICE_SYNTHESIS", 2)
             print(f"使用 {max_workers} 个并发线程合成语音... (本次处理 {len(task_args)} 段)")
 

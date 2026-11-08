@@ -34,7 +34,7 @@
 ## 文件
 
 - 工作目录是项目文件夹 `{project_dir}`，中间文件只放在 `{text_dir}`。
-- 技能或参考里写着 `output/<project>/text/...` 时，改用 `{text_dir}/...`，不要创建 output/ 文件夹。
+- 技能或参考里写的 `<text目录>` 就是 `{text_dir}`。
 - 用内置的 `python` 提取和校验文本（已带 PyMuPDF、pdfplumber、ebooklib、mobi、python-docx、PyYAML），不要安装软件包。
 
 ## 完成

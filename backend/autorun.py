@@ -156,7 +156,10 @@ def plan(studio, project_id, body):
             steps.append(entry)
             if jobs:
                 running.add(step)
-        return {"steps": steps, "blocked": blocked(studio, d), "segments": len(d["segments"])}
+        problem = blocked(studio, d)
+        if not problem and "3" in running:
+            problem = studio.voice_problem(d)
+        return {"steps": steps, "blocked": problem, "segments": len(d["segments"])}
 
 
 def start(studio, project_id, body):
@@ -166,7 +169,7 @@ def start(studio, project_id, body):
         studio.project(project_id)
         if studio.busy(project_id):
             raise Conflict("Finish the running job or Claude Code session first.")
-        problem = blocked(studio, studio.detail(project_id))
+        problem = plan(studio, project_id, options)["blocked"]
         if problem:
             raise ValueError(problem)
         # Only the latest run of a project is listed.

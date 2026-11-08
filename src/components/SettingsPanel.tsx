@@ -8,6 +8,7 @@ import { libraryChoices, librarySettings } from "../library";
 import { imageModelChoices, imageModelFits, imageModelFor, imageServiceChoices, languageModelChoices } from "../keys";
 import ModelSelect from "./ModelSelect";
 import VoicePicker from "./VoicePicker";
+import { VoiceSource } from "./VoiceSource";
 import AgentConnection from "./AgentConnection";
 
 export default function SettingsPanel({
@@ -21,6 +22,7 @@ export default function SettingsPanel({
   claudeMode,
   onClaudeMode,
   onDirtyChange,
+  onVoiceReference,
 }: {
   detail: Detail | null;
   bootstrap: Bootstrap | null;
@@ -32,6 +34,7 @@ export default function SettingsPanel({
   claudeMode?: ClaudeCodeMode;
   onClaudeMode?: (mode: ClaudeCodeMode) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  onVoiceReference: (detail: Detail) => void;
 }) {
   const uid = useId();
   const { t, locale, setLocale } = useI18n();
@@ -266,8 +269,11 @@ export default function SettingsPanel({
                 {field("step2", "llm_model", t("Agent model"), undefined, settings.step2?.split_mode !== "agent")}
               </div>
               {step(3, "Voice")}
-              <VoicePicker value={String(settings.step3?.voice ?? "S_MKj17k802")} voices={bootstrap.voices ?? []}
-                onChange={(voice) => set("step3", "voice", voice)} />
+              <VoiceSource settings={settings.step3 || {}} detail={detail} onReference={onVoiceReference}
+                onChange={(provider) => set("step3", "tts_provider", provider)}>
+                <VoicePicker value={String(settings.step3?.voice ?? "S_MKj17k802")} voices={bootstrap.voices ?? []}
+                  onChange={(voice) => set("step3", "voice", voice)} />
+              </VoiceSource>
               <label className="checkbox">
                 <input type="checkbox" checked={settings.step3?.trim_silence !== false}
                   onChange={(e) => set("step3", "trim_silence", e.target.checked)} />

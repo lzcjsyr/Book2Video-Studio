@@ -277,6 +277,9 @@ class AutoRunTests(unittest.TestCase):
     def test_claude_code_editing_and_html_covers_run_without_a_terminal(self):
         self.produce()
         self.settings({'step5': {'assembly_method': 'agent', 'video_size': '320x180'}, 'three_by_four': {'enabled': True}, 'step6': SMALL_HTML_COVERS})
+        state = self.studio.state(self.p)
+        state['settings']['step6'].pop('cover_method')
+        self.studio.persist(self.p, state)
         run = self.run_to_end(scope='all')
         self.assertEqual(run['status'], 'succeeded', run)
         work = [(r['step'], r['mode']) for r in self.requests()][-4:]

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "../i18n";
+import type { Detail, SavedVoice } from "../types";
+import { SavedVoiceSelect, VoiceSource } from "./VoiceSource";
 import type { Settings } from "../types";
 
 type Props = {
@@ -78,12 +80,24 @@ export function VoiceFields({ settings, disabled, onChange }: Props) {
   </div>;
 }
 
-export function VoiceControls(props: Props) {
+export function VoiceControls({ detail, voices, onReference, ...props }: Props & {
+  detail: Detail;
+  voices?: SavedVoice[];
+  onReference: (detail: Detail) => void;
+}) {
   const { t } = useI18n();
+  const local = props.settings.tts_provider === "voxcpm2";
   return <section className="step-controls voice-controls" aria-label={t("Voice delivery")}>
     <h3>{t("Voice delivery")}</h3>
-    <VoiceFields {...props} />
-    <p className="small-muted">{t("Speaking rate: −50 to 100; 0 is normal speed.")} {t("Emotion strength: 1 to 5; higher is more expressive.")}</p>
+    <VoiceSource detail={detail} settings={props.settings} disabled={props.disabled} onReference={onReference}
+      onChange={(tts_provider) => props.onChange({ tts_provider })}>
+      <SavedVoiceSelect value={String(props.settings.voice ?? "")} voices={voices} disabled={props.disabled}
+        onChange={(voice) => props.onChange({ voice })} />
+    </VoiceSource>
+    {!local && <>
+      <VoiceFields {...props} />
+      <p className="small-muted">{t("Speaking rate: −50 to 100; 0 is normal speed.")} {t("Emotion strength: 1 to 5; higher is more expressive.")}</p>
+    </>}
     <p className="small-muted">{t("Saved automatically. Changes apply to new recordings.")}</p>
   </section>;
 }

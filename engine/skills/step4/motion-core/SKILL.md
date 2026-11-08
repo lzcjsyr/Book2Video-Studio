@@ -1,5 +1,5 @@
 ---
-name: html-motion-core
+name: motion-core
 description: 制作可逐帧 seek 的 HTML / Three.js 动画片段。
 ---
 

@@ -94,6 +94,7 @@ export interface Detail {
     clip: string | null;
   };
   covers: string[];
+  voice_reference?: string | null;
   /** The last Claude Code edit: its folder and style, whether its materials are current and whether it delivered a video. */
   assembly_edit?: { folder: string; skill: string; current: boolean; delivered: boolean } | null;
   cover_design?: { folder: string; entries: { html: string; width: number; height: number }[]; files: string[]; previews: string[]; complete: boolean; current: boolean } | null;

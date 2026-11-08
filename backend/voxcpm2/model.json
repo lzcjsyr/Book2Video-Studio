@@ -1,0 +1,42 @@
+{
+  "repo": "mlx-community/VoxCPM2-8bit",
+  "revision": "d52725898a0675703f7f9ddc5a4d1a3cdbb99032",
+  "files": [
+    {
+      "path": "README.md",
+      "size": 2223,
+      "sha256": null,
+      "git_blob": "fb4c311fa21b6f7f177c276368e7c6a85544ac33"
+    },
+    {
+      "path": "config.json",
+      "size": 5332,
+      "sha256": null,
+      "git_blob": "2597aa6bb87468353e1acfa88c9e3d26e792ba07"
+    },
+    {
+      "path": "model.safetensors",
+      "size": 3221772935,
+      "sha256": "c07c59aca742fe8f53384a3da4d8a3b3fd98ddc77066dd4bd35b51e08c34a72f",
+      "git_blob": "ff2090a19cc56f82c3ad4f933f1d915abdfaace0"
+    },
+    {
+      "path": "special_tokens_map.json",
+      "size": 1632,
+      "sha256": null,
+      "git_blob": "8619dda6f3eb6d60d0a1bb274820054e46f41699"
+    },
+    {
+      "path": "tokenizer.json",
+      "size": 3676772,
+      "sha256": null,
+      "git_blob": "41a5c2a8dba4058dd1ad73fb898abf5e4f64f0f9"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "size": 4952,
+      "sha256": null,
+      "git_blob": "213f667d43be76ffdf226393fe58375f913747fc"
+    }
+  ]
+}

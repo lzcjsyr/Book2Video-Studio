@@ -202,7 +202,12 @@ def run(request):
         values.update(tts_server=config.SUPPORTED_TTS_SERVERS[0], voice=params.get("voice") or default_voice)
     if step in {"3", "5"}:
         values["mute_cut_min_silence_ms"] = params.get("mute_cut_min_silence_ms", 200)
-    result = call(fn, values)
+    if step == "3" and (local := request.get("local_voice")):
+        from local_voice import PROVIDER, synthesizer
+        with synthesizer(Path(local["root"]), Path(local["reference"])) as synthesize:
+            result = call(fn, {**values, "tts_server": PROVIDER, "synthesize": synthesize})
+    else:
+        result = call(fn, values)
     if step == "5" and result.get("success") and not getattr(config, "THREE_BY_FOUR_ENABLED", True):
         # Revision history keeps the earlier copy; left here it would no longer match the video.
         (project / "final_video_3x4.mp4").unlink(missing_ok=True)
