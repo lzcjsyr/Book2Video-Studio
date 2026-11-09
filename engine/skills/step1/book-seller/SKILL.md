@@ -59,4 +59,7 @@ description: 将 PDF、EPUB、DOCX 等书籍或长文档写成约 4 分钟的中
 
 ## 第四步：交稿
 
-按 [titles.md](references/titles.md) 写标题和封面，再按 [output-format.md](references/output-format.md) 写金句、生成 `raw.json` 并运行校验。
+1. 按 [titles.md](references/titles.md) 写标题和封面。
+2. 写 3 条开场金句，和同一位置的标题是一套。用正文里的原句，或者不改意思的缩短版。
+3. 按 [output-format.md](references/output-format.md) 生成 `raw.json` 并运行校验。`source_name` 写书名加书名号，如《被讨厌的勇气》；`content` 950-1150 字。
+4. 校验通过后，告诉用户文件路径，并列出稿子里需要用户确认的事实。

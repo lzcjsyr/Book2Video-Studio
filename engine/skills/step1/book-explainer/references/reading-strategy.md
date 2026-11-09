@@ -1,135 +1,63 @@
-# 长资料读取策略
+# 读原书
 
-用于长书、长文档“尽量直接读原文”。长正文用 Bash 统计、搜索和按字符预算分窗读入上下文；小文件和阶段产物用 Read 精确读取；Python 只用于抽取文本、统计规模和维护 JSON 台账。
+目标是读到“够写”：找到一个好角度，并为它攒够有出处的证据。不追求读完全书。
 
-这个文件只解决“是否真的读到了足够资料”。读书视频的角度、结构和文风在 `writing-standard.md` 与 `script-quality-checklist.md` 中处理。
+## 0. 怎么读
 
-## 0. 工具分工
-
-- 长正文：用 Bash 处理，包括规模统计、窗口计划、分窗读取和关键词搜索。
-- 小文件：用 Read 处理，包括 skill、references、配置、覆盖台账、角度 brief、修订记录、阶段稿和最终 JSON。
-- 不要用 `Read` 扫全文，也不要用一次性 Bash 大输出读完整本书。
-- 无论用 Bash 还是 Read，只有内容真正进入当前上下文，才算已读。
-
-## 1. 抽取与统计
-
-先把 PDF、EPUB、MOBI、AZW3、DOCX 等输入抽取为 UTF-8 文本；如果输入本身是 `.md` / `.txt`，也复制或规范化为统一正文文本。后续正文读取只针对抽取文本。
-
-用 Bash 统计规模，不要用 `Read` 扫全文：
+- 先把 PDF、EPUB、MOBI、AZW3、DOCX 等输入抽取为 UTF-8 文本 `<text目录>/_extract.txt`（`.md` / `.txt` 输入也复制到这里），之后只读这个文件。
+- 用 `wc -m` 统计字符数。**3 万字以内直接全读**，跳过下面的第 1–3 步，只做笔记和最后的检查。
+- 读正文时每次不超过 **8000 字**，带行号输出：
 
 ```bash
-EXTRACT="<text目录>/_extract.txt"
-wc -l "$EXTRACT"
-wc -m "$EXTRACT"
+sed -n "${START},${END}p" "<text目录>/_extract.txt" | awk -v s="$START" '{print NR+s-1 "\t" $0}'
 ```
 
-记录 `source_total_lines`、`source_total_chars`。字符数用 `wc -m`，不要用 `wc -c` 字节数。
+- 出现 `<persisted-output>`、`Output too large` 或预览截断，说明没读到，把范围减半重读。
+- 精读总量一般不超过 5–8 万字。超出时先停下来定角度，不要继续漫读。
 
-## 2. 覆盖率分档
+## 1. 看结构
 
-根据 `source_total_chars` 写入 `coverage_policy` 与 `required_coverage_ratio`：
+- 用 grep 拉出目录和各级标题（如“第X章”“Chapter”、以数字开头的标题行），弄清全书骨架和每章的行号范围。
+- 完整读序言或导论、结论章：全书回答什么问题、结论是什么、作者自己承认的边界在哪里。
 
-- `source_total_chars <= 150000`：必须全文读完，`required_coverage_ratio: 1.0`。
-- `150000 < source_total_chars <= 200000`：至少覆盖 80%，`required_coverage_ratio: 0.8`。
-- `source_total_chars > 200000`：至少覆盖 50%，`required_coverage_ratio: 0.5`。
+## 2. 抓主线
 
-超过 20 万字符时，50% 是最低覆盖率，不是只读前半本的许可。覆盖窗口必须分布到开头、中段、结尾和主要章节。即使字符覆盖达标，只要没有形成对全书问题、主线、核心概念、关键事实和结论边界的完整理解，也不能让 `coverage_check.passed=true`。
+- 每章读开头和结尾各一两千字，理清论证怎么推进。
+- 到这里写出 `_angle_brief.json` 的草稿（字段见 `writing-standard.md`）。
 
-## 3. 分窗读取
+## 3. 按角度深读
 
-硬规则：
+- 把和 `main_thread` 最相关的 2–3 章读完整。
+- 用 grep 搜关键人物、数字、实验、案例、概念，只读命中位置的前后文。
+- 读的过程中可以调整角度；角度变了，回到第 2 步补读相关章节。
 
-- 长正文优先用 Bash（`sed` / `awk`）按窗口读取；Read 用于小文件和阶段稿，不用于扫整本抽取文本。
-- 每窗不超过 **23000 字符**，写入 `chars_per_window: 23000`。
-- 窗口按行号定位，但窗口大小按字符数控制；`source_total_chars`、`planned_chars`、`char_coverage_ratio` 都按字符数计算。
-- “已读”只指窗口正文完整进入当前上下文，且没有 `<persisted-output>`、`Output too large`、`Full output saved to`、preview 截断等情况。
-- Bash 执行成功、只写临时文件、只看 head/tail、只拿到 tool-results 路径，都不能算覆盖。
-- 覆盖台账通过前，禁止写 `_angle_brief.json`、初稿、修订稿或 `raw.json`。
+## 4. 读书笔记
 
-生成窗口计划：
+边读边记到 `<text目录>/_reading_notes.json`，不要最后补。它是写稿的依据，上下文被压缩后也靠它：
 
-```bash
-EXTRACT="<text目录>/_extract.txt"
-MAX_CHARS=23000
-awk -v max="$MAX_CHARS" '
-  BEGIN { start=1; chars=0 }
-  {
-    line_chars = length($0) + 1
-    if (chars > 0 && chars + line_chars > max) {
-      printf "%d\t%d\t%d\n", start, NR-1, chars
-      start = NR
-      chars = 0
-    }
-    chars += line_chars
-  }
-  END { if (chars > 0) printf "%d\t%d\t%d\n", start, NR, chars }
-' "$EXTRACT"
+```json
+{
+  "source_file": "原始文件路径",
+  "total_chars": 0,
+  "structure": [{"chapter": "章名", "lines": "起-止"}],
+  "notes": [
+    {"lines": "起-止", "chapter": "章名", "point": "这段的要点", "evidence": "案例、数据或原句", "use": "能支撑哪个判断"}
+  ]
+}
 ```
 
-按计划逐窗读取：
+`evidence` 里的原句要照抄原文，不改写。
 
-```bash
-EXTRACT="<text目录>/_extract.txt"
-START=1
-END=180
-sed -n "${START},${END}p" "$EXTRACT" | awk '{print NR+('"$START"'-1) "\t" $0}'
-```
+## 5. 够写了吗
 
-如果输出被截断或落盘：将当前窗字符预算减半（23000 -> 11500 -> 5750 ...），重读同一区间；原窗口记为 `coverage_status: partial`，减半后的完整子窗口记为 `complete`。不要改用 `Read` 或跳读下一段。
+满足以下条件，就可以开始写初稿：
 
-## 4. 覆盖台账
+- `_angle_brief.json` 的 `hook`、`knowledge_gain`、`resonance_points` 和 `main_thread` 中的每个核心判断，都能在笔记里找到带行号的出处。
+- 读过结论部分，`evidence_boundary` 是读完结论后写的。
+- 至少攒了 5 个能用的具体案例、数据或场景。
 
-读取正文前创建并持续更新：
+不满足就回第 3 步补读，不要靠印象凑。
 
-```text
-<text目录>/_coverage_ledger.json
-```
+## 底线
 
-顶层至少包含：
-
-- `source_file`
-- `source_total_lines`
-- `source_total_chars`
-- `read_strategy: bash_char_budget_window`
-- `chars_per_window`
-- `coverage_policy`
-- `required_coverage_ratio`
-- `planned_windows`
-- `coverage_windows`
-- `coverage_check`
-
-每读完一窗，立即追加 `coverage_windows`，不要最后一次性补。单窗至少记录：
-
-- `window_id`
-- `read_tool: bash`
-- `planned_range`
-- `actual_read_range`
-- `planned_chars`
-- `coverage_status: complete | partial`
-- `section_hint`
-- `main_points_seen`
-- `important_examples_seen`
-- `relation_to_whole_book`
-- `uncertainties`
-
-台账是覆盖证明，不是摘要。`partial` 不能计入通过覆盖率。
-
-## 5. 写稿前检查
-
-只有满足以下条件，才能进入角度 brief 和写稿流程：
-
-- `_coverage_ledger.json` 已保存，且 `coverage_check.passed=true` 与事实一致。
-- 覆盖率达到当前分档要求，行覆盖率 `line_coverage_ratio` 和字符覆盖率 `char_coverage_ratio` 不虚高。
-- 开头、中段、结尾和主要章节均已覆盖。
-- 所有计入覆盖率的窗口都是 `coverage_status: complete`。
-- 没有把 Bash 成功、输出落盘、preview、head/tail 当成已读。
-- 已理解全书回答的问题、论证主线、关键事实/案例、核心冲突和不应夸大的边界。
-
-## 6. 失败和切换
-
-遇到以下情况，停止直接读法并建议切换：
-
-- 字符窗口反复减半后仍无法完整进入上下文。
-- 文档规模或复杂度超出单次 Agent 会话可可靠保持的上下文。
-- 连续 Bash 读法仍频繁遗漏章节关系或论证链。
-- 用户要求可审计证据链、短引文、限制条件和回查文件。
+正文里的每个事实、数字、人物经历和引语，都必须来自读过的原文，并能在笔记中找到。没读到的部分可以不讲，但不能凭训练记忆或推测补上。

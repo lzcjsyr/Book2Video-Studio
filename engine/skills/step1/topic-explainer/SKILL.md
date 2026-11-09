@@ -15,7 +15,7 @@ description: 只凭一个选题（不需要书籍、报告等源文档），先�
 content_target_chars: 3500
 content_min_chars: 3000
 content_max_chars: 4000
-golden_quote_max_chars: 16
+golden_quote_max_chars: 25
 ```
 
 配音约 322 字/分钟，3500 字约 11 分钟。用户指定了别的时长，以用户为准，校验时传 `--min/--max`。
@@ -123,7 +123,12 @@ golden_quote_max_chars: 16
 
 ## 第五步：交稿
 
-终稿定了以后，按 [titles.md](references/titles.md) 写标题和封面，再按 [output-format.md](references/output-format.md) 写金句、生成 `raw.json` 并运行校验。
+终稿定了以后：
+
+1. 按 [titles.md](references/titles.md) 写标题和封面。
+2. 写 3 条开场金句：每条不超过 `golden_quote_max_chars` 字，约 5 秒念完。三条换三种角度，比如反常识、说中处境、清晰提问，不要和正文首句重复。可以用一处 `【】` 标出最关键的词。最好的一条放第一位。
+3. 按 [output-format.md](references/output-format.md) 生成 `raw.json` 并运行校验。`source_name` 写成《话题短标题》，书名号内最好不超过 12 字。校验输出里带“提示”的项，能改就改。
+4. 通过后告诉用户文件路径，并列出没能核实、需要用户确认的事实。
 
 用户之后只要求修改时，在已有的 `raw.json` 上改，不要整篇重写。
 
