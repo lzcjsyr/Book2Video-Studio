@@ -225,10 +225,13 @@ class ProjectTests(unittest.TestCase):
         (self.engine/'prompts').mkdir()
         for name in ['agent_rules.md','step1_agent.md']:(self.engine/'prompts'/name).write_text((DESKTOP/'engine/prompts'/name).read_text(),encoding='utf-8')
         skill=self.engine/'skills/step1/sample_writer';skill.mkdir(parents=True);(skill/'SKILL.md').write_text('---\nname: sample_writer\ndescription: 测试\n---\n正文',encoding='utf-8')
-        studio=self.open();launch=studio.prepare_agent(self.p.name,{'step':'1'})
+        studio=self.open()
+        # The default writing skill is not the sample one this test installs.
+        state=studio.state(self.p);state['settings']['step1']={'writing_mode':'direct','agent_skill':'sample_writer'};studio.persist(self.p,state)
+        launch=studio.prepare_agent(self.p.name,{'step':'1'})
         prompt=Path(launch['context']).read_text(encoding='utf-8')
         self.assertEqual(launch['cwd'],str(self.p))
-        for expected in [str(self.p/'text/raw.json'),str(self.p/'text'),'不要创建 output/ 文件夹','`python`']:self.assertIn(expected,prompt)
+        for expected in [str(self.p/'text/raw.json'),str(self.p/'text'),'中间文件只放在','`python`']:self.assertIn(expected,prompt)
         self.assertTrue(Path(launch['context']).resolve().is_relative_to((self.p/'.studio/agent').resolve()))
     def test_dead_agent_lease_recovers_on_restart(self):
         state=self.studio.state(self.p);state['agent_active']={'step':'4','indices':[1]};self.studio.persist(self.p,state)

@@ -86,13 +86,26 @@ def install_bundled(bundled: Path, root: Path):
     """Bring the bundled prompts and skills into the editable library.
 
     New files are added and files the person never touched follow the bundled
-    version. Their edits and deletions stay as they left them.
+    version. Their edits and deletions stay as they left them. A skill package
+    the bundle retires is removed or kept as a whole: keeping only its edited
+    files leaves a package the library still offers without its references.
     """
     record_path = root / ".bundled.json"
     try:
         installed = json.loads(record_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         installed = {}
+
+    def package_of(parts):
+        return PurePosixPath(*parts[:3]).as_posix() + "/" if parts[0] == "skills" and len(parts) > 3 else None
+
+    def prune_empty(directory: Path):
+        # Group folders such as skills/step1 stay, even when their last package goes.
+        while len(directory.relative_to(root).parts) >= 3 and directory.is_dir() and not any(directory.iterdir()):
+            parent = directory.parent
+            directory.rmdir()
+            directory = parent
+
     for top in ("prompts", "skills"):
         for source in sorted((bundled / top).rglob("*")):
             relative = source.relative_to(bundled)
@@ -100,8 +113,12 @@ def install_bundled(bundled: Path, root: Path):
                 continue
             key = relative.as_posix()
             target = root / relative
+            package = package_of(relative.parts)
+            # A skill the person imported, or kept after its bundled version was retired, has
+            # no records. Never add only part of a new bundled package over one of theirs.
+            if package and (root / package).is_dir() and not any(k.startswith(package) for k in installed):
+                continue
             # A removed skill package stays removed even if an update adds files to it.
-            package = PurePosixPath(*relative.parts[:3]).as_posix() + "/" if top == "skills" and len(relative.parts) > 3 else None
             if package and not (root / package).exists() and any(k.startswith(package) for k in installed):
                 continue
             current = digest(target)
@@ -116,15 +133,34 @@ def install_bundled(bundled: Path, root: Path):
                 shutil.copy2(source, temporary)
                 temporary.replace(target)
             installed[key] = new
+
+    retired = [k for k in installed if not (bundled / k).is_file()]
+    packages = {}
+    for key in retired:
+        package = package_of(PurePosixPath(key).parts)
+        if package:
+            packages.setdefault(package, []).append(key)
+    # Only when the bundle ships none of a package's files has the whole package been retired.
+    for package, keys in packages.items():
+        if any(k.startswith(package) and (bundled / k).is_file() for k in installed):
+            continue
+        directory = root / package
+        files = [f for f in directory.rglob("*") if f.is_file() and not any(
+            part.startswith(".") or part == "__pycache__" for part in f.relative_to(directory).parts)] if directory.is_dir() else []
+        edited = any(digest(f) != installed.get(f.relative_to(root).as_posix()) for f in files)
+        if not edited and directory.is_dir():
+            shutil.rmtree(directory)
+            prune_empty(directory.parent)
+        for key in keys:
+            del installed[key]
     # A file the bundle no longer ships goes too, unless the person edited it; then it is theirs.
-    for key in [k for k in installed if not (bundled / k).is_file()]:
+    for key in retired:
+        if key not in installed:
+            continue
         target = root / key
         if target.is_file() and digest(target) == installed[key]:
             target.unlink()
-            parent = target.parent
-            while parent != root and parent.parent != root and not any(parent.iterdir()):
-                parent.rmdir()
-                parent = parent.parent
+            prune_empty(target.parent)
         del installed[key]
     write_bytes(record_path, json.dumps(installed, ensure_ascii=False, indent=1).encode())
 

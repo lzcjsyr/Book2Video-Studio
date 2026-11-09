@@ -374,3 +374,36 @@ class BundledLibraryTests(unittest.TestCase):
         # Restoring an upstream package later installs it fresh.
         self.write("skills/step4/old/SKILL.md", "v2 old"); install_bundled(self.bundled, self.root)
         self.assertEqual(self.read("skills/step4/old/SKILL.md"), "v2 old")
+        record = json.loads((self.root / ".bundled.json").read_text())
+        self.assertFalse([k for k in record if k.startswith("skills/step4/old/") and not (self.bundled / k).is_file()])
+
+    def test_a_retired_package_with_edits_stays_a_complete_skill(self):
+        self.write("skills/step1/retired/SKILL.md", "v1 skill")
+        self.write("skills/step1/retired/references/a.md", "v1 reference")
+        install_bundled(self.bundled, self.root)
+        (self.root / "skills/step1/retired/SKILL.md").write_text("my edited skill")
+        shutil.rmtree(self.bundled / "skills/step1/retired")
+        install_bundled(self.bundled, self.root)
+        # Editing SKILL.md must not cost the package its references.
+        self.assertEqual(self.read("skills/step1/retired/SKILL.md"), "my edited skill")
+        self.assertEqual(self.read("skills/step1/retired/references/a.md"), "v1 reference")
+        record = json.loads((self.root / ".bundled.json").read_text())
+        self.assertFalse([k for k in record if k.startswith("skills/step1/retired/")])
+        # If the bundle later ships a package with the same name, it belongs to the person now.
+        self.write("skills/step1/retired/SKILL.md", "v2 skill")
+        self.write("skills/step1/retired/references/new.md", "v2 reference")
+        install_bundled(self.bundled, self.root)
+        install_bundled(self.bundled, self.root)
+        self.assertEqual(self.read("skills/step1/retired/SKILL.md"), "my edited skill")
+        self.assertFalse((self.root / "skills/step1/retired/references/new.md").exists())
+
+    def test_an_unedited_retired_package_leaves_no_empty_folder(self):
+        self.write("skills/step5/retired/SKILL.md", "v1 skill")
+        self.write("skills/step5/retired/references/a.md", "v1 reference")
+        install_bundled(self.bundled, self.root)
+        shutil.rmtree(self.bundled / "skills/step5")
+        install_bundled(self.bundled, self.root)
+        self.assertFalse((self.root / "skills/step5/retired").exists())
+        self.assertTrue((self.root / "skills/step5").is_dir())
+        record = json.loads((self.root / ".bundled.json").read_text())
+        self.assertFalse([k for k in record if k.startswith("skills/step5/retired/")])
