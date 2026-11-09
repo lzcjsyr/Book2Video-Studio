@@ -8,7 +8,7 @@
     "web": "vite --host 127.0.0.1 --configLoader runner",
     "build": "tsc -b && vite build --configLoader runner",
     "tauri": "tauri",
-    "stage": "node scripts/stage.mjs",
+    "stage": "node scripts/stage.mjs && node scripts/prune-runtime.mjs",
     "desktop": "npm run stage && tauri dev",
     "desktop:build": "tauri build && node scripts/clean-bundle.mjs",
     "test": "node scripts/test.mjs"

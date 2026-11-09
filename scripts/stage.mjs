@@ -34,7 +34,7 @@ if (!platform) {
   console.error(`Packaging is not set up for ${process.platform}-${process.arch} yet.`);
   process.exit(1);
 }
-const pythonBin = "python/bin/python3";
+const pythonBin = `python/bin/python${PYTHON.version.split(".").slice(0, 2).join(".")}`;
 const sitePackages = `python/lib/python${PYTHON.version.split(".").slice(0, 2).join(".")}/site-packages`;
 
 function run(command, args, options = {}) {
@@ -81,18 +81,23 @@ const cleanEnv = (extra = {}) => {
 };
 
 // Tauri copies resources file by file, so replace symlinks with what they
-// point to; npm's launcher scripts need a wrapper to keep relative imports.
+// point to; npm's launcher scripts need a wrapper to keep relative imports, and
+// command aliases in a bin folder (python3 -> python3.13) get a small launcher
+// instead of a second copy of the executable.
 function flattenSymlinks(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isSymbolicLink()) {
       const target = fs.realpathSync(full);
+      const stat = fs.statSync(target);
       fs.unlinkSync(full);
-      if (fs.statSync(target).isDirectory()) {
+      const relative = path.relative(path.dirname(full), target);
+      if (stat.isDirectory()) {
         fs.cpSync(target, full, { recursive: true, dereference: true });
       } else if (target.endsWith(".js")) {
-        const relative = path.relative(path.dirname(full), target);
         fs.writeFileSync(full, `#!/bin/sh\nexec "$(dirname "$0")/node" "$(dirname "$0")/${relative}" "$@"\n`, { mode: 0o755 });
+      } else if (path.basename(dir) === "bin" && stat.mode & 0o111) {
+        fs.writeFileSync(full, `#!/bin/sh\nexec "$(dirname "$0")/${relative}" "$@"\n`, { mode: 0o755 });
       } else {
         fs.copyFileSync(target, full);
         fs.chmodSync(full, fs.statSync(target).mode);
@@ -131,14 +136,33 @@ async function stageRuntime() {
   const python = path.join(work, pythonBin);
   run(python, ["-m", "pip", "install", "--disable-pip-version-check", "--no-warn-script-location", "--no-compile",
     "-r", path.join(lockDir, "requirements.lock")], { env: cleanEnv() });
-  run(python, ["-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash", path.join(work, "python/lib")], { env: cleanEnv() });
+  // Never loaded by the app: package test suites, IDLE and turtle demos, and pip's Windows launchers.
+  const pythonLib = path.join(work, path.dirname(sitePackages));
+  const removeTests = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.name === "tests") fs.rmSync(full, { recursive: true });
+      else removeTests(full);
+    }
+  };
+  removeTests(path.join(work, sitePackages));
+  for (const extra of ["idlelib", "turtledemo"]) fs.rmSync(path.join(pythonLib, extra), { recursive: true, force: true });
+  for (const name of fs.readdirSync(path.join(work, "python/bin"))) {
+    if (name.startsWith("idle3")) fs.rmSync(path.join(work, "python/bin", name));
+  }
+  const distlib = path.join(work, sitePackages, "pip/_vendor/distlib");
+  for (const name of fs.readdirSync(distlib)) {
+    if (name.endsWith(".exe")) fs.rmSync(path.join(distlib, name));
+  }
+  run(python,["-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash", path.join(work, "python/lib")], { env: cleanEnv() });
 
   // Node.js with npm runs the shared browser renderer and agent tools.
   const nodeArchive = await download(`https://nodejs.org/dist/v${NODE}/${platform.node}.tar.gz`,
     checksumFrom(await fetchText(`https://nodejs.org/dist/v${NODE}/SHASUMS256.txt`), `${platform.node}.tar.gz`));
   run("tar", ["-xzf", nodeArchive, "-C", work]);
   fs.renameSync(path.join(work, platform.node), path.join(work, "node"));
-  for (const extra of ["include", "share", "lib/node_modules/corepack", "bin/corepack"]) {
+  for (const extra of ["include", "share", "lib/node_modules/corepack", "bin/corepack", "CHANGELOG.md", "README.md"]) {
     fs.rmSync(path.join(work, "node", extra), { recursive: true, force: true });
   }
   const node = path.join(work, "node/bin/node");
@@ -271,9 +295,17 @@ function smokeTest() {
 }
 
 // Tauri copies the bundled folders into target/<profile> but never removes what the source no longer has,
-// so a removed prompt or module would still ship. Drop those leftovers (the runtime is pinned and left alone).
+// so a removed prompt or module would still ship. Drop those leftovers. A runtime copy from an older
+// stage is removed whole (Tauri copies the current one back in); a current one is left alone.
 function pruneStaleResources() {
+  const stamp = fs.readFileSync(path.join(build, "runtime", ".stamp"), "utf8");
   for (const profile of ["debug", "release"]) {
+    const runtimeCopy = path.join(root, "src-tauri/target", profile, "runtime");
+    const copyStamp = path.join(runtimeCopy, ".stamp");
+    if (fs.existsSync(runtimeCopy) && (!fs.existsSync(copyStamp) || fs.readFileSync(copyStamp, "utf8") !== stamp)) {
+      fs.rmSync(runtimeCopy, { recursive: true, force: true });
+      console.log(`Removed outdated ${path.relative(root, runtimeCopy)}`);
+    }
     for (const folder of ["engine", "backend"]) {
       const copy = path.join(root, "src-tauri/target", profile, folder);
       if (!fs.existsSync(copy)) continue;
