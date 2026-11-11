@@ -47,7 +47,7 @@ HUMBLE_OPENING = ("简单聊聊", "简单说说", "浅谈", "随便聊", "一点
 OPENING_CHARS = 320
 ATTENTION = re.compile(r"[？?]|\d|[一二三四五六七八九十百千万亿两半]成|百分之|但|可是|然而|其实|反而|没想到|比如|就像|相当于|也就是说")
 GAP_CHARS = 400
-UNSPEAKABLE = re.compile(r"[%/~#*【】\[\]（）()<>|]|^\s*[-•]\s|^\s*\d+[.、]\s", re.MULTILINE)
+UNSPEAKABLE = re.compile(r"[/~#*【】\[\]（）()<>|]|^\s*[-•]\s|^\s*\d+[.、]\s", re.MULTILINE)
 
 
 def length_config() -> dict:

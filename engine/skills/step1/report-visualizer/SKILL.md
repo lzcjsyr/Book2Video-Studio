@@ -37,6 +37,10 @@ final_target_chars: 1200
 4. **结构与数据校验修订**：读 [revision-workflow.md](references/revision-workflow.md)。第二稿 `_draft_v2_structure.txt` 确定后，直接保存为初步的 `_draft_final.txt`。提取其中所有数据生成台账 `_data_check_ledger.json`（初始为 `unchecked`）。之后对照原文校验，直接在 `_draft_final.txt` 上进行局部订正/删改（更新状态为 `verified`/`abandon`/`corrected`）。所有数据校验完成（无 `unchecked`）后，定稿 `_draft_final.txt` 并记录 `_revision_audit.json` 差分审计。
 5. **打包输出 JSON**：按 [titles.md](references/titles.md) 写标题和封面，按 [writing-standard.md](references/writing-standard.md) 的「开场金句」写金句，再按 [output-format.md](references/output-format.md) 生成最终 JSON。`source_name` 写报告本身的标题，不带后缀，如“腾讯2025年第四季度财报”；`content` 来自 `_draft_final.txt`。
 
+## 数字写法
+
+文案里的数字尽量用阿拉伯数字，不写汉字数字，百分数写成 5% 这样。
+
 ## 自检要求
 
 提交最终 JSON 前，静默确认：

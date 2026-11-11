@@ -29,6 +29,10 @@ final_target_chars: 3200
 4. **终稿修订**：按 `references/revision-workflow.md` 修出 `_draft_final.txt`，用 `references/script-quality-checklist.md` 做 L1-L4 检查，写 `_revision_audit.json`。L1 或 L2 不通过，不进入下一步。
 5. **包装输出**：按 `references/titles.md` 写标题和封面，按 `references/writing-standard.md` 的「开场金句」写金句，再按 `references/output-format.md` 写出并校验 `raw.json`。`source_name` 写作品标题加书名号，如《置身事内》；`content` 来自 `_draft_final.txt`，只清理首尾空白和多余空行，不改措辞。
 
+## 数字写法
+
+文案里的数字尽量用阿拉伯数字，不写汉字数字，百分数写成 5% 这样。
+
 ## 交付前确认
 
 - 读书笔记、角度 brief、修订审计三个文件都已落盘，且与事实一致。
