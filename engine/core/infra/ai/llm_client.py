@@ -8,6 +8,7 @@ import random
 from openai import OpenAI
 
 from core.config import config
+from core.infra.ai.image_cost import record_image_cost
 from core.shared import logger, APIError, ContentBlocked, http_status, retry_on_failure
 
 def _get_openai_api_key(server: str) -> str:
@@ -228,6 +229,22 @@ def _resolve_google_adc_project() -> Optional[str]:
         return None
 
 
+def _google_thinking_level(types) -> Optional[str]:
+    """取当前 google-genai 支持的最低思考档位。
+
+    枚举值随 SDK 版本变化：1.51 只有 LOW/HIGH，新版本才有 MINIMAL。
+    传了不存在的值 SDK 只发一条 warning 然后静默丢弃，等于白付思考费用。
+    """
+    try:
+        available = {str(getattr(level, "name", level)) for level in types.ThinkingLevel}
+    except Exception:
+        return None
+    for candidate in ("MINIMAL", "LOW"):
+        if candidate in available:
+            return candidate
+    return None
+
+
 # Google 图像接口常因限流返回 429：至少重试 5 次，等待约 5→10→20→40→60 秒。
 @retry_on_failure(max_retries=5, delay=5.0)
 def text_to_image_google(prompt, size="1024x1024", model="gemini-3.1-flash-image", use_adc=False):
@@ -267,7 +284,7 @@ def text_to_image_google(prompt, size="1024x1024", model="gemini-3.1-flash-image
                 parts=[types.Part.from_text(text=prompt)],
             )
         ]
-        generate_content_config = types.GenerateContentConfig(
+        config_kwargs = dict(
             temperature=1.0,
             top_p=0.95,
             max_output_tokens=32768,
@@ -283,10 +300,11 @@ def text_to_image_google(prompt, size="1024x1024", model="gemini-3.1-flash-image
                 image_size=image_size,
                 output_mime_type="image/png",
             ),
-            thinking_config=types.ThinkingConfig(
-                thinking_level="MINIMAL",
-            ),
         )
+        thinking_level = _google_thinking_level(types)
+        if thinking_level:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
+        generate_content_config = types.GenerateContentConfig(**config_kwargs)
 
         response = client.models.generate_content(
             model=model,
@@ -311,6 +329,9 @@ def text_to_image_google(prompt, size="1024x1024", model="gemini-3.1-flash-image
             if isinstance(image_bytes, memoryview):
                 image_bytes = image_bytes.tobytes()
             if image_bytes and isinstance(image_bytes, (bytes, bytearray)):
+                unit_price = record_image_cost(model=model, image_size=image_size)
+                if unit_price is not None:
+                    logger.info(f"Google图像计费: {model}/{image_size} ${unit_price:.4f}/张")
                 return {"type": "bytes", "data": bytes(image_bytes)}
     raise _google_missing_image(response, candidates)
 

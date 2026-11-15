@@ -240,6 +240,8 @@ Windows 指南包含 NVIDIA NVENC、Intel QSV、AMD AMF 的驱动检查和短片
 
 火山引擎生图预设为 `doubao-seedream-5-0-pro-260628`、`doubao-seedream-5-0-260128`、`doubao-seedream-5-0-flash-260915`；Google API 与 ADC 均提供 `gemini-nano-banana-2.1` 和 `gemini-3.1-flash-image`。分段配图和 API 封面共用这些选项，均可选“自定义”输入其他模型 ID，已有自定义配置不会被列表覆盖。
 
+`google_adc` 使用本机的 Google Cloud 登录（ADC）。先运行 `gcloud auth application-default login`，必要时用 `gcloud auth application-default set-quota-project PROJECT_ID` 指定配额项目，再用 `python scripts/verify_google_adc.py` 一次确认凭据、项目、区域和模型都可用；加 `--no-generate` 只验证不出图。默认区域为 `global`（可用 `GOOGLE_CLOUD_LOCATION` 覆盖），多数新模型在 `us-central1` 已不可用。每次成功出图会按模型与 1K/2K/4K 档位记一次单价，进程内累计结果由 `core.infra.ai.image_cost.cost_summary()` 给出。
+
 ### Step 4 browser motion clips
 
 Visuals uses local HTML/SVG/GSAP/Three.js, Chrome frame capture and FFmpeg encoding. Each clip exposes `window.clip` with dimensions, duration, a readiness Promise and `renderAt(seconds)`. Agents run `python render.py check --snapshots`; Grist verifies silent MP4 dimensions, frame count and duration before replacing a take. DOM caption-zone checks and sampled backward seeks are automatic; Canvas content and visual quality still require screenshot review. Step 5 uses the same browser renderer, including awaited video seeking. HyperFrames is no longer bundled.
