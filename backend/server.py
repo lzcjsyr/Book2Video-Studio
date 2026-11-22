@@ -44,6 +44,15 @@ HIDDEN_FILE = "hidden-projects.json"
 # Default project folders of the app's earlier names, beside today's.
 LEGACY_WORKSPACES = ("Stuff 2 Video", "Book2Video Studio")
 GOOGLE_CHECK_FILE = "google-adc-check.json"
+GOOGLE_CHECK_PROGRESS = "google-adc-step.txt"
+# The step a Google check was on when it ran out of time, said the way the panel shows it. No step at
+# all means the process never reached its first line, so Python itself was still starting.
+GOOGLE_STALLED = {
+    "process": "The check did not start within 90 seconds. Try again, and check whether antivirus is scanning the bundled runtime.",
+    "start": "The check did not get past loading its libraries within 90 seconds. Try again, and check whether antivirus is scanning the bundled runtime.",
+    "refresh": "Google did not answer within 90 seconds while refreshing the login. Check the network and try again.",
+    "models": "Google did not answer within 90 seconds while reaching the models. Check the network and try again.",
+}
 LIBRARY_ENV = "AIGC_VIDEO_LIBRARY_DIR"
 VOICES_FILE = "voices.json"
 DEFAULT_VOICE = {"id": "S_MKj17k802", "name": "默认音色"}
@@ -85,6 +94,20 @@ def atomic_json(path: Path, value):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
+
+
+def child_json(text):
+    """The JSON objects a child process printed, in order; anything else on its output is ignored."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            yield value
 
 
 def segment_of(relative: str) -> int | None:
@@ -533,16 +556,26 @@ class Studio:
 
     def check_google_adc(self, body):
         models = sorted({str(m).strip() for m in body.get("models") or [] if str(m).strip()}) or ["gemini-3.1-flash-image"]
-        request = json.dumps({"engine": str(self.engine), "models": models}, ensure_ascii=False)
+        step_file = self.data / GOOGLE_CHECK_PROGRESS
+        step_file.unlink(missing_ok=True)
+        request = json.dumps({"engine": str(self.engine), "models": models, "progress": str(step_file)}, ensure_ascii=False)
         try:
             # Its own process: Google's libraries stay out of the service, and a stalled network call is bounded.
+            # On Windows, inheriting the native host's shutdown pipe can block Python at startup.
             completed = subprocess.run([sys.executable, str(Path(__file__).with_name("google_check.py")), request],
-                                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
+                                       stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", timeout=90,
                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            lines = completed.stdout.strip().splitlines()
-            result = json.loads(lines[-1]) if lines else {"ok": False, "message": "The check stopped unexpectedly: " + completed.stderr.strip()[-300:]}
+            results = [value for value in child_json(completed.stdout) if "ok" in value]
+            result = results[-1] if results else {"ok": False, "message": "The check stopped unexpectedly: " + completed.stderr.strip()[-300:]}
         except subprocess.TimeoutExpired:
-            result = {"ok": False, "message": "Google did not answer within 90 seconds. Check the network and try again."}
+            # The check records each step in a file before starting it, so a stall says which one it was on.
+            try:
+                step = step_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                step = ""
+            result = {"ok": False, "message": GOOGLE_STALLED.get(step, GOOGLE_STALLED["process"])}
+        step_file.unlink(missing_ok=True)
         result["checked"] = datetime.now().astimezone().isoformat(timespec="seconds")
         atomic_json(self.data / GOOGLE_CHECK_FILE, result)
         return result
@@ -701,7 +734,8 @@ class Studio:
         environment = {**os.environ, LIBRARY_ENV: str(self.library_root)}
         with self.preview_lock:
             result = subprocess.run([sys.executable, "-u", str(Path(__file__).with_name("runner.py")), json.dumps(request, ensure_ascii=False)],
-                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=environment)
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=120, env=environment)
         outcome = next((json.loads(line[len("STUDIO_RESULT:"):]) for line in reversed(result.stdout.splitlines()) if line.startswith("STUDIO_RESULT:")), None)
         if not outcome or not outcome.get("success"):
             raise ValueError((outcome or {}).get("message") or "The 3:4 preview could not be drawn.")
@@ -1567,7 +1601,13 @@ class Studio:
             environment = {**os.environ, **self.credentials, LIBRARY_ENV: str(self.library_root)}
             job["_secrets"] = [environment[k] for k in PROVIDER_KEYS if environment.get(k)]
             try:
-                process = subprocess.Popen([sys.executable, "-u", str(Path(__file__).with_name("runner.py")), json.dumps(request, ensure_ascii=False)], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", start_new_session=os.name != "nt", creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0)
+                # Keep the native host's shutdown pipe out of the worker's standard input.
+                process = subprocess.Popen(
+                    [sys.executable, "-u", str(Path(__file__).with_name("runner.py")), json.dumps(request, ensure_ascii=False)],
+                    env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace", start_new_session=os.name != "nt",
+                    creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0,
+                )
             except OSError:
                 self.jobs.pop(job_id, None)
                 for index, take in motion_takes.items():

@@ -13,7 +13,7 @@ license; review them before distributing the application.
 | GSAP (agent video editing) | 3.14.2 | Standard License | https://gsap.com/standard-license/ |
 | Three.js (HTML scenes and covers) | 0.160.0 | MIT | https://github.com/mrdoob/three.js |
 | Chrome Headless Shell | 152.0.7977.30 | BSD-3-Clause and Chromium third-party licenses | https://developer.chrome.com/blog/chrome-headless-shell |
-| FFmpeg and FFprobe (static build by Martin Riedl) | 9.0.2 | GPL-3.0 (built with --enable-gpl --enable-version3) | https://ffmpeg.org, https://ffmpeg.martin-riedl.de |
+| FFmpeg and FFprobe | 9.0.2 | GPL-3.0 | https://ffmpeg.org. macOS uses Martin Riedl's static build (`--enable-gpl --enable-version3`, https://ffmpeg.martin-riedl.de). Windows uses Gyan Doshi's essentials build (https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2). |
 
 GPL-3.0 and AGPL-3.0 components require offering their corresponding source
 code with the distribution.

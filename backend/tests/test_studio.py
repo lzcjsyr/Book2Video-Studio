@@ -859,6 +859,7 @@ class ProjectTests(unittest.TestCase):
             self.studio.set_credentials({'DEEPSEEK_API_KEY': 'test-saved-secret'})
             result = self.studio.run_job(self.p.name, {'step': '3', 'indices': [1]})
             first_environment = spawn.call_args.kwargs['env']
+            self.assertEqual(spawn.call_args.kwargs['stdin'], subprocess.DEVNULL)
             self.assertEqual(first_environment['DEEPSEEK_API_KEY'], 'test-saved-secret')
             self.assertNotIn('test-saved-secret', json.dumps(result))
             self.assertNotIn('test-saved-secret', json.dumps(spawn.call_args.args))
@@ -1167,6 +1168,7 @@ class GoogleLoginCheckTests(unittest.TestCase):
         with patch('server.subprocess.run',return_value=subprocess.CompletedProcess([],0,output+'\n','')) as run:
             result=self.studio.check_google_adc({'models':['gemini-3.1-flash-image','gemini-3.1-flash-image',' ']})
         self.assertEqual(json.loads(run.call_args.args[0][-1])['models'],['gemini-3.1-flash-image'])
+        self.assertEqual(run.call_args.kwargs['stdin'],subprocess.DEVNULL)
         self.assertTrue(result['ok']);self.assertIn('T',result['checked'])
         self.assertEqual(self.open().google_adc_status(),result)
     def test_a_stalled_check_is_reported(self):

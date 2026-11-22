@@ -142,7 +142,7 @@ The opt-in native credential-store test uses a disposable random account and rem
 
 ## Before public distribution
 
-- **Platforms:** `npm run stage` packages macOS on Apple silicon. Intel Macs and Windows need their entries in `PLATFORMS` (Python, Node.js and FFmpeg builds); the host code is platform-neutral but untested there.
+- **Platforms:** `npm run stage` packages Windows x64 and macOS on Apple silicon. Intel Macs need their entry in `PLATFORMS` (Python, Node.js and FFmpeg builds).
 - **Signing:** sign every bundled executable and library (Python extensions, Node.js, Chrome, FFmpeg, Claude Code) with a Developer ID and hardened runtime, then notarize. Node.js and Chrome need the JIT entitlement.
 - **Licenses:** `runtime/THIRD_PARTY_NOTICES.md` lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source.
 
