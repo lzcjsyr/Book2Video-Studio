@@ -126,6 +126,54 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(headless.session_limits(request), (200, 10800))
         self.assertEqual(headless.session_limits({'step': '6'}), (100, 3600))
 
+    def test_agy_headless_sends_context_via_stream_json_and_checks_status(self):
+        agy = self.root / ('agy.cmd' if os.name == 'nt' else 'agy')
+        helper = self.root / 'fake_agy.py'
+        helper.write_text(
+            'import json, sys\n'
+            'msg = json.loads(sys.stdin.read())\n'
+            'assert msg["event"] == "user"\n'
+            'assert "RULES" in msg["message"]["content"] and "START" in msg["message"]["content"]\n'
+            'assert "--input-format" in sys.argv and "stream-json" in sys.argv\n'
+            'assert "--dangerously-skip-permissions" in sys.argv\n'
+            'assert "--add-dir" in sys.argv\n'
+            'print(json.dumps({"event": "init", "conversation_id": "c1"}))\n'
+            'print(json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "ok"}}))\n',
+            encoding='utf-8',
+        )
+        if os.name == 'nt':
+            agy.write_text(f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\n', encoding='utf-8')
+        else:
+            agy.write_text(f'#!{sys.executable}\n' + helper.read_text(encoding='utf-8'), encoding='utf-8')
+            agy.chmod(0o755)
+        ctx = self.root / 'context.md'
+        ctx.write_text('RULES', encoding='utf-8')
+        launch = {'cwd': str(self.root), 'context': str(ctx), 'dirs': [str(self.root)], 'args': []}
+        program, env = headless.claude_command({'mode': 'agy', 'agy_path': str(agy)})
+        self.assertEqual(program, str(agy))
+        self.assertNotIn('ANTHROPIC_API_KEY', env)
+        result = headless.run_claude(program, env, launch, 'START', 10, 10, self.root, cli='agy')
+        self.assertEqual(result['status'], 'SUCCESS')
+        self.assertTrue((self.root / 'agy-session.jsonl').is_file())
+
+    def test_agy_headless_raises_when_status_is_not_success(self):
+        agy = self.root / ('agy_fail.cmd' if os.name == 'nt' else 'agy_fail')
+        helper = self.root / 'fake_agy_fail.py'
+        helper.write_text(
+            'import json, sys\n'
+            'sys.stdin.read()\n'
+            'print(json.dumps({"event": "result", "result": {"status": "FAILED", "error": "boom"}}))\n',
+            encoding='utf-8',
+        )
+        if os.name == 'nt':
+            agy.write_text(f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\n', encoding='utf-8')
+        else:
+            agy.write_text(f'#!{sys.executable}\n' + helper.read_text(encoding='utf-8'), encoding='utf-8')
+            agy.chmod(0o755)
+        launch = {'cwd': str(self.root), 'args': []}
+        with self.assertRaisesRegex(ValueError, 'Antigravity CLI did not finish'):
+            headless.run_claude(str(agy), os.environ.copy(), launch, 'START', 10, 10, self.root, cli='agy')
+
     def assert_stopped(self, pid):
         status = subprocess.run(['ps', '-p', str(pid), '-o', 'stat='], capture_output=True, text=True).stdout.strip()
         self.assertTrue(not status or status.startswith('Z'), f'Render {pid} still running: {status}')

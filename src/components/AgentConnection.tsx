@@ -15,7 +15,7 @@ export default function AgentConnection({ mode, disabled, onMode }: {
   const [error, setError] = useState("");
   return <div>
     <label className="field" htmlFor={id}>
-      <span>{t("Claude Code connection")}</span>
+      <span>{t("Agent CLI connection")}</span>
       <select id={id} value={mode} disabled={disabled || saving || !isTauri()} onChange={async (event) => {
         const next = event.target.value as ClaudeCodeMode;
         setSaving(true); setError("");
@@ -27,9 +27,10 @@ export default function AgentConnection({ mode, disabled, onMode }: {
       }}>
         <option value="api_key">{t("Built-in Claude Code · API key")}</option>
         <option value="subscription">{t("Your Claude Code · subscription")}</option>
+        <option value="agy">{t("Antigravity CLI (agy)")}</option>
       </select>
     </label>
-    <p className="small-muted">{t("Applies to new Writing, Motion, Assembly and HTML cover sessions. Running sessions keep their current connection.")}</p>
+    <p className="small-muted">{t("Applies to new Writing, Agent segmentation (when using agy), Motion, Assembly and HTML cover sessions. Running sessions keep their current connection.")}</p>
     {error && <p role="alert" className="field-error">{error}</p>}
   </div>;
 }

@@ -34,6 +34,8 @@ pub struct Launch {
     cwd: String,
     context: String,
     args: Vec<String>,
+    #[serde(default)]
+    dirs: Vec<String>,
 }
 #[derive(Clone, Serialize)]
 struct Output {
@@ -76,7 +78,11 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
     let trusted: Launch =
         serde_json::from_slice(&std::fs::read(manifest).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-    if trusted.id != launch.id || trusted.args != launch.args || trusted.cwd != launch.cwd {
+    if trusted.id != launch.id
+        || trusted.args != launch.args
+        || trusted.cwd != launch.cwd
+        || trusted.dirs != launch.dirs
+    {
         return Err("Agent launch context changed".into());
     }
     // The project can be anywhere the user created it; the service says which folders are
@@ -101,12 +107,17 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
             resolve_provider(&installation, &project_root, &trusted.step, crate::credentials::load()?)?,
         ),
         Mode::Subscription => (crate::claude_code::local_program(&app, &installation)?, HashMap::new()),
+        Mode::Agy => (crate::claude_code::local_agy_program(&app)?, HashMap::new()),
     };
     let command = session_command(&installation, &program, &trusted, mode, &provider)?;
     let child = pair.slave.spawn_command(command).map_err(|e| match mode {
         Mode::ApiKey => format!("Cannot launch Claude Code: {e}. Reinstall Grist."),
         Mode::Subscription => format!(
             "Cannot launch your Claude Code ({}): {e}. Check it in Settings → API keys.",
+            program.display()
+        ),
+        Mode::Agy => format!(
+            "Cannot launch Antigravity CLI ({}): {e}. Check it in Settings → API keys.",
             program.display()
         ),
     })?;
@@ -198,7 +209,46 @@ pub fn terminal_stop(state: tauri::State<Terminals>, id: String) -> Result<(), S
     }
     Ok(())
 }
-/// The Claude Code command for a trusted launch: its arguments and folder, the bundled
+/// Interactive Antigravity CLI (`agy`) arguments for a trusted launch.
+fn agy_args(launch: &Launch) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut dirs = Vec::new();
+    for dir in &launch.dirs {
+        if !dir.trim().is_empty() && !dirs.iter().any(|d| d == dir) {
+            dirs.push(dir.clone());
+        }
+    }
+    if let Some(parent) = Path::new(&launch.context).parent() {
+        let parent = parent.display().to_string();
+        if !dirs.iter().any(|d| d == &parent) {
+            dirs.push(parent);
+        }
+    }
+    for dir in dirs {
+        args.push("--add-dir".into());
+        args.push(dir);
+    }
+    if launch.step == "5" {
+        args.push("--mode".into());
+        args.push("accept-edits".into());
+    }
+    let prompt = if launch.step == "5" {
+        format!(
+            "Read and strictly follow all rules and task instructions in {}, then start editing and delivering the video immediately.",
+            launch.context
+        )
+    } else {
+        format!(
+            "Read and strictly follow all rules and task instructions in {} for this session. Briefly confirm that you have loaded the task context and are ready for my instructions.",
+            launch.context
+        )
+    };
+    args.push("-i".into());
+    args.push(prompt);
+    args
+}
+
+/// The agent CLI command for a trusted launch: its arguments and folder, the bundled
 /// environment, and the connection the mode calls for.
 fn session_command(
     installation: &crate::Installation,
@@ -208,7 +258,11 @@ fn session_command(
     provider: &HashMap<String, String>,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new(program);
-    command.args(&launch.args);
+    if mode == Mode::Agy {
+        command.args(agy_args(launch));
+    } else {
+        command.args(&launch.args);
+    }
     command.cwd(&launch.cwd);
     command.env("TERM", "xterm-256color");
     for (name, value) in installation.environment() {
@@ -272,6 +326,27 @@ mod tests {
         path::PathBuf,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn agy_args_include_repeatable_add_dirs_and_initial_prompt() {
+        let launch = Launch {
+            id: "s1".into(),
+            project: "p1".into(),
+            step: "5".into(),
+            cwd: "/proj".into(),
+            context: "/proj/.studio/agent/s1/context.md".into(),
+            args: vec!["--session-id".into(), "s1".into()],
+            dirs: vec!["/proj".into(), "/lib/skills/step5".into(), "/proj".into()],
+        };
+        let args = agy_args(&launch);
+        assert!(args.windows(2).any(|w| w == ["--add-dir", "/proj"]));
+        assert!(args.windows(2).any(|w| w == ["--add-dir", "/lib/skills/step5"]));
+        assert!(args.windows(2).any(|w| w == ["--add-dir", "/proj/.studio/agent/s1"]));
+        assert!(args.windows(2).any(|w| w == ["--mode", "accept-edits"]));
+        let idx = args.iter().position(|a| a == "-i").expect("initial prompt");
+        assert!(args[idx + 1].contains("/proj/.studio/agent/s1/context.md"));
+        assert!(!args.iter().any(|a| a == "--session-id"));
+    }
 
     #[test]
     fn split_characters_wait_for_their_remaining_bytes() {

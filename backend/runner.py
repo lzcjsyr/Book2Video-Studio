@@ -168,6 +168,7 @@ def run(request):
     values = {**params, "project_output_dir": str(project), "target_segments": indices, "regenerate_opening": request.get("opening", False)}
     if step == "2":
         values["split_mode"] = params.get("step1_5_split_mode", "punctuation")
+        values["agent_cli"] = request.get("claude")
     if step == "4":
         values.update(visual_mode="static_image", llm_server=params["llm_server_step4"], llm_model=params["llm_model_step4"], llm_base_url=params["llm_base_url_step4"])
         check_image_model(params["image_server"], params["image_model"])

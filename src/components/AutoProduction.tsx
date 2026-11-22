@@ -5,9 +5,9 @@ import { useI18n } from "../i18n";
 import { api, projectRoute } from "../api";
 import { useCollapsed } from "../collapse";
 import { libraryChoices } from "../library";
-import { imageModelChoices, imageModelFor, imageServiceChoices, languageModelChoices, providerName, type KeyNeed } from "../keys";
+import { agentModeLabel, imageModelChoices, imageModelFor, imageServiceChoices, languageModelChoices, providerName, type KeyNeed } from "../keys";
 import { autoStatus, planText } from "../autorun";
-import type { AutoPlan, AutoRun, AutoRunOptions, Bootstrap, Detail, Job, Settings, Stage } from "../types";
+import type { AutoPlan, AutoRun, AutoRunOptions, Bootstrap, ClaudeCodeMode, Detail, Job, Settings, Stage } from "../types";
 import { SegmentationControls, VoiceFields } from "./StepControls";
 import { SavedVoiceSelect } from "./VoiceSource";
 import VisualImageControls from "./VisualImageControls";
@@ -91,7 +91,7 @@ function StepCard({ number, name, icon: Icon, state, plan, note, error, summary,
  * Auto production: every choice Segments through Covers need, on one page, then one run that makes
  * them in order in the background. Choices save at once, exactly as on each step's own page.
  */
-export default function AutoProduction({ detail, bootstrap, settings, run, jobs, locked, lockReason, subscription, gaps, onSettings,
+export default function AutoProduction({ detail, bootstrap, settings, run, jobs, locked, lockReason, claudeMode = "api_key", gaps, onSettings,
   onOpenStep, onLibrary, onSettingsModal, onAddMusic, onToggleOpening, onStart, onStop, musicUrl, onError }: {
   detail: Detail;
   bootstrap: Bootstrap | null;
@@ -102,7 +102,7 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
   jobs: Job[];
   locked: boolean;
   lockReason: string;
-  subscription: boolean;
+  claudeMode?: ClaudeCodeMode;
   /** Keys this run needs that are not saved, for the plan it would follow. */
   gaps: (plan: AutoPlan | null) => KeyNeed[];
   onSettings: Save;
@@ -179,6 +179,9 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
   const agentSplit = value("step2", "split_mode", "manual") === "agent";
   const assemblyAgent = value("step5", "assembly_method") === "agent";
   const coverAgent = value("step6", "cover_method") === "agent";
+  const isAgy = claudeMode === "agy";
+  const externalCli = claudeMode !== "api_key";
+  const agentMode = agentModeLabel(claudeMode);
   const claudeSteps = [motionCount || agentSplit ? t("the motion clips") : "", assemblyAgent ? t("the video edit") : "", coverAgent && options.covers ? t("the HTML covers") : ""].filter(Boolean);
   const startProblem = locked ? lockReason : plan?.blocked || (missing.length ? "Add the missing API keys first." : nothingToDo ? "Everything is up to date. Choose Everything again to remake it." : "");
   const summaryText = String(detail.summary.summary || "").trim();
@@ -198,7 +201,9 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
         summary={t(splitNames[value("step2", "split_mode", "manual")] || "One segment per line")} onOpen={() => onOpenStep("2")}>
         <SegmentationControls settings={settings.step2 || {}} disabled={locked} onChange={set("step2")} />
         <p className="small-muted">{t("Each segment becomes one recording and one picture or motion clip. Agent segmentation also chooses which segments get motion.")}</p>
-        {agentSplit && <ProviderFields section="step2" settings={settings} labels={["Agent provider", "Agent model"]} disabled={locked} onChange={onSettings} />}
+        {agentSplit && (isAgy
+          ? <p className="small-muted">{t("Agent segmentation runs in Antigravity CLI (agy) without an API key.")}</p>
+          : <ProviderFields section="step2" settings={settings} labels={["Agent provider", "Agent model"]} disabled={locked} onChange={onSettings} />)}
       </StepCard>
 
       <StepCard number="3" name="Voice" icon={Music2} state={stateOf("3")} plan={textOf("3")} error={failure("3")} note={noteOf("3")}
@@ -246,7 +251,7 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
               </select>
             </label>
           </div>
-          {!subscription && <ProviderFields section="step4" settings={settings} labels={["Motion agent provider", "Motion agent model"]} disabled={locked} onChange={onSettings} />}
+          {!externalCli && <ProviderFields section="step4" settings={settings} labels={["Motion agent provider", "Motion agent model"]} disabled={locked} onChange={onSettings} />}
         </>}
       </StepCard>
 
@@ -283,7 +288,7 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
         </label>}>
         <CoverSetup heading={false} settings={settings.step6 || {}} library={bootstrap?.library} disabled={locked}
           copy={{ title: String(detail.raw.cover_titles?.[0] || detail.raw.video_titles?.[0] || ""), subtitle: String(detail.raw.cover_subtitles?.[0] || "") }}
-          agentMode={subscription ? "Your Claude Code · subscription" : "Built-in Claude Code · API key"}
+          agentMode={agentMode}
           onChange={(key, v) => onSettings("step6", { [key]: v })} onEditStyles={() => onLibrary("cover_styles")} />
         {!coverAgent && <div className="form-grid">
           <label className="field"><span>{t("Cover provider")}</span>
@@ -362,7 +367,7 @@ export default function AutoProduction({ detail, bootstrap, settings, run, jobs,
               {missing.length > 0 && <button type="button" className="button small" onClick={() => onSettingsModal("keys")}>{t("Add keys")}</button>}
             </li>
             {claudeSteps.length > 0 && <li className="info"><TerminalSquare size={13} />
-              <span>{t("Claude Code makes {work} on its own, without a terminal · {mode}", { work: claudeSteps.length > 1 ? t("{list} and {last}", { list: claudeSteps.slice(0, -1).join(t(", ")), last: claudeSteps.at(-1)! }) : claudeSteps[0], mode: t(subscription ? "Your Claude Code · subscription" : "Built-in Claude Code · API key") })}</span></li>}
+              <span>{t(isAgy ? "Antigravity CLI makes {work} on its own, without a terminal · {mode}" : "Claude Code makes {work} on its own, without a terminal · {mode}", { work: claudeSteps.length > 1 ? t("{list} and {last}", { list: claudeSteps.slice(0, -1).join(t(", ")), last: claudeSteps.at(-1)! }) : claudeSteps[0], mode: t(agentMode) })}</span></li>}
           </ul>
         </section>
         <button type="button" className="button primary auto-start" disabled={Boolean(startProblem) || !plan}

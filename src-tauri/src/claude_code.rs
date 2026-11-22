@@ -1,7 +1,9 @@
-//! Claude Code runs in one of two ways. Built in: the copy shipped with Studio,
+//! Agent CLI runs in one of three ways. Built in: the Claude Code copy shipped with Studio,
 //! connected to the language-model provider and API key chosen in Settings.
-//! Subscription: the copy installed on this computer, signed in with the user's
+//! Subscription: the Claude Code copy installed on this computer, signed in with the user's
 //! own Claude account, so their Claude plan covers the sessions.
+//! Antigravity CLI (`agy`): the `agy` binary installed on this computer, signed in with the
+//! user's Google Antigravity account (or Gemini API / ADC configuration).
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -91,6 +93,7 @@ pub enum Mode {
     #[default]
     ApiKey,
     Subscription,
+    Agy,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -99,6 +102,9 @@ struct Saved {
     /// The installed Claude Code found by the last check.
     #[serde(default)]
     path: Option<PathBuf>,
+    /// The installed Antigravity CLI (`agy`) found by the last check.
+    #[serde(default)]
+    agy_path: Option<PathBuf>,
 }
 
 #[derive(Default, Serialize)]
@@ -230,6 +236,58 @@ pub(crate) fn find(bundled: &Path) -> Option<PathBuf> {
         .find(|path| path.is_file() && path.canonicalize().ok() != bundled)
 }
 
+/// Where the user's own Antigravity CLI (`agy`) is installed.
+pub(crate) fn find_agy() -> Option<PathBuf> {
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)?;
+    let mut candidates = Vec::new();
+    if let Some(custom) = std::env::var_os("STUDIO_AGY").filter(|v| !v.is_empty()) {
+        candidates.push(PathBuf::from(custom));
+    }
+    #[cfg(not(windows))]
+    {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+        let mut lookup = Command::new(shell);
+        lookup.args(["-ilc", "command -v agy"]);
+        if let Ok(output) = run(lookup, Duration::from_secs(10)) {
+            let text = String::from_utf8_lossy(&output.stdout).into_owned();
+            candidates.extend(
+                text.lines()
+                    .rev()
+                    .map(str::trim)
+                    .filter(|l| l.starts_with('/'))
+                    .map(PathBuf::from),
+            );
+        }
+        for relative in [".local/bin/agy", ".antigravity/bin/agy"] {
+            candidates.push(home.join(relative));
+        }
+        candidates.extend(["/opt/homebrew/bin/agy", "/usr/local/bin/agy"].map(PathBuf::from));
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(output) = run(
+            {
+                let mut c = Command::new("where");
+                c.arg("agy");
+                c
+            },
+            Duration::from_secs(10),
+        ) {
+            candidates.extend(
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(|l| PathBuf::from(l.trim())),
+            );
+        }
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            candidates.push(PathBuf::from(local_app_data).join("agy").join("bin").join("agy.exe"));
+        }
+        candidates.push(home.join(".local").join("bin").join("agy.exe"));
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
 /// The command for the installed Claude Code, with Studio's tools on PATH but no provider settings.
 fn local_command(program: &Path, installation: Option<&crate::Installation>) -> Command {
     let mut command = match installation {
@@ -287,6 +345,39 @@ fn inspect(program: &Path, installation: Option<&crate::Installation>) -> Local 
     local
 }
 
+fn inspect_agy(program: &Path, installation: Option<&crate::Installation>) -> Local {
+    let mut local = Local {
+        path: Some(program.display().to_string()),
+        ..Default::default()
+    };
+    let mut version = local_command(program, installation);
+    version.arg("--version");
+    match run(version, Duration::from_secs(20)) {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let fallback = String::from_utf8_lossy(&output.stderr);
+            local.version = text
+                .lines()
+                .chain(fallback.lines())
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .map(String::from);
+            local.logged_in = true;
+            local.auth_method = Some("antigravity".into());
+        }
+        Ok(output) => {
+            local.error = Some(format!(
+                "Antigravity CLI (agy) did not start: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Err(e) => {
+            local.error = Some(format!("Antigravity CLI (agy) did not start: {e}"));
+        }
+    }
+    local
+}
+
 /// The installed Claude Code to launch: the one found last time, or a fresh search.
 pub fn local_program(
     app: &tauri::AppHandle,
@@ -304,25 +395,58 @@ pub fn local_program(
     Ok(found)
 }
 
+/// The installed Antigravity CLI (`agy`) to launch: the one found last time, or a fresh search.
+pub fn local_agy_program(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut saved = load(app);
+    if let Some(path) = saved.agy_path.as_ref().filter(|p| p.is_file()) {
+        return Ok(path.clone());
+    }
+    let found = find_agy().ok_or(
+        "Antigravity CLI (agy) is not installed on this computer. Install it from antigravity.google/docs/getting-started, or choose another agent mode in Settings → API keys.",
+    )?;
+    saved.agy_path = Some(found.clone());
+    store(app, &saved)?;
+    Ok(found)
+}
+
 #[tauri::command]
-pub async fn claude_code_status(app: tauri::AppHandle, check: bool) -> Result<Status, String> {
+pub async fn claude_code_status(
+    app: tauri::AppHandle,
+    check: bool,
+    mode: Option<Mode>,
+) -> Result<Status, String> {
     crate::off_main_thread(move || {
         let mut saved = load(&app);
         if !check {
             return Ok(Status { mode: saved.mode, local: None });
         }
         let installation = crate::installation(&app).ok();
-        let bundled = installation.as_ref().map(|i| i.claude.clone()).unwrap_or_default();
-        let local = match find(&bundled) {
-            Some(program) => {
-                saved.path = Some(program.clone());
-                store(&app, &saved)?;
-                inspect(&program, installation.as_ref())
+        let target = mode.unwrap_or(saved.mode);
+        let local = if target == Mode::Agy {
+            match find_agy() {
+                Some(program) => {
+                    saved.agy_path = Some(program.clone());
+                    store(&app, &saved)?;
+                    inspect_agy(&program, installation.as_ref())
+                }
+                None => Local {
+                    error: Some("Antigravity CLI (agy) is not installed on this computer. Install it from antigravity.google/docs/getting-started, then check again.".into()),
+                    ..Default::default()
+                },
             }
-            None => Local {
-                error: Some("Claude Code is not installed on this computer. Install it from claude.com/code, then check again.".into()),
-                ..Default::default()
-            },
+        } else {
+            let bundled = installation.as_ref().map(|i| i.claude.clone()).unwrap_or_default();
+            match find(&bundled) {
+                Some(program) => {
+                    saved.path = Some(program.clone());
+                    store(&app, &saved)?;
+                    inspect(&program, installation.as_ref())
+                }
+                None => Local {
+                    error: Some("Claude Code is not installed on this computer. Install it from claude.com/code, then check again.".into()),
+                    ..Default::default()
+                },
+            }
         };
         Ok(Status { mode: saved.mode, local: Some(local) })
     })
@@ -407,11 +531,33 @@ mod tests {
     fn modes_are_stored_by_name() {
         let saved: Saved = serde_json::from_str(r#"{"mode":"subscription"}"#).unwrap();
         assert_eq!(saved.mode, Mode::Subscription);
+        let agy_saved: Saved = serde_json::from_str(r#"{"mode":"agy","agy_path":"C:/agy/agy.exe"}"#).unwrap();
+        assert_eq!(agy_saved.mode, Mode::Agy);
+        assert_eq!(agy_saved.agy_path, Some(PathBuf::from("C:/agy/agy.exe")));
         assert_eq!(
             serde_json::to_string(&Mode::ApiKey).unwrap(),
             r#""api_key""#
         );
+        assert_eq!(
+            serde_json::to_string(&Mode::Agy).unwrap(),
+            r#""agy""#
+        );
         assert_eq!(Saved::default().mode, Mode::ApiKey);
+    }
+
+    #[test]
+    fn agy_mode_clears_claude_routing_and_keeps_gemini_env() {
+        let mut command = portable_pty::CommandBuilder::new("agy");
+        for name in PROVIDER_ENV { command.env(name, "old-provider"); }
+        command.env("CLAUDECODE", "host");
+        command.env("GEMINI_API_KEY", "fixture-gemini-key");
+        command.env("AGY_ADC_AUTH", "true");
+        configure_connection(&mut command, Mode::Agy, &Default::default()).unwrap();
+        for name in PROVIDER_ENV { assert!(command.get_env(name).is_none(), "{name}"); }
+        assert!(command.get_env("CLAUDECODE").is_none());
+        assert_eq!(command.get_env("GEMINI_API_KEY"), Some(std::ffi::OsStr::new("fixture-gemini-key")));
+        assert_eq!(command.get_env("AGY_ADC_AUTH"), Some(std::ffi::OsStr::new("true")));
+        assert_eq!(command.get_argv().len(), 1);
     }
 
     #[test]
@@ -421,6 +567,24 @@ mod tests {
         let started = Instant::now();
         assert!(run(command, Duration::from_millis(200)).is_err());
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    /// Uses the Antigravity CLI (`agy`) installed on this computer: `cargo test -- --ignored finds_and_inspects_the_installed_agy`.
+    #[test]
+    #[ignore]
+    fn finds_and_inspects_the_installed_agy() {
+        let program = find_agy().expect("Antigravity CLI (agy) is installed");
+        let local = inspect_agy(&program, None);
+        assert!(local.version.is_some(), "{:?}", local.error);
+        assert!(local.error.is_none(), "{:?}", local.error);
+        assert!(local.logged_in);
+        println!(
+            "{} {:?} logged_in={} via {:?}",
+            program.display(),
+            local.version,
+            local.logged_in,
+            local.auth_method,
+        );
     }
 
     /// Uses the Claude Code installed on this computer: `cargo test -- --ignored`.

@@ -82,3 +82,20 @@ test("Assembly editing uses Writing's model key or the Claude subscription", () 
   assert.equal(keyNeeds(edit, { subscription: true }).find((n) => n.id === "assembly_agent").key, null);
   assert.equal(keyNeeds({ ...settings, step5: { assembly_method: "standard" } }).some((n) => n.id === "assembly_agent"), false);
 });
+
+test("with Antigravity CLI (agy) all agent steps including agent segmentation need no API key", () => {
+  const full = {
+    ...settings,
+    step2: { split_mode: "agent", llm_server: "kimi" },
+    step5: { assembly_method: "agent" },
+    step6: { cover_method: "agent" },
+  };
+  const needs = keyNeeds(full, { motion: true, agentMode: "agy" });
+  for (const id of ["writing", "segments", "motion_agent", "assembly_agent", "covers"]) {
+    const need = needs.find((n) => n.id === id);
+    assert.equal(need.key, null, `${id} should need no API key under agy`);
+    assert.equal(need.login, "Antigravity CLI (no key)");
+  }
+  const saved = { BYTEDANCE_TTS_API_KEY: true };
+  assert.deepEqual(unmet(needs, saved).map((n) => n.id), ["direction", "images"]);
+});

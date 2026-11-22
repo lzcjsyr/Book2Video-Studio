@@ -244,10 +244,11 @@ export interface Launch {
   context: string;
   scope: string;
   args: string[];
+  dirs?: string[];
 }
 
-/** How Claude Code runs: the bundled copy with a provider API key, or the user's installed copy on their Claude login. */
-export type ClaudeCodeMode = "api_key" | "subscription";
+/** How the agent CLI runs: bundled Claude Code with an API key, the user's installed Claude Code, or Antigravity CLI (agy). */
+export type ClaudeCodeMode = "api_key" | "subscription" | "agy";
 export interface ClaudeCodeStatus {
   mode: ClaudeCodeMode;
   local: null | {

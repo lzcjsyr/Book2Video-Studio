@@ -93,8 +93,9 @@ export default function SettingsPanel({
     label={t(label)} value={String(settings[section]?.[modelKey] ?? "")}
     options={imageModelChoices(String(settings[section]?.[serverKey] ?? ""))}
     onChange={(value) => set(section, modelKey, value)} />;
-  // On a Claude subscription, Claude Code runs on the user's own login: agent providers are not used.
-  const subscription = claudeMode === "subscription";
+  // On a Claude subscription or Antigravity CLI, agent providers below are not used.
+  const isAgy = claudeMode === "agy";
+  const subscription = claudeMode === "subscription" || isAgy;
   const field = (
     section: string,
     key: string,
@@ -255,7 +256,9 @@ export default function SettingsPanel({
             >
               <AgentConnection mode={claudeMode ?? "api_key"} onMode={onClaudeMode} disabled={Boolean(detail.state.agent_active)} />
               {step(1, "Writing")}
-              <p className="small-muted settings-note">{t(subscription
+              <p className="small-muted settings-note">{t(isAgy
+                ? "Not used now: Writing runs in Antigravity CLI (agy). Change this in Settings → API keys."
+                : subscription
                 ? "Not used now: Writing runs in your own Claude Code on your Claude subscription. Change this in Settings → API keys."
                 : "Claude Code writes the manuscript with this provider's API key. Changes apply to the next writing session.")}</p>
               <div className="form-grid">
@@ -263,10 +266,11 @@ export default function SettingsPanel({
                 {field("step1", "llm_model", t("Writing agent model"), undefined, subscription)}
               </div>
               {step(2, "Segments")}
+              {isAgy && <p className="small-muted settings-note">{t("Not used now: Agent segmentation runs in Antigravity CLI (agy). Change this in Settings → API keys.")}</p>}
               <div className="form-grid">
-                {field("step2", "llm_server", t("Agent provider"), languageModelChoices, settings.step2?.split_mode !== "agent",
+                {field("step2", "llm_server", t("Agent provider"), languageModelChoices, settings.step2?.split_mode !== "agent" || isAgy,
                   "Used only by Agent (split by meaning).")}
-                {field("step2", "llm_model", t("Agent model"), undefined, settings.step2?.split_mode !== "agent")}
+                {field("step2", "llm_model", t("Agent model"), undefined, settings.step2?.split_mode !== "agent" || isAgy)}
               </div>
               {step(3, "Voice")}
               <VoiceSource settings={settings.step3 || {}} detail={detail} onReference={onVoiceReference}
@@ -313,7 +317,9 @@ export default function SettingsPanel({
               </section>
               <section className="settings-part" aria-labelledby={`${uid}-settings-motion`}>
                 <h4 id={`${uid}-settings-motion`}>{t("Motion clips")}</h4>
-                <p className="small-muted">{t(subscription
+                <p className="small-muted">{t(isAgy
+                  ? "Designed by Antigravity CLI (agy), then rendered by Grist. The agent provider below is not used now."
+                  : subscription
                   ? "Designed by your own Claude Code on your Claude subscription, then rendered by Grist. The agent provider below is not used now."
                   : "Designed by Claude Code with HTML / Three.js, then rendered by Grist.")}</p>
                 <div className="form-grid">

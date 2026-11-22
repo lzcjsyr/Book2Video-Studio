@@ -83,7 +83,7 @@ import { writingOptions, sameWriting, type WritingOptions } from "./writing";
 import { useCollapsed } from "./collapse";
 import { parseSegmentNumbers } from "./visual-generation";
 import { librarySettings } from "./library";
-import { distinctGaps, keyNeeds, providerName, unmet, type NeedId } from "./keys";
+import { agentModeLabel, distinctGaps, keyNeeds, providerName, unmet, type NeedId } from "./keys";
 import AutoProduction from "./components/AutoProduction";
 import { autoNeeds } from "./autorun";
 import type { KeyStatus } from "./components/ApiKeysPanel";
@@ -548,7 +548,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   const agentStep = !autoView && ((step === "5" && assemblyAgent) || step === "1" || step === "4" || (step === "6" && coverAgent));
   const agentShown = agentStep && agentVisible;
   const hasMotion = Boolean(detail?.segments.some((s) => s.visualizer === "hf"));
-  const missingKeys = detail ? unmet(keyNeeds(keySettings, { motion: true, subscription: claudeMode === "subscription" }), keyStatus?.saved) : [];
+  const missingKeys = detail ? unmet(keyNeeds(keySettings, { motion: true, agentMode: claudeMode }), keyStatus?.saved) : [];
   // The header and the API keys tab count the motion agent only when a segment uses motion.
   const projectGaps = missingKeys.filter((n) => hasMotion || n.id !== "motion_agent");
   /** Remind the user (and open the API keys tab) when a step's key is not saved. */
@@ -1406,7 +1406,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                   locked={busy || activeAgent || jobLock || unsaved || writingPending}
                   lockReason={activeAgent ? "Finish the Claude Code session first." : jobLock ? "Wait for the running job to finish."
                     : unsaved || writingPending ? "Save your changes first." : busy ? "Working…" : ""}
-                  subscription={claudeMode === "subscription"}
+                  claudeMode={claudeMode}
                   gaps={(plan) => {
                     const ids = autoNeeds(plan, keySettings, { motion: hasMotion, summary: Boolean(String(detail.summary.summary || "").trim()) });
                     return missingKeys.filter((n) => ids.includes(n.id));
@@ -1519,7 +1519,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                 {step === "1" ? (
                   <div className="manuscript-workspace">
                     {writing && <WritingSetup value={writing} bootstrap={bootstrap}
-                      disabled={busy || activeAgent || jobLock} pending={writingPending} subscription={claudeMode === "subscription"}
+                      disabled={busy || activeAgent || jobLock} pending={writingPending} claudeMode={claudeMode}
                       onClaudeMode={setClaudeMode}
                       onChange={editWriting} onEditSkill={() => openLibrary()}
                       onSave={() => action(async () => { await saveWriting(); notice("Writing setup saved."); })} />}
@@ -1650,7 +1650,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                     {step === "6" && <>
                       <CoverSetup key={detail.id} settings={keySettings.step6 || {}} library={bootstrap?.library}
                         disabled={busy || activeAgent || jobLock} copy={coverCopy}
-                        agentMode={claudeMode === "subscription" ? "Your Claude Code · subscription" : "Built-in Claude Code · API key"}
+                        agentMode={agentModeLabel(claudeMode)}
                         onChange={saveCoverSetting} onEditStyles={() => openLibrary("cover_styles")} />
                       {coverAgent && <section className="cover-design-actions" aria-label={t("HTML cover design")}>
                         <div><strong>{t("HTML cover design")}</strong>

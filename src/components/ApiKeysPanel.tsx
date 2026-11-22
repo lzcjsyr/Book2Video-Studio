@@ -14,21 +14,25 @@ const claudeModes: { id: ClaudeCodeMode; title: string; description: string }[] 
     description: "Grist's own Claude Code, connected to the language-model providers chosen for Writing, Motion, Assembly and HTML covers. Uses the keys below." },
   { id: "subscription", title: "Your Claude Code · subscription",
     description: "The Claude Code installed on this computer, signed in with your Claude account. Your Claude plan covers Writing, Motion, Assembly and HTML cover sessions; they need no key." },
+  { id: "agy", title: "Antigravity CLI (agy)",
+    description: "The Antigravity CLI (agy) installed on this computer, signed in with your Google Antigravity account. Covers Writing, Agent segmentation, Motion, Assembly and HTML cover sessions; they need no key." },
 ];
 
-/** Which Claude Code runs the Writing and Motion sessions, and whether the installed one is signed in. */
+/** Which agent CLI runs the interactive and background agent sessions, and whether the installed CLI is ready. */
 function ClaudeCodeSection({ mode, onMode }: { mode: ClaudeCodeMode; onMode?: (mode: ClaudeCodeMode) => void }) {
   const uid = useId();
   const { t } = useI18n();
   const native = isTauri();
   const [local, setLocal] = useState<ClaudeCodeStatus["local"]>(null);
+  const [checkedMode, setCheckedMode] = useState<ClaudeCodeMode | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
-  const check = async () => {
+  const check = async (target: ClaudeCodeMode = mode) => {
     setChecking(true);
     setError("");
     try {
-      setLocal((await invoke<ClaudeCodeStatus>("claude_code_status", { check: true })).local);
+      setLocal((await invoke<ClaudeCodeStatus>("claude_code_status", { check: true, mode: target })).local);
+      setCheckedMode(target);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -36,7 +40,7 @@ function ClaudeCodeSection({ mode, onMode }: { mode: ClaudeCodeMode; onMode?: (m
     }
   };
   useEffect(() => {
-    if (native && mode === "subscription" && !local) void check();
+    if (native && (mode === "subscription" || mode === "agy") && checkedMode !== mode) void check(mode);
   }, [native, mode]);
   const choose = async (next: ClaudeCodeMode) => {
     setError("");
@@ -47,10 +51,12 @@ function ClaudeCodeSection({ mode, onMode }: { mode: ClaudeCodeMode; onMode?: (m
       setError(String(e));
     }
   };
+  const isAgy = mode === "agy";
+  const shownLocal = checkedMode === mode ? local : null;
   return (
     <section className="credential-group claude-code-modes" aria-labelledby={`${uid}-claude-code-title`}>
-      <h4 id={`${uid}-claude-code-title`}><TerminalSquare size={15} /> {t("Claude Code")}</h4>
-      <p className="small-muted">{t("Runs the interactive Writing, Motion, Assembly and HTML cover sessions.")}</p>
+      <h4 id={`${uid}-claude-code-title`}><TerminalSquare size={15} /> {t("Agent CLI")}</h4>
+      <p className="small-muted">{t("Runs Writing, Motion, Assembly and HTML cover sessions, plus Agent segmentation when using Antigravity CLI (agy).")}</p>
       <div className="mode-options" role="radiogroup" aria-labelledby={`${uid}-claude-code-title`}>
         {claudeModes.map((option) => (
           <label key={option.id} className={`mode-option ${mode === option.id ? "selected" : ""}`}>
@@ -63,29 +69,33 @@ function ClaudeCodeSection({ mode, onMode }: { mode: ClaudeCodeMode; onMode?: (m
           </label>
         ))}
       </div>
-      {mode === "subscription" && (
+      {(mode === "subscription" || isAgy) && (
         <div className="claude-login" aria-live="polite">
           {checking ? (
-            <span className="small-muted">{t("Looking for Claude Code on this computer…")}</span>
-          ) : local?.error ? (
-            <span className="key-missing"><XCircle size={13} /> {t(local.error)}</span>
-          ) : local?.logged_in ? (
+            <span className="small-muted">{t(isAgy ? "Looking for Antigravity CLI (agy) on this computer…" : "Looking for Claude Code on this computer…")}</span>
+          ) : shownLocal?.error ? (
+            <span className="key-missing"><XCircle size={13} /> {t(shownLocal.error)}</span>
+          ) : shownLocal?.logged_in ? (
             <span className="key-ok">
               <CheckCircle2 size={13} />{" "}
-              {t("Signed in{account}{plan}", {
-                account: local.email ? " · " + local.email : "",
-                plan: local.subscription ? " · " + t("{plan} plan", { plan: local.subscription.replace(/^\w/, (c) => c.toUpperCase()) }) : "",
-              })}
+              {isAgy
+                ? t("Antigravity CLI ready")
+                : t("Signed in{account}{plan}", {
+                    account: shownLocal.email ? " · " + shownLocal.email : "",
+                    plan: shownLocal.subscription ? " · " + t("{plan} plan", { plan: shownLocal.subscription.replace(/^\w/, (c) => c.toUpperCase()) }) : "",
+                  })}
             </span>
-          ) : local ? (
+          ) : shownLocal ? (
             <span className="key-missing"><AlertTriangle size={13} /> {t("Not signed in. Run `claude` in Terminal and sign in, then check again.")}</span>
           ) : null}
-          {local?.path && !checking && <span className="small-muted context-path">{local.version} · {local.path}</span>}
+          {shownLocal?.path && !checking && <span className="small-muted context-path">{shownLocal.version} · {shownLocal.path}</span>}
           <div className="adc-check">
-            <button className="button" type="button" disabled={!native || checking} onClick={() => void check()}>
+            <button className="button" type="button" disabled={!native || checking} onClick={() => void check(mode)}>
               {checking ? t("Checking…") : t("Check again")}
             </button>
-            <span className="small-muted">{t("Agent segmentation still uses an API key.")}</span>
+            <span className="small-muted">
+              {t(isAgy ? "Covers Writing, Agent segmentation, Motion, Assembly and HTML covers." : "Agent segmentation still uses an API key.")}
+            </span>
           </div>
         </div>
       )}
@@ -208,7 +218,7 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
     }
   };
 
-  const needs = settings ? keyNeeds(settings, { motion, subscription: claudeMode === "subscription" }) : [];
+  const needs = settings ? keyNeeds(settings, { motion, agentMode: claudeMode }) : [];
   const missing = unmet(needs, status?.saved);
   const usesOf = (key: string) => needs.filter((n) => n.key === key).map((n) => t(n.use));
 

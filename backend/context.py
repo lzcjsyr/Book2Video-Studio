@@ -159,7 +159,9 @@ def prepare(studio, project, body):
     # A session without a terminal gets its own tools and message (headless.py).
     terminal = step == "5" and not body.get("headless")
     # Projects can live anywhere; the launch names the project by its service id.
+    dirs = list(dict.fromkeys([*directories, str(context_dir)]))
     launch = {"id": session, "project": studio.project_id(project), "step": step, "cwd": str(cwd), "context": str(prompt_path), "task": str(task_path), "context_chars": len(prompt), "scope": scope,
+              "dirs": dirs,
               "args": [*(["--allowedTools", *editing.ALLOWED_TOOLS] if terminal else []),
                        "--session-id", session, "--append-system-prompt-file", str(prompt_path),
                        "--add-dir", *dict.fromkeys(directories)]}

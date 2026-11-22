@@ -198,6 +198,7 @@ def run_step_1_5(
     split_mode: str = "punctuation",
     llm_server_step1_5: Optional[str] = None,
     llm_model_step1_5: Optional[str] = None,
+    agent_cli: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     try:
         print("正在处理原始内容为脚本...")
@@ -224,6 +225,7 @@ def run_step_1_5(
                 repo_root=_get_project_root(),
                 llm_server=llm_server_step1_5,
                 llm_model=llm_model_step1_5,
+                agent_cli=agent_cli,
             )
 
         script_data = process_raw_to_script(

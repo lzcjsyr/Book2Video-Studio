@@ -12,6 +12,7 @@ import {
   PanelRightClose,
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
+import { agentModeLabel } from "../keys";
 import type { ClaudeCodeMode, Launch, Stage } from "../types";
 
 /** Lets the workspace end the session (for example "Finish session") the same way the Stop button does. */
@@ -158,11 +159,12 @@ export default function AgentPane({
     onFinished();
   }
   useImperativeHandle(handle, () => ({ stop }));
+  const isAgy = claudeMode === "agy";
   return (
     <aside className="agent-pane">
       <div className="pane-heading">
         <span>
-          <TerminalSquare size={15} /> {t("Claude Code")}
+          <TerminalSquare size={15} /> {t(isAgy ? "Antigravity CLI" : "Claude Code")}
         </span>
         <button
           className="icon-button"
@@ -181,7 +183,7 @@ export default function AgentPane({
           </span>
         </div>
         <p className="small-muted agent-mode">
-          {t(claudeMode === "subscription" ? "Your Claude Code · subscription" : "Built-in Claude Code · API key")}
+          {t(agentModeLabel(claudeMode))}
         </p>
         {launch && (
           <p title={launch.cwd} className="context-path">
@@ -202,13 +204,21 @@ export default function AgentPane({
             <p>
               {t(
                 step === "5"
-                  ? "Claude Code starts editing the whole video, opening included, as soon as it opens. Guide it here at any time."
+                  ? isAgy
+                    ? "Antigravity CLI starts editing the whole video, opening included, as soon as it opens. Guide it here at any time."
+                    : "Claude Code starts editing the whole video, opening included, as soon as it opens. Guide it here at any time."
                   : step === "6"
-                  ? "Your cover copy, sizes and style are prepared. Direct Claude Code to design covers in HTML and Three.js here."
+                  ? isAgy
+                    ? "Your cover copy, sizes and style are prepared. Direct Antigravity CLI to design covers in HTML and Three.js here."
+                    : "Your cover copy, sizes and style are prepared. Direct Claude Code to design covers in HTML and Three.js here."
                   : step === "1" && noWritingSkill
-                  ? "No writing skill is selected. Give Claude Code your writing instructions here."
+                  ? isAgy
+                    ? "No writing skill is selected. Give Antigravity CLI your writing instructions here."
+                    : "No writing skill is selected. Give Claude Code your writing instructions here."
                   : directWriting
-                  ? "Your writing skill is prepared. Give Claude Code your topic and requirements here; no source document is needed."
+                  ? isAgy
+                    ? "Your writing skill is prepared. Give Antigravity CLI your topic and requirements here; no source document is needed."
+                    : "Your writing skill is prepared. Give Claude Code your topic and requirements here; no source document is needed."
                   : "Source, skills, and selected segments are prepared automatically. Give your instructions here.",
               )}
             </p>
@@ -217,7 +227,7 @@ export default function AgentPane({
               disabled={disabled || !isTauri()}
               onClick={onActivate}
             >
-              <Play size={14} /> {t("Activate Claude Code")}
+              <Play size={14} /> {t(isAgy ? "Activate Antigravity CLI" : "Activate Claude Code")}
               <ArrowUpRight size={14} />
             </button>
             <span className="small-muted">

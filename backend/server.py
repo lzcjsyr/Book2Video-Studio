@@ -582,10 +582,13 @@ class Studio:
 
     def components(self):
         """The programs production relies on, and whether each ships with the app."""
+        import headless
         bundle = self.engine.parent
+        saved_cli = read_json(self.data / "claude-code.json", {})
         found = {
             "Python": sys.executable,
             "Claude Code": os.environ.get("STUDIO_CLAUDE") or shutil.which("claude"),
+            "Antigravity CLI (agy)": headless.find_agy(saved_cli),
             "Node.js": shutil.which("node"),
             "Browser libraries": os.environ.get("AIGC_MOTION_MODULES"),
             "Chrome Headless Shell": os.environ.get("AIGC_BROWSER_PATH"),
@@ -1562,6 +1565,8 @@ class Studio:
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
                        "music_dir": str(self.music_root), "local_voice": voice_request}
+            if step == "2":
+                request["claude"] = read_json(self.data / "claude-code.json", {"mode": "api_key"})
             motion_takes = {}
             if step == "4" and body.get("mode") == "segments":
                 for segment in candidates:

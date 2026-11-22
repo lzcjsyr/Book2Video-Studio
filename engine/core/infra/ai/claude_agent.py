@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -570,6 +573,155 @@ async def _run_step1_5_segment_agent_async(
     return segments
 
 
+def _find_agy_program(agent_cli: dict[str, Any] | None = None) -> str | None:
+    candidates: list[Path] = []
+    if isinstance(agent_cli, dict) and agent_cli.get("agy_path"):
+        candidates.append(Path(agent_cli["agy_path"]))
+    if os.environ.get("STUDIO_AGY"):
+        candidates.append(Path(os.environ["STUDIO_AGY"]))
+    if found := shutil.which("agy"):
+        candidates.append(Path(found))
+    home = Path.home()
+    if os.name == "nt":
+        if local := os.environ.get("LOCALAPPDATA"):
+            candidates.append(Path(local) / "agy" / "bin" / "agy.exe")
+        candidates.append(home / ".local" / "bin" / "agy.exe")
+    else:
+        candidates.extend([
+            home / ".local" / "bin" / "agy",
+            home / ".antigravity" / "bin" / "agy",
+            Path("/opt/homebrew/bin/agy"),
+            Path("/usr/local/bin/agy"),
+        ])
+    for path in candidates:
+        if path.is_file():
+            return str(path)
+    return None
+
+
+def _run_step1_5_segment_agent_agy(
+    *,
+    raw_json_path: str,
+    output_json_path: str,
+    target_segments: int,
+    session_log_path: str,
+    repo_root: str,
+    agent_cli: dict[str, Any] | None = None,
+    timeout: int = 1800,
+) -> list[dict[str, Any]]:
+    output_path = Path(output_json_path)
+    try:
+        if output_path.exists():
+            output_path.unlink()
+    except Exception:
+        pass
+
+    program = _find_agy_program(agent_cli)
+    if not program:
+        raise RuntimeError("Antigravity CLI (agy) is unavailable. Check its setup in Settings.")
+
+    prompt = _build_step1_5_segment_prompt(
+        raw_json_path=raw_json_path,
+        output_json_path=output_json_path,
+        target_segments=target_segments,
+    )
+    task = write_task_context(
+        Path(session_log_path).with_suffix(".task.json"),
+        stage="2",
+        cwd=output_path.parent,
+        inputs=[raw_json_path],
+        writable=[output_path],
+        protected=[raw_json_path],
+        facts={"target_segments": target_segments},
+    )
+    prompt = agent_rules("rules", task_file=task) + "\n\n" + prompt
+    session_log = AgentSessionLog(session_log_path)
+    session_log.append(
+        "session_start",
+        {
+            "step": "step_1_5_segment_visualizer",
+            "cli": "agy",
+            "program": program,
+            "raw_json_path": raw_json_path,
+            "output_json_path": output_json_path,
+            "target_segments": target_segments,
+            "repo_root": repo_root,
+            "prompt": prompt,
+        },
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("ANTHROPIC_", "CLAUDE_CODE_", "CLAUDECODE"))
+    }
+    add_dirs = list(dict.fromkeys([
+        str(Path(raw_json_path).parent.resolve()),
+        str(Path(task).parent.resolve()),
+    ]))
+    command = [
+        program,
+        "--input-format", "stream-json",
+        "--output-format", "stream-json",
+        "--dangerously-skip-permissions",
+        "--disable-slash-commands",
+        *[item for directory in add_dirs for item in ("--add-dir", directory)],
+    ]
+    payload = json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False) + "\n"
+    result_event: dict[str, Any] | None = None
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(output_path.parent.resolve()),
+            env=env,
+            input=payload,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        for line in (completed.stdout or "").splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            session_log.append("agy_event", {"event_data": event})
+            if event.get("event") == "result" and isinstance(event.get("result"), dict):
+                result_event = event["result"]
+            elif "status" in event:
+                result_event = event
+        if completed.returncode != 0 or not isinstance(result_event, dict) or result_event.get("status") != "SUCCESS" or result_event.get("error"):
+            detail = (result_event or {}).get("error") or (completed.stderr or "").strip()[-400:] or "Antigravity CLI Step 1.5 failed"
+            raise RuntimeError(detail)
+    except Exception as exc:
+        session_log.append("session_error", {"error_type": type(exc).__name__, "error": str(exc)})
+        raise
+    finally:
+        session_log.append(
+            "session_end",
+            {
+                "success": bool(result_event and result_event.get("status") == "SUCCESS" and not result_event.get("error")),
+                "result": result_event,
+            },
+        )
+
+    if not output_path.exists():
+        raise FileNotFoundError(f"Antigravity CLI 未生成分段文件: {output_json_path}")
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    segments = data.get("segments") if isinstance(data, dict) else None
+    if not isinstance(segments, list):
+        raise ValueError("Antigravity CLI 分段文件缺少 segments 数组")
+    return segments
+
+
 def run_step1_5_segment_agent(
     *,
     raw_json_path: str,
@@ -579,7 +731,17 @@ def run_step1_5_segment_agent(
     repo_root: str,
     llm_server: str | None = None,
     llm_model: str | None = None,
+    agent_cli: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    if isinstance(agent_cli, dict) and agent_cli.get("mode") == "agy":
+        return _run_step1_5_segment_agent_agy(
+            raw_json_path=raw_json_path,
+            output_json_path=output_json_path,
+            target_segments=target_segments,
+            session_log_path=session_log_path,
+            repo_root=repo_root,
+            agent_cli=agent_cli,
+        )
     runner = partial(
         _run_step1_5_segment_agent_async,
         raw_json_path=raw_json_path,
