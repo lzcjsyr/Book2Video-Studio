@@ -33,6 +33,16 @@ class HeadlessTests(unittest.TestCase):
         self.script('import json,sys\nassert sys.stdin.read()==""\nprint(json.dumps({"is_error":False,"result":"done"}))\n')
         self.assertEqual(self.run_session()['result'], 'done')
 
+    def test_codebuddy_background_session_reads_the_result_at_the_end_of_the_transcript(self):
+        self.launch["agent"] = "codebuddy"
+        result = {"type": "result", "is_error": False, "result": "done"}
+        self.script(f'print({json.dumps([{"type": "message"}, result])!r})')
+        self.assertEqual(self.run_session(), result)
+        result["is_error"] = True
+        self.script(f'print({json.dumps([result])!r})')
+        with self.assertRaisesRegex(ValueError, "CodeBuddy Code did not finish"):
+            self.run_session()
+
     @unittest.skipIf(os.name == 'nt', 'POSIX process group supervision')
     def test_timeout_stops_background_render_even_when_it_ignores_term(self):
         child = ('import os,signal,time\nfrom pathlib import Path\n'

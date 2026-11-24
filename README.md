@@ -39,7 +39,7 @@ The tab lists exactly which keys the open project needs for the whole production
 
 ### Local Agents
 
-Install and configure Claude Code (`claude`) or AGY (`agy`) on this computer. In **Settings → Local Agents**, check each CLI's installation and sign-in and choose a project default. Override it under the corresponding step in **Settings → Production**. Grist starts the selected CLI in the task's working directory with the instructions from **Skills & templates**. The CLI uses its local configuration. The app's API keys are for the separate production services, such as the content summary, voice, and image generation.
+Install and configure Claude Code (`claude`), AGY (`agy`), or CodeBuddy Code (`codebuddy`) on this computer. In **Settings → Local Agents**, check each CLI's installation and sign-in and choose a project default. Override it under the corresponding step in **Settings → Production**. Grist starts the selected CLI in the task's working directory with the instructions from **Skills & templates**. The CLI uses its local configuration. The app's API keys are for the separate production services, such as the content summary, voice, and image generation.
 
 
 ## Where your files live
@@ -141,7 +141,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 ### 本机 Agent
 
-在本机安装并配置 Claude Code（`claude`）或 AGY（`agy`）。在 **设置 → 本机 Agent** 中可以检查安装和登录状态，并为项目选择默认 Agent。写作、动画、剪辑和代码封面的 Agent 可在 **设置 → 制作** 的对应步骤单独指定。万物成片在任务对应的工作目录启动 CLI，并提供「技能与模板」中的任务说明。CLI 使用自己的本机配置。应用中的 API 密钥用于内容小结、配音和图像生成等生产服务。
+在本机安装并配置 Claude Code（`claude`）、AGY（`agy`）或 CodeBuddy Code（`codebuddy`）。在 **设置 → 本机 Agent** 中可以检查安装和登录状态，并为项目选择默认 Agent。写作、动画、剪辑和代码封面的 Agent 可在 **设置 → 制作** 的对应步骤单独指定。万物成片在任务对应的工作目录启动 CLI，并提供「技能与模板」中的任务说明。CLI 使用自己的本机配置。应用中的 API 密钥用于内容小结、配音和图像生成等生产服务。
 
 
 ## 文件保存在哪里

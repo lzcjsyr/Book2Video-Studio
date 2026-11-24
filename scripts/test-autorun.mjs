@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { agentNames, selectedAgent } from "../src/agents.ts";
 import { autoNeeds, planText } from "../src/autorun.ts";
 import { translate } from "../src/i18n/messages.ts";
 
 const en = (key, values) => translate("en", key, values);
 const zh = (key, values) => translate("zh-CN", key, values);
 const plan = (steps) => ({ blocked: null, segments: 4, steps });
+
+test("CodeBuddy Code is selectable as the project default or a step override", () => {
+  assert.equal(agentNames.codebuddy, "CodeBuddy Code");
+  assert.equal(selectedAgent({ agents: { default: "codebuddy" } }, "4"), "codebuddy");
+  assert.equal(selectedAgent({ step5: { agent_cli: "codebuddy" } }, "5"), "codebuddy");
+  assert.equal(selectedAgent({ agents: { default: "codebuddy" }, step6: { agent_cli: "agy" } }, "6"), "agy");
+  assert.equal(selectedAgent({ agents: { default: "toString" } }, "5"), "claude");
+});
 
 test("each step's plan reads as what the next run will make", () => {
   const settings = { three_by_four: { enabled: true }, step5: { assembly_method: "standard" }, step6: { cover_method: "api" } };

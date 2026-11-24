@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-NAMES = {"claude": "Claude Code", "agy": "AGY"}
+NAMES = {"claude": "Claude Code", "agy": "AGY", "codebuddy": "CodeBuddy Code"}
 # Capture the desktop's environment before runner.py applies production API keys.
 LOCAL_ENV = os.environ.copy()
 LOCAL_ENV.pop("CLAUDECODE", None)
@@ -41,7 +41,9 @@ def discover(agent):
         except (OSError, subprocess.TimeoutExpired):
             pass
     paths.extend(str(Path.home() / part) for part in (".local/bin", ".npm-global/bin", ".bun/bin", ".volta/bin"))
-    paths.append(str(Path.home() / (".claude/local" if agent == "claude" else ".gemini/bin")))
+    extra_path = {"claude": ".claude/local", "agy": ".gemini/bin"}.get(agent)
+    if extra_path:
+        paths.append(str(Path.home() / extra_path))
     if os.name != "nt":
         paths.extend(("/opt/homebrew/bin", "/usr/local/bin"))
     env["PATH"] = os.pathsep.join(dict.fromkeys(path for path in paths if Path(path).is_absolute()))
@@ -82,6 +84,16 @@ def arguments(launch, *, prompt=None, max_turns=None):
         if prompt is None:
             return ["--prompt-interactive", task + "\nThen wait for my instructions."]
         return ["--print", f"{task}\n\n{prompt}", "--output-format", "json"]
+    if agent == "codebuddy":
+        brief = f'Use the Read tool to read the Grist task brief at "{context}" before acting on this task.'
+        args = ["--append-system-prompt", brief, *project_args]
+        if prompt is None:
+            return args
+        args.extend(["--print", prompt, "--output-format", "json", "--max-turns", str(max_turns)])
+        # Headless CodeBuddy cannot prompt for tool approval.
+        args.extend(["--permission-mode", "acceptEdits", "--allowedTools", "Read", "Glob", "Grep",
+                     "Bash(python *)", "Bash(python3 *)", "Bash(ffmpeg *)", "Bash(ffprobe *)"])
+        return args
     args = ["--append-system-prompt-file", str(context)]
     if prompt is None:
         return args
@@ -91,6 +103,15 @@ def arguments(launch, *, prompt=None, max_turns=None):
         args.extend(["--permission-mode", "acceptEdits", "--allowedTools",
                      "Bash(python *),Bash(python3 *),Bash(ffmpeg *),Bash(ffprobe *)", *project_args])
     return args
+
+
+def codebuddy_result(payload):
+    # CodeBuddy JSON output is a transcript array whose final entry is the result.
+    if isinstance(payload, list) and payload:
+        result = payload[-1]
+        if isinstance(result, dict) and result.get("type") == "result":
+            return result
+    return None
 
 
 def check(agent):
@@ -114,16 +135,26 @@ def check(agent):
                 logged_in = json.loads(result.stdout).get("loggedIn")
                 if isinstance(logged_in, bool):
                     status["logged_in"] = logged_in
+            elif agent == "codebuddy":
+                result = run(["--print", "Reply only with OK.", "--tools", "",
+                              "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+                              "--no-session-persistence", "--max-turns", "1", "--output-format", "json"], 25)
+                try:
+                    session = codebuddy_result(json.loads(result.stdout))
+                except ValueError:
+                    session = None
+                if result.returncode == 0 and session and session.get("is_error") is False:
+                    status["logged_in"] = True
             else:
                 # The model catalog requires an account. It reports sign-out without opening a chat.
                 result = run(["models"], 20)
                 if result.returncode == 0 and any("\t" in line for line in result.stdout.splitlines()):
                     status["logged_in"] = True
-                if status["logged_in"] is None and re.search(
-                    r"not (?:logged|signed) in|login required|authentication required|unauthenticated|please (?:log|sign) in",
-                    result.stdout + "\n" + result.stderr, re.IGNORECASE,
-                ):
-                    status["logged_in"] = False
+            if status["logged_in"] is None and agent != "claude" and re.search(
+                r"not (?:logged|signed) in|login required|authentication required|unauthenticated|please (?:log|sign) in",
+                result.stdout + "\n" + result.stderr, re.IGNORECASE,
+            ):
+                status["logged_in"] = False
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass  # A failed or timed-out status probe leaves the login unknown.
     return status

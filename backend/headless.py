@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 
-from local_agents import NAMES, arguments, discover
+from local_agents import NAMES, arguments, codebuddy_result, discover
 
 # How many turns each session may take and how long it may run (seconds).
 SESSIONS = {"5": (200, 3 * 3600), "6": (100, 3600)}
@@ -114,6 +114,10 @@ def run_agent(program, env, launch, prompt, max_turns, timeout, logs: Path):
         session = json.loads(report.read_text(encoding="utf-8"))
     except ValueError:
         session = None
+    if agent == "codebuddy":
+        session = codebuddy_result(session)
+        if session and session.get("is_error") is not False:
+            session = None
     if code or not isinstance(session, dict) or (session.get("status") != "SUCCESS" if agent == "agy" else session.get("is_error")):
         raise ValueError(f"{name} did not finish. See {report}")
     return session

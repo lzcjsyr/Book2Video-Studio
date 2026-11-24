@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from local_agents import arguments, check, discover, selected
+from local_agents import arguments, check, codebuddy_result, discover, selected
 
 
 class AgentConnectionTests(unittest.TestCase):
@@ -19,6 +19,42 @@ class AgentConnectionTests(unittest.TestCase):
                          ["agy", "agy", "claude", "agy"])
         self.assertEqual(selected({}, "1"), "claude")
         self.assertEqual(selected({"step1": {"agent_cli": "invalid"}}, "1"), "claude")
+
+    def test_codebuddy_can_be_selected_globally_or_per_step(self):
+        settings = {"agents": {"default": "codebuddy"}, "step5": {"agent_cli": "agy"}}
+        self.assertEqual(selected(settings, "4"), "codebuddy")
+        self.assertEqual(selected(settings, "5"), "agy")
+        self.assertEqual(selected({"step5": {"agent_cli": "codebuddy"}}, "5"), "codebuddy")
+
+    def test_codebuddy_interactive_and_headless_arguments(self):
+        context = "/project with spaces/context.md"
+        launch = {"agent": "codebuddy", "step": "5", "context": context, "project_dir": "/project with spaces"}
+        interactive = arguments(launch)
+        self.assertEqual(interactive[0], "--append-system-prompt")
+        self.assertIn(context, interactive[1])
+        self.assertEqual(interactive[2:], ["--add-dir", launch["project_dir"]])
+        automatic = arguments(launch, prompt="Start editing", max_turns=10)
+        self.assertEqual(automatic[:len(interactive)], interactive)
+        self.assertEqual(automatic[len(interactive):len(interactive) + 6],
+                         ["--print", "Start editing", "--output-format", "json", "--max-turns", "10"])
+        self.assertIn("Bash(ffmpeg *)", automatic)
+
+    def test_codebuddy_status_uses_the_final_result(self):
+        version = subprocess.CompletedProcess([], 0, stdout="2.185.0\n", stderr="")
+        success = {"type": "result", "is_error": False, "result": "OK"}
+        self.assertEqual(codebuddy_result([{"type": "message"}, success]), success)
+        self.assertIsNone(codebuddy_result([success, {"type": "message"}]))
+        for code, output, diagnostic, expected in [
+            (0, json.dumps([success]), "", True),
+            (1, "", "Please log in", False),
+            (1, "", "network unavailable", None),
+            (0, json.dumps([{"type": "result", "is_error": True}]), "", None),
+        ]:
+            with self.subTest(code=code, output=output, diagnostic=diagnostic):
+                result = subprocess.CompletedProcess([], code, stdout=output, stderr=diagnostic)
+                with patch("local_agents.discover", return_value=("/test/codebuddy", {})), \
+                     patch("local_agents.subprocess.run", side_effect=[version, result]):
+                    self.assertIs(check("codebuddy")["logged_in"], expected)
 
     def test_adapters_use_the_task_brief_without_permission_flags(self):
         context = "/project with spaces/context.md"
