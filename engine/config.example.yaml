@@ -109,11 +109,12 @@ step4:
   # 图像生成尺寸。建议与目标视频比例一致，例如 2560x1440 / 1920x1080 / 1080x1920。
   image_size: 2560x1440
   # 段落图像风格预设，见 core/prompts.py 的 IMAGE_STYLE_PRESETS。
-  image_style_preset: style12
+  image_style_preset: style07
   # 静态生图提示词模板，定义在 prompts/step4_image_templates.yaml：
   # - keywords：原有图示+中文关键词模板
-  # - pure_images：无文字的电影感叙事画面（默认）
-  image_prompt_template: pure_images
+  # - pure_images：无文字的电影感叙事画面
+  # - story_scene：剧情分镜（人物一致，默认）
+  image_prompt_template: story_scene
   # 图像生成并发。Google API key / ADC 的请求上限固定为 1。
   max_concurrent_image_generation: 1
   # Seedream（doubao）最多并发 5 个请求；可调低。上限跨项目、封面和画面任务共享。

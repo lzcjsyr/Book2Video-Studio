@@ -268,7 +268,7 @@ def run_step_2(
         project_output_dir, raw_data=raw_data, script_data=script_data
     )
     description_data = generate_description_summary(
-        llm_server, llm_model, llm_base_url, description_source or "", max_chars=200
+        llm_server, llm_model, llm_base_url, description_source or "", max_chars=450
     )
     description_path = paths.mini_summary_json()
     with open(description_path, "w", encoding="utf-8") as handle:
@@ -456,7 +456,7 @@ def run_step_4(
                             llm_model or config.llm_model_step2,
                             llm_base_url or config.llm_base_url_step2,
                             description_source,
-                            max_chars=200
+                            max_chars=450
                         )
                         summary_text = generated_desc.get("summary", "").strip()
                         with open(paths.mini_summary_json(), "w", encoding="utf-8") as handle:
