@@ -65,7 +65,7 @@ DESKTOP_SETTINGS = {"step1": {"writing_mode", "llm_server", "llm_model"}, "step2
 # Covers are drawn by an image service from the text alone and write only cover files, so a cover job
 # runs beside the jobs that leave the text as it is: recordings, visuals and assembly.
 BESIDE_COVERS = {"3", "4", "5"}
-PROVIDER_KEYS = {"OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "MIMO_API_KEY", "KIMI_API_KEY", "SILICONFLOW_KEY", "VOLCENGINE_API_KEY", "GOOGLE_CLOUD_API_KEY", "BYTEDANCE_TTS_API_KEY"}
+PROVIDER_KEYS = {"DEEPSEEK_API_KEY", "MIMO_API_KEY", "SILICONFLOW_KEY", "VOLCENGINE_API_KEY", "GOOGLE_CLOUD_API_KEY", "BYTEDANCE_TTS_API_KEY"}
 # Seconds a stopped job has to end (its Agent sessions included) before it is killed.
 STOP_GRACE = 10
 
@@ -183,6 +183,15 @@ def engine_settings(settings):
             for section, values in settings.items() if section != "agents"}
 
 
+def clear_retired_model_overrides(settings):
+    """Fall back to the bundled provider and model for older projects."""
+    for section in ("step4_summary", "step4"):
+        fields = settings.get(section)
+        if isinstance(fields, dict) and str(fields.get("llm_server", "")).strip().lower() in {"kimi", "openrouter"}:
+            fields.pop("llm_server")
+            fields.pop("llm_model", None)
+
+
 def signal_job(process, force=False):
     """Ask a job and everything it started to stop, or (force) kill them."""
     if os.name == "nt":
@@ -272,6 +281,10 @@ class Studio:
                             state["takes"].pop(str(index))
                 stale = state.setdefault("stale", {})
                 # Assembly's Agent delivers the video itself; an interrupted session that delivered it is done.
+                if active["step"] == "5" and "assembly_edit" in active:
+                    self.finish_assembly_session(path.parents[1], state, active)
+                    atomic_json(path, state)
+                    continue
                 edit = editing.detail(path.parents[1], state.get("assembly_edit")) if active["step"] == "5" else None
                 if edit and edit["delivered"]:
                     stale.pop("5", None)
@@ -400,6 +413,7 @@ class Studio:
             settings["step2"] = segmentation_output(settings["step2"])
         for key in ("llm_server", "llm_model"):
             settings.get("step1", {}).pop(key, None)
+        clear_retired_model_overrides(settings)
         return state
 
     def effective(self, state):
@@ -410,6 +424,7 @@ class Studio:
         return settings
 
     def persist(self, p: Path, state):
+        clear_retired_model_overrides(state.get("settings", {}))
         atomic_json(p / ".studio/state.json", state)
 
     def invalidate(self, state, stage, indices=None, project=None):
@@ -1289,7 +1304,7 @@ class Studio:
                     folders[index] = work
                 self.persist(p, state)
             try:
-                launch = prepare(self, p, {**body, "folders": folders})
+                launch = prepare(self, p, {**body, "folders": folders, "headless": False})
             except Exception:
                 for index in created:
                     shutil.rmtree(folders[index], ignore_errors=True)
@@ -1299,8 +1314,6 @@ class Studio:
             exports_before = [f for f in p.glob("final_video*") if f.is_file()] if body["step"] == "5" else []
             self.snapshot(p, list((p / "text").glob("*")) if body["step"] == "1" else revised + exports_before + [p / "text/script.json"], f"Before {NAMES[launch['agent']]} · step {body['step']}")
             state = self.state(p)
-            if body["step"] == "5":
-                state["assembly_edit"] = launch["assembly_edit"]
             if body["step"] == "6":
                 state["cover_design"] = launch["cover_design"]
             for index, work in folders.items():
@@ -1310,6 +1323,10 @@ class Studio:
                 self.sync_takes(p, state)
             state["agent_active"] = {"step": body["step"], "indices": body.get("indices", []), "launch": launch["id"], "owner": os.getpid(), "raw_before": fingerprint(p / "text/raw.json"),
                                      "takes": {str(i): w.name for i, w in folders.items()}, "created": created, "previous": previous}
+            if body["step"] == "5":
+                edit = launch["assembly_edit"]
+                state["agent_active"]["assembly_edit"] = edit
+                state["agent_active"]["assembly_workspace_before"] = editing.workspace_stamp(Path(launch["cwd"]))
             self.persist(p, state)
             return launch
 
@@ -1338,7 +1355,7 @@ class Studio:
                         atomic_json(target, raw)
                 state.pop("agent_active", None)
                 if active["step"] == "5":
-                    warning = self.edit_ended(p, state)
+                    warning = self.finish_assembly_session(p, state, active)
                 elif active["step"] == "6":
                     warning = self.design_ended(p, state)
                 else:
@@ -1375,6 +1392,17 @@ class Studio:
         # The agent already renders; ending a session only refreshes project state.
         result["finished"] = {"step": active["step"], "indices": active["indices"] or []} if active else None
         return result
+
+    @staticmethod
+    def finish_assembly_session(p, state, active):
+        """Keep a published edit intact when the interactive session did not change it."""
+        if edit := active.get("assembly_edit"):
+            before = active.get("assembly_workspace_before")
+            if (before and editing.stamp(p / editing.DELIVERY) == edit["delivered_before"]
+                    and editing.workspace_stamp(editing.folder(p, edit)) == before):
+                return None
+            state["assembly_edit"] = edit
+        return Studio.edit_ended(p, state)
 
     @staticmethod
     def edit_ended(p, state):
@@ -1425,6 +1453,8 @@ class Studio:
                 raise ValueError("Unknown assembly action.")
             if step == "5" and body.get("mode") != "three_by_four" and (self.effective(self.state(p)).get("step5", {}).get("assembly_method") == "agent") != (body.get("mode") == "agent"):
                 raise ValueError("Edit the video through the interactive Agent terminal." if body.get("mode") is None else "Choose Agent editing in Assembly first.")
+            if step == "5" and body.get("mode") == "agent" and not own:
+                raise ValueError("Start Auto production to run Agent editing in the background.")
             if step == "6":
                 if body.get("mode") not in {None, "cover_render", "agent"}:
                     raise ValueError("Unknown cover action.")

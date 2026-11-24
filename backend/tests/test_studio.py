@@ -464,13 +464,11 @@ class ProjectTests(unittest.TestCase):
         (self.p/'voice/voice_2.wav').unlink()
         with self.assertRaises(Conflict):self.studio.run_job(self.p.name,{'step':'5'})
     def test_assembly_uses_the_default_method_and_respects_a_saved_override(self):
-        from unittest.mock import patch
         (self.engine/'config.example.yaml').write_text('global:\n  opening_quote: false\nstep5: {}\n')
         with self.assertRaisesRegex(ValueError, 'interactive Agent terminal'):
             self.studio.run_job(self.p.name, {'step':'5'})
-        launch = {'assembly_edit': {'folder':'.studio/edits/test', 'skill':'content-led', 'source':'', 'delivered_before':None}}
-        with patch('context.prepare', return_value=launch):
-            self.assertEqual(self.spawn_job({'step':'5', 'mode':'agent'})['mode'], 'agent')
+        with self.assertRaisesRegex(ValueError, 'Start Auto production'):
+            self.studio.run_job(self.p.name, {'step':'5', 'mode':'agent'})
         state = self.studio.state(self.p)
         state['settings'] = {'step5': {'assembly_method':'standard'}}
         self.studio.persist(self.p, state)
@@ -672,14 +670,37 @@ class ProjectTests(unittest.TestCase):
         self.assertNotIn('summary_stale', after['state']); self.assertEqual(sorted(after['state']['stale']), ['4','5'])
     def test_settings_reach_the_engine_under_its_own_section_names(self):
         from server import engine_settings
-        self.assertEqual(engine_settings({'step2':{'split_mode':'agent'}, 'step4_summary':{'llm_server':'kimi'}, 'step1':{'writing_mode':'direct', 'agent_skill':'x'}}),
-                         {'step1_5':{'split_mode':'agent'}, 'step2':{'llm_server':'kimi'}, 'step1':{'agent_skill':'x'}})
-        (self.engine/'config.example.yaml').write_text('step1_5:\n  num_segments: 9\nstep2:\n  llm_server: kimi\n')
-        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'kimi'}, 'agents':{'default':'claude'}})
+        self.assertEqual(engine_settings({'step2':{'split_mode':'agent'}, 'step4_summary':{'llm_server':'mimo'}, 'step1':{'writing_mode':'direct', 'agent_skill':'x'}}),
+                         {'step1_5':{'split_mode':'agent'}, 'step2':{'llm_server':'mimo'}, 'step1':{'agent_skill':'x'}})
+        (self.engine/'config.example.yaml').write_text('step1_5:\n  num_segments: 9\nstep2:\n  llm_server: mimo\n')
+        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'mimo'}, 'agents':{'default':'claude'}})
     def test_motion_agent_requires_a_direction(self):
         (self.p/'text/mini_summary.json').unlink()
         with self.assertRaisesRegex(Conflict, 'content summary'):
             self.studio.prepare_agent(self.p.name, {'step':'4','indices':[1]})
+
+    def test_retired_language_providers_fall_back_to_defaults_without_outdating_work(self):
+        (self.engine / 'config.example.yaml').write_text(
+            'step2: {llm_server: deepseek, llm_model: deepseek-flash}\n'
+            'step4: {llm_server: deepseek, llm_model: deepseek-flash}\n'
+        )
+        state = self.studio.detail(self.p.name)['state']
+        state['settings'] = {
+            'step4_summary': {'llm_server': ' Kimi ', 'llm_model': 'old-summary-model'},
+            'step4': {'llm_server': 'openrouter', 'llm_model': 'old-image-prompt-model', 'image_size': '1280x720'},
+        }
+        state['reviewed'] = {'4': 'reviewed'}
+        state['stale'] = {}
+        atomic_json(self.p / '.studio/state.json', state)
+
+        detail = self.studio.detail(self.p.name)
+        self.assertEqual(detail['state']['settings']['step4'], {'image_size': '1280x720'})
+        for section in ('step4_summary', 'step4'):
+            self.assertEqual(self.studio.effective(detail['state'])[section]['llm_server'], 'deepseek')
+            self.assertEqual(self.studio.effective(detail['state'])[section]['llm_model'], 'deepseek-flash')
+        self.assertEqual(detail['state']['reviewed'], {'4': 'reviewed'})
+        self.assertEqual(detail['state']['stale'], {})
+        self.assertEqual(detail['summary']['summary'], '上下文')
     def test_completed_static_batch_keeps_motion_outdated(self):
         script = copy.deepcopy(SCRIPT)
         script['segments'].append({'index':3,'content':'Motion','visualizer':'hf'})
@@ -828,7 +849,7 @@ class ProjectTests(unittest.TestCase):
         try:
             conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
             body={'settings':{'step2':{'llm_server':'deepseek','llm_model':'deepseek-flash'},'step3':{'tts_model':'seed-tts-2.0-standard'},
-                              'step4':{'image_server':'google_adc','image_model':'gemini-3.1-flash-image','llm_server':'kimi','llm_model':'kimi-k2'},
+                              'step4':{'image_server':'google_adc','image_model':'gemini-3.1-flash-image','llm_server':'mimo','llm_model':'mimo-v2-flash'},
                               'step4_summary':{'llm_server':'deepseek','llm_model':'deepseek-flash'},'step6':{'cover_image_server':'doubao','cover_image_model':'seedream'}}}
             route='/api/projects/'+__import__('urllib.parse',fromlist=['quote']).quote(self.p.name)+'/settings'
             conn.request('POST',route,body=json.dumps(body),headers={'Authorization':'Bearer test-token','Content-Type':'application/json'})

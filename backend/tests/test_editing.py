@@ -86,7 +86,59 @@ print(json.dumps(report))
         self.assertIn(str(work),task['writable'])
         self.assertEqual(launch['cwd'], str(work))
         self.assertEqual(launch['agent'], 'claude')
+        self.assertNotIn('first_message', launch)
+        self.assertIn('只在用户要求时才开始剪辑', prompt)
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
+
+    def test_opening_and_closing_a_revision_keeps_the_published_edit(self):
+        self.prepare()
+        empty = self.studio.finish_agent(self.id, {})
+        self.assertIsNone(empty['warning'])
+        self.assertIsNone(empty['assembly_edit'])
+        self.assertNotIn('5', empty['state']['stale'])
+
+        self.prepare()
+        video = self.p / 'final_video.mp4'
+        ffmpeg('-f', 'lavfi', '-i', 'color=c=black:s=320x180:d=1', '-pix_fmt', 'yuv420p', video)
+        original = self.studio.finish_agent(self.id, {})['assembly_edit']
+        state = self.studio.state(self.p)
+        state['reviewed']['5'] = True
+        self.studio.persist(self.p, state)
+        stamp = editing.stamp(video)
+
+        for exit_session in ('close', 'restart'):
+            with self.subTest(exit_session=exit_session):
+                self.prepare(revise=True)
+                self.assertEqual(self.studio.detail(self.id)['assembly_edit'], original)
+                if exit_session == 'close':
+                    result = self.studio.finish_agent(self.id, {})
+                    self.assertIsNone(result['warning'])
+                else:
+                    state = self.studio.state(self.p)
+                    state['agent_active']['owner'] = 999999
+                    self.studio.persist(self.p, state)
+                    self.studio = Studio(ENGINE, self.studio.data, self.studio.workspace)
+                    result = self.studio.detail(self.id)
+                self.assertTrue(result['state']['reviewed']['5'])
+                self.assertNotIn('5', result['state']['stale'])
+                self.assertEqual(result['assembly_edit'], original)
+                self.assertEqual(editing.stamp(video), stamp)
+
+        _, work = self.prepare(revise=True)
+        (work / 'run.py').write_text('# draft changes\n', encoding='utf-8')
+        result = self.studio.finish_agent(self.id, {})
+        self.assertIn('without delivering', result['warning'])
+        self.assertEqual(result['assembly_edit']['folder'], str(work.relative_to(self.p)))
+        self.assertEqual(editing.stamp(video), stamp)
+
+    def test_agy_loads_the_assembly_template_as_a_workspace_agent(self):
+        self.settings(agent_cli='agy')
+        launch, work = self.prepare()
+        self.assertEqual(launch['agent'], 'agy')
+        self.assertNotIn('first_message', launch)
+        definition = work / '.agents/agents/grist-assembly.md'
+        self.assertIn(Path(launch['context']).read_text(encoding='utf-8'),
+                      definition.read_text(encoding='utf-8'))
 
     def test_the_agent_gets_the_bundled_sound_effects(self):
         launch,work=self.prepare();found=editing.read(work/'materials.json');sounds=found['sound_effects']['sounds']
@@ -149,6 +201,7 @@ print(json.dumps(report))
         self.settings(bgm_filename=names[0])
         launch,work=self.prepare();music=editing.read(work/'materials.json')['music']
         self.assertEqual([t['name'] for t in music['tracks']],[names[0]]);self.assertIn(f'只用「{names[0]}」',Path(launch['context']).read_text())
+        (work / 'run.py').write_text('# draft using the suggested music\n')
         self.studio.finish_agent(self.id,{})
         self.settings(agent_music_mix=True)
         self.assertFalse(self.studio.detail(self.id)['assembly_edit']['current'])
@@ -157,6 +210,7 @@ print(json.dumps(report))
 
     def test_delivering_the_video_finishes_assembly(self):
         _,work=self.prepare()
+        (work / 'run.py').write_text('# draft without a delivery\n')
         detail=self.studio.finish_agent(self.id,{})
         self.assertIn('without delivering',detail['warning']);self.assertIn('5',detail['state']['stale'])
         launch,work=self.prepare(revise=True)
@@ -177,7 +231,8 @@ print(json.dumps(report))
         restarted=Studio(ENGINE,self.studio.data,self.studio.workspace).state(self.p)
         self.assertNotIn('agent_active',restarted);self.assertNotIn('5',restarted['stale'])
         # Without a delivery, the step stays marked for review.
-        os.remove(self.p/'final_video.mp4');self.prepare(revise=True)
+        os.remove(self.p/'final_video.mp4');_,work=self.prepare(revise=True)
+        (work / 'run.py').write_text('# draft without a delivery\n')
         state=self.studio.state(self.p);state['agent_active']['owner']=999999;self.studio.persist(self.p,state)
         self.assertIn('5',Studio(ENGINE,self.studio.data,self.studio.workspace).state(self.p)['stale'])
 

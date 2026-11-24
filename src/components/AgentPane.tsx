@@ -139,6 +139,7 @@ export default function AgentPane({
       rows: terminal.current?.rows || 24,
     })
       .then(() => {
+        if (session.current?.id !== launch.id) return;
         setRunning(true);
         terminal.current?.focus();
       })
@@ -200,7 +201,7 @@ export default function AgentPane({
             <p>
               {t(
                 step === "5"
-                  ? "Agent starts editing the whole video, opening included, as soon as it opens. Guide it here at any time."
+                  ? "Activate Agent, then type what you want to review or change."
                   : step === "6"
                   ? "Your cover copy, sizes and style are prepared. Direct Agent to design covers in HTML and Three.js here."
                   : step === "1" && noWritingSkill

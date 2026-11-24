@@ -132,7 +132,6 @@ const folderName = (path?: string) => pathParts(path).at(-1) || path || "";
 // The folders above the last one, for a compact "…/a / b" hint under a name.
 const folderTail = (path: string | undefined, above: number) =>
   pathParts(path).slice(-(above + 1), -1).join(" / ");
-const parentFolder = (path: string) => path.replace(/[\\/][^\\/]*[\\/]?$/, "") || path;
 // Where a new project folder will be created; mirrors the service's name cleanup.
 const projectDestination = (location: string, name: string) => {
   const base = location.trim().replace(/[\\/]+$/, "");
@@ -694,7 +693,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     });
   }
   async function activate() {
-    await activateFor(step === "4" ? [selected] : undefined);
+    await activateFor(step === "4" ? [selected] : undefined, undefined,
+      step === "5" && Boolean(detail?.assembly_edit));
   }
   const finished = useCallback(() => {
     const id = projectRef.current;
@@ -734,7 +734,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       if (unsaved) throw new Error(t("Save changes before generating."));
       if (step === "1" || (step === "6" && coverAgent) || (step === "5" && assemblyAgent)) {
         setModal(null);
-        await activate();
+        await activateFor();
         return;
       }
       let indices =
@@ -1261,9 +1261,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
             </option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
-                {(p.linked
-                  ? `${p.source_name} · ${folderName(parentFolder(p.path))}`
-                  : p.source_name) + (p.problem ? ` · ${t(p.problem)}` : "")}
+                {folderName(p.path)}{p.problem ? ` · ${t(p.problem)}` : ""}
               </option>
             ))}
           </select>
@@ -1491,7 +1489,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                         return;
                       }
                       if ((step === "6" && coverAgent) || (step === "5" && assemblyAgent)) {
-                        activate();
+                        activateFor();
                         return;
                       }
                       // Outdated segments are the usual next work when there are some.

@@ -8,7 +8,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from local_agents import selected
+from local_agents import prepare_assembly_agent, selected
 
 
 def prepare(studio, project, body):
@@ -17,6 +17,7 @@ def prepare(studio, project, body):
         raise ValueError("Interactive agents are available for Writing, Visuals, Assembly and Covers.")
     state = studio.state(project)
     settings = studio.effective(state)
+    agent = selected(settings, step)
     session = str(uuid.uuid4())
     context_dir = project / ".studio/agent" / session
     sys.path.insert(0, str(studio.engine)) if str(studio.engine) not in sys.path else None
@@ -49,8 +50,9 @@ def prepare(studio, project, body):
         if settings.get("step5", {}).get("assembly_method", "standard") != "agent":
             raise ValueError("Choose Agent editing in Assembly first.")
         revise = body.get("revise", False)
-        assembly_edit, work, prompt = editing.prepare(studio, project, settings, session, revise=revise,
-                                                    resume=bool(revise and body.get("headless")))
+        assembly_edit, work, prompt = editing.prepare(
+            studio, project, settings, session, revise=revise, automatic=bool(body.get("headless")),
+        )
         scope = "Assembly · edit and render"
         task = dict(inputs=[work/'materials.json'], writable=[work, project/'final_video.mp4', project/'final_video.srt'],
             protected=[project/'text', project/'voice', project/'images', work/'materials.json', work/editing.TIMING, studio.engine, studio.library_root],
@@ -142,16 +144,19 @@ def prepare(studio, project, body):
             facts={'selected_segments': [s['index'] for s in chosen], 'fps': fps})
 
     task_path = write_task_context(context_dir / 'task.json', stage=step, cwd=cwd, **task)
+    if step == "5" and not body.get("headless"):
+        prompt = "这是交互式剪辑会话。根据用户在对话中提出的请求行动。只在用户要求时才开始剪辑、修改文件或渲染。\n\n" + prompt
     prompt = part("agent_rules.md", "rules", task_file=task_path) + "\n\n" + prompt
     prompt_path = context_dir / "context.md"
     prompt_path.write_text(prompt, encoding="utf-8")
     launch = {"id": session, "project": studio.project_id(project), "step": step,
-              "agent": selected(settings, step), "cwd": str(cwd), "context": str(prompt_path),
+              "agent": agent, "cwd": str(cwd), "context": str(prompt_path),
               "task": str(task_path), "context_chars": len(prompt), "scope": scope}
-    if step == "5" and not body.get("headless") and not body.get("revise"):
-        launch["first_message"] = "Begin editing the video following the task brief."
     if step == "5":
         launch["assembly_edit"] = assembly_edit
+        launch["project_dir"] = str(project.resolve())
+        if agent == "agy":
+            prepare_assembly_agent(cwd, prompt)
     if step == "6":
         launch["cover_design"] = launch_design
     # Keep the prompt in a file for history; no API credentials are written here.

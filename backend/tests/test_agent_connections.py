@@ -29,6 +29,19 @@ class AgentConnectionTests(unittest.TestCase):
         claude = {"agent": "claude", "context": context}
         self.assertEqual(arguments(claude), ["--append-system-prompt-file", context])
 
+    def test_interactive_assembly_never_sends_a_first_message(self):
+        project = Path(tempfile.gettempdir()).resolve() / "a project with spaces"
+        cwd = project / "edit"
+        context = str(cwd / "context.md")
+        launch = {"step": "5", "context": context, "cwd": str(cwd), "project_dir": str(project),
+                  "first_message": "legacy kickoff"}
+        self.assertEqual(arguments({**launch, "agent": "claude"}), ["--append-system-prompt-file", context])
+        self.assertEqual(arguments({**launch, "agent": "agy"}), ["--agent", "grist-assembly", "--add-dir", str(project)])
+        automatic = arguments({**launch, "agent": "agy"}, prompt="Start editing", max_turns=10)
+        self.assertEqual(automatic[:5], ["--agent", "grist-assembly", "--add-dir", str(project), "--settings"])
+        self.assertEqual(json.loads(automatic[5])["trustedWorkspaces"], [str(cwd), str(project)])
+        self.assertEqual(automatic[6:], ["--print", "Start editing", "--output-format", "json"])
+
     def test_auth_reports_signed_out_and_missing_installation_separately(self):
         version = subprocess.CompletedProcess([], 0, stdout="2.0\n", stderr="")
         signed_out = subprocess.CompletedProcess([], 1, stdout='{"loggedIn": false}', stderr="")

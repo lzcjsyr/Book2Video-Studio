@@ -34,7 +34,7 @@ step1_5:
 # 步骤2：描述小结
 # =============================================================================
 step2:
-  # 可选：mimo / kimi / deepseek / siliconflow / openrouter / volcengine
+  # 可选：mimo / deepseek / siliconflow / volcengine
   llm_server: deepseek
   llm_model: deepseek-flash
   # 小结生成随机性，范围通常为 0-1。越大越发散。

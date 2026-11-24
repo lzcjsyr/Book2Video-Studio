@@ -38,6 +38,23 @@ def stamp(path):
     return f'{path.stat().st_size}:{path.stat().st_mtime_ns}' if path.is_file() else None
 
 
+def workspace_stamp(work):
+    """Detect edits to the copied workspace without reading large render files."""
+    entries = []
+    for root, directories, files in os.walk(work):
+        root = Path(root)
+        if root == work:
+            directories[:] = [name for name in directories if name not in {'vendor', '.agents'}]
+        for name in files:
+            path = root / name
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                continue
+            entries.append((path.relative_to(work).as_posix(), info.st_size, info.st_mtime_ns))
+    return hashlib.sha256(json.dumps(sorted(entries)).encode()).hexdigest()
+
+
 def signature(value):
     # The bundled sound effects belong to the app, not the project, and a recording's timing changes only with the
     # recording, whose stamp is already here: neither may make an edit look stale on its own.
@@ -142,7 +159,7 @@ def sound_effects(folder):
     return {'about': found.get('about', ''), 'usage': found.get('usage', ''), 'sounds': sounds}
 
 
-def template_values(found, skill, work, delivery, revise, resume=False):
+def template_values(found, skill, work, delivery, revise, automatic=False):
     """What the step 5 template's variables say for this session."""
     music = found['music']
     if music['suggested'] and music['mix']:
@@ -156,9 +173,11 @@ def template_values(found, skill, work, delivery, revise, resume=False):
     opening = ("先放开场：金句、书名、背景图和录音都在素材清单的 opening 里，开场画面由你设计" if found['opening']
                else "不放开场，视频从正文开始")
     session = ("修改上一次的合成。工作目录里是上一次的文件和成片；按用户在对话里提出的要求修改，动手前先看相关文件" if revise
-               else "新的合成，独立完成到交付")
-    if resume:
+               else "新的合成，按对话中的任务要求开展剪辑")
+    if automatic and revise:
         session = "继续上一次未完成的自动合成。先检查已保存的片段、字幕、音频和日志，复用已验证的产物，只补缺失或失败部分，独立完成到交付，不等待用户确认"
+    elif automatic:
+        session = "新的自动合成，独立完成到交付"
     return {'style': skill['id'], 'skill_path': skill['path'], 'materials': str(work / 'materials.json'),
             'video_size': f"{found['video']['width']}×{found['video']['height']}",
             'narration_speed': f"{found['narration_speed']:.2f}×（相对原录音）",
@@ -166,23 +185,15 @@ def template_values(found, skill, work, delivery, revise, resume=False):
             'session': session, 'work_dir': str(work), 'delivery': str(delivery)}
 
 
-def prepare(studio, project, settings, session, revise=False, resume=False):
+def prepare(studio, project, settings, session, revise=False, automatic=False):
     found = materials(studio, project, settings)
     style = settings.get('step5', {}).get('agent_skill', 'content-led')
     skill = studio.library.item('assembly_skills', style)
     work = project / ROOT / session
     previous = studio.state(project).get('assembly_edit')
     if revise and previous and folder(project, previous).is_dir():
-        # A revision continues in a copy of the last session's folder. Pages and notes are copied, so editing
-        # them leaves the earlier session as it was; large renders are hard-linked to keep the copy cheap.
-        def link(source, target):
-            if os.path.getsize(source) < 1_000_000:
-                return shutil.copy2(source, target)
-            try:
-                os.link(source, target)
-            except OSError:
-                shutil.copy2(source, target)
-        shutil.copytree(folder(project, previous), work, copy_function=link)
+        # A revision can modify any of its files, including cached renders.
+        shutil.copytree(folder(project, previous), work)
     work.mkdir(parents=True, exist_ok=True)
     write(work / 'materials.json', split_timing(found, work))
     from core.infra.motion.runtime import prepare_assets
@@ -193,7 +204,7 @@ def prepare(studio, project, settings, session, revise=False, resume=False):
     edit = {'folder': str(work.relative_to(project)), 'source': signature(found), 'skill': style,
             'delivered_before': stamp(delivery)}
     prompt = studio.library.prompt('step5_editing_agent.md', engine_path=repr(str(studio.engine)),
-                                  **template_values(found, skill, work, delivery, revise, resume))
+                                  **template_values(found, skill, work, delivery, revise, automatic))
     return edit, work, prompt
 
 

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adcModels, distinctGaps, imageModelFits, imageModelFor, keyNeeds, unmet } from "../src/keys.ts";
+import { adcModels, distinctGaps, imageModelFits, imageModelFor, keyNeeds, keyProviders, languageModelChoices, unmet } from "../src/keys.ts";
 
 const settings = {
   step1: { llm_server: "deepseek" },
-  step2: { split_mode: "auto", llm_server: "kimi" },
+  step2: { split_mode: "auto", llm_server: "mimo" },
   step4_summary: { llm_server: "deepseek" },
   step4: { llm_server: "volcengine", image_server: "doubao" },
   step6: { cover_image_server: "google_adc" },
@@ -20,8 +20,13 @@ test("each step needs the key of the provider chosen in its settings", () => {
   });
 });
 test("old intelligent segmentation settings need no key", () => {
-  const agent = { ...settings, step2: { split_mode: "agent", llm_server: "kimi" } };
+  const agent = { ...settings, step2: { split_mode: "agent", llm_server: "mimo" } };
   assert.deepEqual(keyNeeds(agent), keyNeeds(settings));
+});
+test("API key fields and text provider menus only list supported language services", () => {
+  assert.deepEqual(languageModelChoices.map((provider) => provider.id), ["deepseek", "mimo", "siliconflow", "volcengine"]);
+  assert.deepEqual(keyProviders.filter((provider) => provider.group === "text").map((provider) => provider.key),
+    ["DEEPSEEK_API_KEY", "MIMO_API_KEY", "SILICONFLOW_KEY"]);
 });
 test("local VoxCPM2 does not require a cloud TTS key", () => {
   assert.equal(keyNeeds({ ...settings, step3: { tts_provider: "voxcpm2" } }).some((n) => n.id === "voice"), false);

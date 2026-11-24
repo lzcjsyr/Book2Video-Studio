@@ -401,9 +401,7 @@ def get_generation_params(config_path: Optional[str | os.PathLike[str]] = None) 
 class Config:
     """系统配置类：用户参数由模块常量注入，密钥与校验逻辑定义在类上。"""
 
-    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
     MIMO_API_KEY = os.getenv("MIMO_API_KEY")
-    KIMI_API_KEY = os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY")
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
     VOLCENGINE_API_KEY = os.getenv("VOLCENGINE_API_KEY") or os.getenv("SEEDREAM_API_KEY")
     SILICONFLOW_KEY = os.getenv("SILICONFLOW_KEY")
@@ -417,12 +415,11 @@ class Config:
     DEFAULT_VOICE = VOICE
     DEFAULT_OUTPUT_DIR = "output"
 
-    SUPPORTED_LLM_SERVERS = ["openrouter", "siliconflow", "mimo", "kimi", "deepseek", "volcengine"]
+    SUPPORTED_LLM_SERVERS = ["siliconflow", "mimo", "deepseek", "volcengine"]
     SUPPORTED_IMAGE_SERVERS = ["doubao", "google", "google_adc"]
     SUPPORTED_TTS_SERVERS = ["bytedance"]
     RECOMMENDED_MODELS = {
         "llm": {
-            "openrouter": [LLM_MODEL_STEP2],
             "siliconflow": [LLM_MODEL_STEP2],
         },
         "image": {
@@ -526,9 +523,7 @@ class Config:
     # 统一管理 OpenAI SDK 格式的 Base URL 映射
     LLM_SERVER_URLS = {
         "siliconflow": "https://api.siliconflow.cn/v1",
-        "openrouter": "https://openrouter.ai/api/v1",
         "mimo": "https://api.xiaomimimo.com/v1",
-        "kimi": "https://api.moonshot.cn/v1",
         "volcengine": "https://ark.cn-beijing.volces.com/api/v3",
         "deepseek": "https://api.deepseek.com/v1",
     }

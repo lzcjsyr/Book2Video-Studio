@@ -31,7 +31,7 @@ The packaged app needs nothing installed on the computer. It ships:
 
 **System check** (bottom of the sidebar) lists every bundled component. You only need your own API keys, in **Settings → API keys**, grouped by what they do:
 
-- **Language models** (DeepSeek, Kimi, MiMo, OpenRouter, SiliconFlow, Volcengine): content summary and image prompt refinement.
+- **Language models** (DeepSeek, MiMo, SiliconFlow, Volcengine): content summary and image prompt refinement.
 - **Image generation** (Volcengine Seedream, Google): segment images, the opening background and covers. Google ADC uses your Google Cloud login instead of a key; **Check connection** in Settings → API keys confirms the login, project and models, and shows when it last passed.
 - **Voice** (ByteDance TTS): narration. The default voice works out of the box; enter your own **Voice ID** in Settings (a cloned voice `S_…` works too, and the matching TTS resource is chosen automatically). **Opening masthead** in Settings sets the channel name shown on the opening; it is empty by default.
 
@@ -133,7 +133,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 侧边栏底部的 **系统检查** 会列出所有内置组件。你只需要在 **设置 → API 密钥** 中准备自己的密钥，它们按用途分组：
 
-- **语言模型**（DeepSeek、Kimi、MiMo、OpenRouter、SiliconFlow、火山引擎）：用于内容小结与图片提示词优化。
+- **语言模型**（DeepSeek、MiMo、SiliconFlow、火山引擎）：用于内容小结与图片提示词优化。
 - **图像生成**（火山引擎 Seedream、Google）：分段图片、开场背景和封面。Google ADC 使用你的 Google Cloud 登录，无需密钥；在 设置 → API 密钥 中点击 **检查连接** 可确认登录、项目和模型，并显示上次检查时间。
 - **配音**（字节跳动 TTS）：旁白配音。默认音色可直接使用；也可在设置中填写自己的 **音色 ID**（支持 `S_…` 复刻音色，会自动匹配对应的 TTS 资源）。设置中的 **开场刊头** 用于开场显示的频道名，默认留空。
 
@@ -212,9 +212,13 @@ HTML cover designs live in `.studio/cover-designs/<session>/`, with `studio-payl
 
 Choose **Standard assembly** or **Agent editing** on the Assembly page. New projects default to Agent editing with **Free design**. The editing session uses the local Agent selected for Assembly.
 
+**Activate Agent** opens an interactive session with the editing template loaded as system instructions. Confirm folder trust if the CLI asks, then type the first message yourself. When an edit exists, this opens a revision of it. **New video edit** opens a fresh session. **Start auto production** runs Agent editing in the background with folder trust and the first task handled for that run.
+
 In Agent mode the agent is the editor. **New video edit** gives it the materials earlier steps made, listed in `.studio/edits/<session>/materials.json`: each segment's picture or clip, narration text and recording, the opening's quote, source name, background and recording, and the music it may use. It also gets your choices on the page: export size, narration speed, subtitles on or off, suggested music and whether it may mix tracks, and a style direction (**Free design**, which leaves the style entirely to the agent based on the content, or **Editorial explainer**, **Cinematic essay** or **Kinetic social**; all editable in the library). Structure, pacing, motion, caption design, transitions, the opening and the sound are its decisions. The editable step 5 template states the execution contract and shared drawing API. The agent writes one project-local `run.py` for capability checks, GPU rendering, snapshots, retries and composition; the app provides materials and local animation assets without generating or replacing that script. The agent delivers `final_video.mp4` (and an optional `.srt`) to the project; the previous video is kept in revision history first. **Revise last edit** continues in a copy of the last session's folder. Grist still draws the optional 3:4 copy around the delivered video.
 
 ### 步骤 5：Agent 剪辑
+
+点击“启动 Agent”会打开交互会话。模板作为系统指令加载。终端如提示信任文件夹，由你确认，第一条消息也由你输入。有已有剪辑时，“启动 Agent”会从该剪辑继续，“新建视频剪辑”用于另开一版。点击“开始自动制作”后，应用才会在后台处理文件夹信任并启动剪辑任务。
 
 “合成”页面可选择标准合成或 Agent 剪辑，新项目默认使用 Agent 剪辑和“自由设计”。剪辑使用项目为合成选定的本机 CLI。Agent 模式下由智能体担任剪辑师：万物成片提供前面步骤的素材（每段画面、正文和录音，开场的金句、书名、背景和录音，可用音乐）和你在页面上的选择（尺寸、语速、字幕、配乐、风格方向；“自由设计”不预设风格，由智能体按内容决定）。第五步 Agent 模板集中保存简短的执行约定与共享绘制接口；智能体据此在项目中编写唯一入口 `run.py`，负责能力检测、GPU 渲染、截图、批量重试和合成。应用提供素材清单与本地动画库，保留修订副本中已有的脚本供智能体续用。结构、节奏、画面运动、字幕样式、转场、开场和声音都由智能体决定，最后把成片交付到项目的 `final_video.mp4`；旧成片会先保存在修订历史中。3:4 副本仍由万物成片围绕交付的视频生成。
 

@@ -323,11 +323,14 @@ class AutoRunTests(unittest.TestCase):
         for cover in self.p.glob('cover_*'): cover.unlink()
         state = self.studio.state(self.p); state['stale'].pop('6', None); self.studio.persist(self.p, state)
 
-    def test_a_background_edit_has_no_terminal_kickoff_or_terminal_permissions(self):
+    def test_a_background_edit_is_only_started_by_auto_production(self):
         self.produce()
         self.settings({'step5': {'assembly_method': 'agent', 'video_size': '320x180'}})
-        job = self.studio.run_job(self.id, {'step': '5', 'mode': 'agent'})
-        self.wait()
+        with self.assertRaisesRegex(ValueError, 'Start Auto production'):
+            self.studio.run_job(self.id, {'step': '5', 'mode': 'agent'})
+        run = self.run_to_end(scope='all', covers=False)
+        self.assertEqual(run['status'], 'succeeded', run)
+        job = next(j for j in self.studio.jobs.values() if j['step'] == '5' and j.get('mode') == 'agent')
         launch = self.studio.jobs[job['id']]['result']['launch']
         self.assertNotIn('first_message', launch)
         self.assertEqual(launch['agent'], 'claude')
@@ -346,7 +349,7 @@ class AutoRunTests(unittest.TestCase):
                           f'pathlib.Path({str(project)!r}, "final_video.mp4").write_bytes(b"delivered")\n'
                           'print(json.dumps({"is_error": False, "result": "done"}))\n')
         claude.chmod(0o755)
-        launch = {'cwd': str(project), 'context': str(project / '.studio/agent/one/context.md'), 'agent': 'claude',
+        launch = {'step': '5', 'cwd': str(project), 'context': str(project / '.studio/agent/one/context.md'), 'agent': 'claude',
                   'assembly_edit': {'folder': '.studio/edits/one', 'delivered_before': None}}
         with patch.object(headless, 'discover', return_value=(str(claude), {})):
             result = headless.run_session({'step': '5', 'project': str(project), 'launch': launch})
@@ -354,7 +357,8 @@ class AutoRunTests(unittest.TestCase):
         argv = json.loads((project / 'argv.json').read_text())
         self.assertEqual(argv[:2], ['--print', headless.first_message()])
         self.assertEqual(argv[2:6], ['--append-system-prompt-file', launch['context'], '--output-format', 'json'])
-        self.assertNotIn('--permission-mode', argv)
+        self.assertEqual(argv[argv.index('--permission-mode') + 1], 'acceptEdits')
+        self.assertIn('Bash(python *)', argv[argv.index('--allowedTools') + 1])
         (project / 'final_video.mp4').unlink()
         claude.write_text(f'#!{sys.executable}\nprint("{{\\"is_error\\": false}}")\n')
         with patch.object(headless, 'discover', return_value=(str(claude), {})), self.assertRaisesRegex(ValueError, 'without delivering'):

@@ -13,6 +13,7 @@ NAMES = {"claude": "Claude Code", "agy": "AGY"}
 LOCAL_ENV = os.environ.copy()
 LOCAL_ENV.pop("CLAUDECODE", None)
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+ASSEMBLY_AGENT = "grist-assembly"
 
 
 def selected(settings, step):
@@ -50,20 +51,46 @@ def discover(agent):
     return program, env
 
 
+def prepare_assembly_agent(cwd, context):
+    """AGY loads the Markdown body of a workspace agent as its system prompt."""
+    definition = cwd / ".agents" / "agents" / f"{ASSEMBLY_AGENT}.md"
+    definition.parent.mkdir(parents=True, exist_ok=True)
+    definition.write_text(
+        f"---\nname: {ASSEMBLY_AGENT}\ndescription: Video assembly in Grist\n"
+        "subagent: false\ntools:\n"
+        "  - view_file\n  - list_dir\n  - grep_search\n  - write_to_file\n"
+        "  - replace_file_content\n  - run_command\n  - command_status\n---\n\n"
+        f"# Grist assembly\n\n{context}\n", encoding="utf-8",
+    )
+
+
 def arguments(launch, *, prompt=None, max_turns=None):
     agent = launch["agent"]
     context = Path(launch["context"])
-    task = f"Read the task brief at {context} before working on this task."
+    assembly = launch.get("step") == "5"
+    project_dir = launch.get("project_dir")
+    project_args = ["--add-dir", project_dir] if project_dir else []
     if agent == "agy":
+        if assembly:
+            args = ["--agent", ASSEMBLY_AGENT, *project_args]
+            if prompt is None:
+                return args
+            workspaces = [str(Path(launch["cwd"]).resolve()), *([project_dir] if project_dir else [])]
+            settings = {"trustedWorkspaces": workspaces, "toolPermission": "always-proceed"}
+            return [*args, "--settings", json.dumps(settings), "--print", prompt, "--output-format", "json"]
+        task = f"Read the task brief at {context} before working on this task."
         if prompt is None:
-            return ["--prompt-interactive", task + (
-                "\n" + launch["first_message"] if launch.get("first_message") else "\nThen wait for my instructions."
-            )]
+            return ["--prompt-interactive", task + "\nThen wait for my instructions."]
         return ["--print", f"{task}\n\n{prompt}", "--output-format", "json"]
     args = ["--append-system-prompt-file", str(context)]
     if prompt is None:
-        return [*args, *([launch["first_message"]] if launch.get("first_message") else [])]
-    return ["--print", prompt, *args, "--output-format", "json", "--max-turns", str(max_turns)]
+        return args
+    args = ["--print", prompt, *args, "--output-format", "json", "--max-turns", str(max_turns)]
+    if assembly:
+        # Print mode has no trust dialog. Approve the tools required by the render contract for this run.
+        args.extend(["--permission-mode", "acceptEdits", "--allowedTools",
+                     "Bash(python *),Bash(python3 *),Bash(ffmpeg *),Bash(ffprobe *)", *project_args])
+    return args
 
 
 def check(agent):

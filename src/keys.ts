@@ -11,9 +11,7 @@ export interface KeyProvider {
 }
 export const keyProviders: KeyProvider[] = [
   { key: "DEEPSEEK_API_KEY", name: "DeepSeek", group: "text" },
-  { key: "KIMI_API_KEY", name: "Kimi / Moonshot", group: "text" },
   { key: "MIMO_API_KEY", name: "Xiaomi MiMo", group: "text" },
-  { key: "OPENROUTER_API_KEY", name: "OpenRouter", group: "text" },
   { key: "SILICONFLOW_KEY", name: "SiliconFlow", group: "text" },
   { key: "VOLCENGINE_API_KEY", name: "Volcengine / Doubao", group: "image", alsoText: true },
   { key: "GOOGLE_CLOUD_API_KEY", name: "Google", group: "image" },
@@ -24,9 +22,7 @@ export const keyProviders: KeyProvider[] = [
 // local Google Cloud login instead of a key.
 const languageModels: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
-  kimi: "KIMI_API_KEY",
   mimo: "MIMO_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
   siliconflow: "SILICONFLOW_KEY",
   volcengine: "VOLCENGINE_API_KEY",
 };

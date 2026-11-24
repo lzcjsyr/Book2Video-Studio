@@ -49,7 +49,7 @@ export default function AssemblyEditing({ settings, edit, library, active, locke
       </div>
       {children}
       <div className="editing-session">
-        {active ? <div className="agent-banner"><span>{t("Agent is making the video in the right pane.")}</span>
+        {active ? <div className="agent-banner"><span>{t("Give Agent your instructions in the right pane.")}</span>
           <button className="button small primary" onClick={onFinish}><Check size={13} />{t("Finish session")}</button></div>
           : <div className="cover-design-buttons">
             <button className="button small" disabled={locked || !edit} onClick={() => onDesign(true)}>{t("Revise last edit")}</button>
