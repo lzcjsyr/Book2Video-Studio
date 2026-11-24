@@ -15,4 +15,3 @@ volcengine-python-sdk[ark]>=1.0.94
 google-genai>=1.0.0
 json-repair>=0.26.0
 jieba-py>=0.46.12,<0.47
-claude-agent-sdk>=0.2.93

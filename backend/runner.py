@@ -113,7 +113,7 @@ def run(request):
         from visual_generation import run as generate_visuals
         return generate_visuals(request, params, steps, call)
     if request.get("mode") == "agent":
-        # Assembly or Covers by Claude Code without a terminal, prepared by the service (automatic production).
+        # Assembly or Covers by Agent without a terminal, prepared by the service (automatic production).
         from headless import run_session
         return run_session(request)
     if step == "4" and request.get("mode") == "render":
@@ -127,7 +127,7 @@ def run(request):
             # The motion clip to render: Studio names its folder (images/takes/segment_N/motion-…).
             work = folders.get(idx)
             if not work or not (work / "index.html").exists() or not (work / "studio-payload.json").exists():
-                raise ValueError(f"Segment {idx} has no saved composition. Activate Claude Code first.")
+                raise ValueError(f"Segment {idx} has no saved composition. Activate the Agent first.")
             payload = json.loads((work / "studio-payload.json").read_text())
             from server import duration
             segment = next(s for s in script["segments"] if s["index"] == idx)
@@ -217,9 +217,12 @@ def run(request):
 
 
 if __name__ == "__main__":
+    # Import the Agent runner before overlaying production keys on this worker.
     from headless import install_signal_handlers
     install_signal_handlers()
     try:
+        if not sys.stdin.isatty() and (credentials := sys.stdin.readline()):
+            os.environ.update(json.loads(credentials))
         result = run(json.loads(sys.argv[1]))
         print("STUDIO_RESULT:" + json.dumps(result, ensure_ascii=False, default=str), flush=True)
         sys.exit(0 if result.get("success") else 1)

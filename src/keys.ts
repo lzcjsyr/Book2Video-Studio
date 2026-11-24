@@ -59,45 +59,32 @@ export const imageModelFor = (server: string, model: string) =>
   imageModelFits(server, model) ? model : imageServiceChoices.find((c) => c.id === server)!.model;
 export const providerName = (key: string) => keyProviders.find((p) => p.key === key)?.name || key;
 
-export type NeedId = "writing" | "segments" | "voice" | "direction" | "motion_agent" | "images" | "covers" | "assembly_agent";
+export type NeedId = "voice" | "direction" | "images" | "covers";
 export interface KeyNeed {
   id: NeedId;
   use: string;
   provider: string;
-  // null: no key needed (Google ADC, a Claude subscription). undefined: the setting names an unsupported provider.
+  // null: no key needed (Google ADC). undefined: the setting names an unsupported provider.
   key: string | null | undefined;
   // What signs in instead of a key.
   login?: string;
 }
 const googleLogin = "Google Cloud login (no key)";
-const claudeLogin = "Your Claude Code login (no key)";
-
-/** Every key the whole production needs with these (effective) project settings.
- * Static images are written from a template and need no language model; only motion segments use the step 4 agent.
- * With `subscription`, the writing and motion agents run in the user's installed Claude Code on their own login. */
-export function keyNeeds(settings: Settings, { motion = false, subscription = false } = {}): KeyNeed[] {
+/** Provider keys for production services. Local agents use their own credentials. */
+export function keyNeeds(settings: Settings): KeyNeed[] {
   const value = (section: string, key: string) => String(settings[section]?.[key] ?? "").trim().toLowerCase();
   const model = (id: NeedId, use: string, section: string): KeyNeed => {
     const provider = value(section, "llm_server");
     return { id, use, provider, key: languageModels[provider] };
   };
-  const agent = (id: NeedId, use: string, section: string): KeyNeed =>
-    subscription ? { id, use, provider: "claude_code", key: null, login: claudeLogin } : model(id, use, section);
   const image = (id: NeedId, use: string, provider: string): KeyNeed =>
     ({ id, use, provider, key: imageServices[provider], ...(imageServices[provider] === null && { login: googleLogin }) });
   const imageServer = value("step4", "image_server");
   return [
-    agent("writing", "Writing agent", "step1"),
-    // Segmentation only calls a model when its split mode is "agent".
-    ...(value("step2", "split_mode") === "agent" ? [model("segments", "Agent segmentation", "step2")] : []),
     ...(value("step3", "tts_provider") === "voxcpm2" ? [] : [{ id: "voice" as const, use: "Voice", provider: "bytedance", key: "BYTEDANCE_TTS_API_KEY" }]),
     model("direction", "Content summary", "step4_summary"),
-    ...(motion ? [agent("motion_agent", "Motion agent (Claude Code)", "step4")] : []),
-    ...(value("step5", "assembly_method") === "agent" ? [agent("assembly_agent", "Assembly agent (Claude Code)", "step1")] : []),
     image("images", "Segment and opening images", imageServer),
-    value("step6", "cover_method") === "agent"
-      ? agent("covers", "Cover agent (Claude Code)", "step1")
-      : image("covers", "Covers", value("step6", "cover_image_server") || imageServer),
+    ...(value("step6", "cover_method") === "agent" ? [] : [image("covers", "Covers", value("step6", "cover_image_server") || imageServer)]),
   ];
 }
 

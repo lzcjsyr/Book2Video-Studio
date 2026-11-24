@@ -20,14 +20,14 @@ class HeadlessTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.cli = self.root / 'claude'
-        self.launch = {'cwd': str(self.root), 'args': []}
+        self.launch = {'cwd': str(self.root), 'agent': 'claude', 'context': str(self.root / 'context.md')}
 
     def script(self, code):
         self.cli.write_text(f'#!{sys.executable}\n' + code)
         self.cli.chmod(0o755)
 
     def run_session(self, prompt='test', timeout=5, logs=None):
-        return headless.run_claude(str(self.cli), os.environ.copy(), self.launch, prompt, 10, timeout, logs or self.root)
+        return headless.run_agent(str(self.cli), os.environ.copy(), self.launch, prompt, 10, timeout, logs or self.root)
 
     def test_stdin_is_closed_so_unattended_sessions_do_not_wait_for_input(self):
         self.script('import json,sys\nassert sys.stdin.read()==""\nprint(json.dumps({"is_error":False,"result":"done"}))\n')
@@ -50,7 +50,7 @@ class HeadlessTests(unittest.TestCase):
         self.script(f'import subprocess,sys,time\nsubprocess.Popen([sys.executable,"-c",{child!r}])\ntime.sleep(60)\n')
         code = (f'import sys\nsys.path.insert(0,{str(Path(headless.__file__).parent)!r})\n'
                 'import headless,os\nheadless.install_signal_handlers()\n'
-                f'headless.run_claude({str(self.cli)!r},os.environ.copy(),{self.launch!r},"test",10,60,__import__("pathlib").Path({str(self.root)!r}))\n')
+                f'headless.run_agent({str(self.cli)!r},os.environ.copy(),{self.launch!r},"test",10,60,__import__("pathlib").Path({str(self.root)!r}))\n')
         runner = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             deadline = time.monotonic() + 5

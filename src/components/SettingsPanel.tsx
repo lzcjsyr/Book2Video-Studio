@@ -1,7 +1,7 @@
 import { useI18n } from "../i18n";
 import { useEffect, useId, useRef, useState } from "react";
 import { X } from "lucide-react";
-import type { Bootstrap, ClaudeCodeMode, Detail, Settings, LibraryChoice } from "../types";
+import type { Bootstrap, Detail, Settings, LibraryChoice } from "../types";
 import ApiKeysPanel, { type KeyStatus } from "./ApiKeysPanel";
 import LibraryPanel from "./LibraryPanel";
 import { libraryChoices, librarySettings } from "../library";
@@ -9,7 +9,8 @@ import { imageModelChoices, imageModelFits, imageModelFor, imageServiceChoices, 
 import ModelSelect from "./ModelSelect";
 import VoicePicker from "./VoicePicker";
 import { VoiceSource } from "./VoiceSource";
-import AgentConnection from "./AgentConnection";
+import LocalAgentsPanel from "./LocalAgentsPanel";
+import { agentNames } from "../agents";
 
 export default function SettingsPanel({
   detail,
@@ -19,8 +20,6 @@ export default function SettingsPanel({
   onLibraryChanged,
   onKeyStatus,
   initialTab,
-  claudeMode,
-  onClaudeMode,
   onDirtyChange,
   onVoiceReference,
 }: {
@@ -30,9 +29,7 @@ export default function SettingsPanel({
   onClose: () => void;
   onLibraryChanged: () => Promise<void>;
   onKeyStatus?: (status: KeyStatus) => void;
-  initialTab?: "production" | "keys";
-  claudeMode?: ClaudeCodeMode;
-  onClaudeMode?: (mode: ClaudeCodeMode) => void;
+  initialTab?: "production" | "keys" | "agents";
   onDirtyChange?: (dirty: boolean) => void;
   onVoiceReference: (detail: Detail) => void;
 }) {
@@ -45,7 +42,7 @@ export default function SettingsPanel({
     );
     return m;
   });
-  const [tab, setTab] = useState<"production" | "keys" | "library">(
+  const [tab, setTab] = useState<"production" | "keys" | "agents" | "library">(
     initialTab ?? (detail && bootstrap ? "production" : "keys"),
   );
   const [libraryTarget, setLibraryTarget] = useState({ group: "writing_skills", id: "" });
@@ -93,8 +90,6 @@ export default function SettingsPanel({
     label={t(label)} value={String(settings[section]?.[modelKey] ?? "")}
     options={imageModelChoices(String(settings[section]?.[serverKey] ?? ""))}
     onChange={(value) => set(section, modelKey, value)} />;
-  // On a Claude subscription, Claude Code runs on the user's own login: agent providers are not used.
-  const subscription = claudeMode === "subscription";
   const field = (
     section: string,
     key: string,
@@ -146,6 +141,9 @@ export default function SettingsPanel({
       {hint && <small className="field-hint">{t(hint)}</small>}
     </label>
   );
+  const agentOptions = Object.entries(agentNames).map(([id, label]) => ({ id, label }));
+  const stepAgent = (section: string, label: string) =>
+    field(section, "agent_cli", label, [{ id: "", label: "Use project default" }, ...agentOptions]);
   return (
     <div className="modal-backdrop">
       <section
@@ -220,6 +218,10 @@ export default function SettingsPanel({
           >
             {t("API keys")}
           </button>
+          <button role="tab" id={`${uid}-local-agents-tab`} aria-selected={tab === "agents"}
+            aria-controls={`${uid}-local-agents-panel`} onClick={() => leaveLibrary(() => setTab("agents"))}>
+            {t("Local Agents")}
+          </button>
           <button role="tab" id={`${uid}-library-settings-tab`} aria-selected={tab === "library"}
             aria-controls={`${uid}-library-settings-panel`} disabled={!bootstrap}
             onClick={() => setTab("library")}>{t("Skills & templates")}</button>
@@ -242,7 +244,18 @@ export default function SettingsPanel({
             aria-labelledby={`${uid}-api-keys-tab`}
           >
             {/* The keys this project needs follow the provider choices in this unsaved draft. */}
-            <ApiKeysPanel settings={detail ? settings : null} motion={Boolean(detail?.segments.some((s) => s.visualizer === "hf"))} claudeMode={claudeMode} onClaudeMode={onClaudeMode} onStatus={onKeyStatus} />
+            <ApiKeysPanel settings={detail ? settings : null} onStatus={onKeyStatus} />
+          </div>
+        )}
+        {tab === "agents" && (
+          <div id={`${uid}-local-agents-panel`} className="modal-content" role="tabpanel" aria-labelledby={`${uid}-local-agents-tab`}>
+            <LocalAgentsPanel />
+            {detail && <>
+              <h3>{t("Project Agents")}</h3>
+              <div className="form-grid">
+                {field("agents", "default", "Project default", agentOptions)}
+              </div>
+            </>}
           </div>
         )}
         {tab === "production" && detail && bootstrap && (
@@ -253,21 +266,8 @@ export default function SettingsPanel({
               role="tabpanel"
               aria-labelledby={`${uid}-production-settings-tab`}
             >
-              <AgentConnection mode={claudeMode ?? "api_key"} onMode={onClaudeMode} disabled={Boolean(detail.state.agent_active)} />
               {step(1, "Writing")}
-              <p className="small-muted settings-note">{t(subscription
-                ? "Not used now: Writing runs in your own Claude Code on your Claude subscription. Change this in Settings → API keys."
-                : "Claude Code writes the manuscript with this provider's API key. Changes apply to the next writing session.")}</p>
-              <div className="form-grid">
-                {field("step1", "llm_server", t("Writing agent provider"), languageModelChoices, subscription)}
-                {field("step1", "llm_model", t("Writing agent model"), undefined, subscription)}
-              </div>
-              {step(2, "Segments")}
-              <div className="form-grid">
-                {field("step2", "llm_server", t("Agent provider"), languageModelChoices, settings.step2?.split_mode !== "agent",
-                  "Used only by Agent (split by meaning).")}
-                {field("step2", "llm_model", t("Agent model"), undefined, settings.step2?.split_mode !== "agent")}
-              </div>
+              <div className="form-grid">{stepAgent("step1", "Writing agent")}</div>
               {step(3, "Voice")}
               <VoiceSource settings={settings.step3 || {}} detail={detail} onReference={onVoiceReference}
                 onChange={(provider) => set("step3", "tts_provider", provider)}>
@@ -309,22 +309,22 @@ export default function SettingsPanel({
                     field("step4", "seedream_max_concurrent_image_generation", t("Seedream images at once"), undefined, false, "Up to 5 concurrent image requests. Google always uses 1.")}
                   {field("motion_opening", "ip_name", t("Opening masthead"))}
                 </div>
+                <div className="form-grid">
+                  {field("step4", "llm_server", t("Image prompt refinement provider"), languageModelChoices)}
+                  {field("step4", "llm_model", t("Image prompt refinement model"))}
+                </div>
                 {modelWarning("step4", "image_server", "image_model")}
               </section>
               <section className="settings-part" aria-labelledby={`${uid}-settings-motion`}>
                 <h4 id={`${uid}-settings-motion`}>{t("Motion clips")}</h4>
-                <p className="small-muted">{t(subscription
-                  ? "Designed by your own Claude Code on your Claude subscription, then rendered by Grist. The agent provider below is not used now."
-                  : "Designed by Claude Code with HTML / Three.js, then rendered by Grist.")}</p>
                 <div className="form-grid">
+                  {stepAgent("step4", "Motion agent")}
                   {field(
                     "step4",
                     "motion_style_preset",
                     t("Animation style"),
                     libraryChoices(bootstrap.library, "motion_styles"),
                   )}
-                  {field("step4", "llm_server", t("Motion agent provider"), languageModelChoices, subscription)}
-                  {field("step4", "llm_model", t("Motion agent model"), undefined, subscription)}
                 </div>
                 <div className="settings-manage-row">
                   {manage("motion_styles", "Edit motion styles")}
@@ -333,23 +333,17 @@ export default function SettingsPanel({
               {step(5, "Assembly")}
               <p className="small-muted settings-note">{t("Music, export size, subtitles, narration speed and the 3:4 copy are set on the Assembly page.")}</p>
               <div className="form-grid">
+                {stepAgent("step5", "Editing agent")}
                 {field("step5", "video_codec", t("Codec"), ["h264", "hevc"], false,
                   "H.264 plays everywhere; HEVC makes smaller files.")}
               </div>
               {step(6, "Covers")}
-              <p className="small-muted settings-note">{t("Choose Image API or Claude Code + HTML / Three.js on the Covers page. The cover agent uses Writing's provider and the same Claude Code login.")}</p>
-              {settings.step6?.cover_method !== "agent" && <>
               <div className="form-grid">
-                {field(
-                  "step6",
-                  "cover_image_server",
-                  t("Cover provider"),
-                  imageServiceChoices,
-                )}
+                {stepAgent("step6", "Cover agent")}
+                {field("step6", "cover_image_server", "Cover provider", imageServiceChoices)}
                 {imageModel("step6", "cover_image_server", "cover_image_model", "Cover model ID")}
               </div>
               {modelWarning("step6", "cover_image_server", "cover_image_model")}
-              </>}
               <p className="small-muted">
                 {t(
                   "Manage provider credentials in the API keys tab. Each job uses a saved copy of these production settings.",
@@ -358,14 +352,14 @@ export default function SettingsPanel({
             </div>
           </>
         )}
-        {tab === "keys" && (
+        {(tab === "keys" || (tab === "agents" && !detail)) && (
           <div className="modal-actions">
             <button className="button" onClick={onClose}>
               {t("Done")}
             </button>
           </div>
         )}
-        {tab === "production" && detail && bootstrap && (
+        {(tab === "production" || tab === "agents") && detail && bootstrap && (
           <div className="modal-actions">
             <button className="button" onClick={onClose}>
               {t("Cancel")}

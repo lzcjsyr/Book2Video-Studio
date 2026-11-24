@@ -84,8 +84,8 @@ print(json.dumps(report))
         task=json.loads(Path(launch['task']).read_text())
         self.assertNotIn(str(work/'run.py'),task['protected'])
         self.assertIn(str(work),task['writable'])
-        args=launch['args'];self.assertEqual(args[args.index('--add-dir')-2:args.index('--add-dir')],['--append-system-prompt-file',launch['context']]);self.assertEqual(launch['cwd'],str(self.p))
-        self.assertEqual(args[args.index('--allowedTools')+1:args.index('--session-id')],editing.ALLOWED_TOOLS)
+        self.assertEqual(launch['cwd'], str(work))
+        self.assertEqual(launch['agent'], 'claude')
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
 
     def test_the_agent_gets_the_bundled_sound_effects(self):
@@ -194,7 +194,7 @@ print(json.dumps(report))
         (revised/'run.py').write_text('# revised runner\n')
         self.assertEqual((first/'run.py').read_text(),'# agent-owned runner\n')
         prompt=Path(launch['context']).read_text()
-        self.assertNotIn('开始。',launch['args']);self.assertIn('修改上一次的合成',prompt);self.assertIn('按用户在对话里提出的要求修改',prompt)
+        self.assertNotIn('first_message', launch);self.assertIn('修改上一次的合成',prompt);self.assertIn('按用户在对话里提出的要求修改',prompt)
         # Materials are refreshed for the revision; the copy does not change the earlier folder.
         (revised/'my_design.html').write_text('<p>changed</p>');self.assertEqual((first/'my_design.html').read_text(),'<p>mine</p>')
 
@@ -251,13 +251,6 @@ print(json.dumps(report))
         self.assertNotEqual(signature(work,payload,entry='a.html'),before)
         # A changed page or script still counts.
         (work/'engine.js').write_text('changed');self.assertNotEqual(signature(work,payload,entry='a.html',ignore_media=True),before)
-
-    def test_both_agent_environments_use_writings_model(self):
-        state=self.studio.state(self.p);state['settings']['step1']={'llm_server':'deepseek','llm_model':'deepseek-chat'};self.studio.persist(self.p,state)
-        code="from pathlib import Path;from agent_env import resolve;import sys;a=resolve(Path(sys.argv[1]),Path(sys.argv[2]),'1');b=resolve(Path(sys.argv[1]),Path(sys.argv[2]),'5');assert a==b;assert b['ANTHROPIC_AUTH_TOKEN']=='editing-test-key'"
-        result=subprocess.run([sys.executable,'-c',code,str(ENGINE),str(self.p)],cwd=DESKTOP/'backend',env={**os.environ,'DEEPSEEK_API_KEY':'editing-test-key'},capture_output=True,text=True,timeout=20)
-        self.assertEqual(result.returncode,0,'Assembly and Writing must resolve the same provider environment')
-
 
 if __name__=='__main__':
     unittest.main()

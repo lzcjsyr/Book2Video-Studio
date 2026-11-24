@@ -85,8 +85,8 @@ function Segmented({ label, name, options, value, disabled, onChange }: {
 
 /**
  * Assembly's choices, saved directly from its page. The inspector (standard assembly) shows every
- * group with the basics first; the brief (Claude Code editing) shows only the choices Claude Code
- * follows. How the video moves, cuts, captions and sounds is Claude Code's to design. Auto production
+ * group with the basics first; the brief (Agent editing) shows only the choices Agent
+ * follows. How the video moves, cuts, captions and sounds is Agent's to design. Auto production
  * shows the basics of either method and whether to make the 3:4 copy; its panels stay on the Assembly page.
  */
 export default function AssemblySetup({ variant = "inspector", step5, panels, music, userMusic, copy, opening, disabled, musicUrl, onChange, onAddMusic }: {
@@ -106,7 +106,7 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
 }) {
   const uid = useId();
   const { t } = useI18n();
-  // The choices Claude Code follows, in its brief or in auto production with Claude Code editing.
+  // The choices Agent follows, in its brief or in auto production with Agent editing.
   const brief = variant === "brief" || (variant === "auto" && step5.assembly_method === "agent");
   const set5 = (patch: Patch) => onChange("step5", patch);
   const setPanel = (patch: Patch) => onChange("three_by_four", patch);
@@ -132,7 +132,7 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
   const size = String(step5.video_size ?? "1280x720").toLowerCase().replace("×", "x");
   const transition = step5.enable_transitions ? String(step5.transition_style ?? "") : "";
   const zoom = number(step5.image_zoom_in_ratio, 1);
-  // Music levels apply to the suggested track, or to the tracks Claude Code mixes.
+  // Music levels apply to the suggested track, or to the tracks Agent mixes.
   const musicOff = !track && !(brief && mix);
 
   const enabled = panels.enabled !== false;
@@ -168,7 +168,7 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
   </label>;
   const openingHint = opening.enabled && <p className="field-hint setup-note">
     {t(brief
-      ? "Opening: Claude Code designs it from the quote, the background chosen in Visuals and the opening recording."
+      ? "Opening: Agent designs it from the quote, the background chosen in Visuals and the opening recording."
       : opening.rendered
       ? "Opening: the quote over the chosen background is rendered and reused until either changes."
       : "Opening: the quote is drawn over the background chosen in Visuals when the video is made. The first render takes a few minutes.")}
@@ -177,7 +177,7 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
     <span>{t(brief ? "Suggested music" : "Track")}</span>
     <div className="input-action">
       <select disabled={disabled} value={track} onChange={(e) => set5({ bgm_filename: e.target.value || null })}>
-        <option value="">{t(brief && mix ? "Let Claude Code choose" : "No music")}</option>
+        <option value="">{t(brief && mix ? "Let Agent choose" : "No music")}</option>
         {track && !music.includes(track) && <option value={track}>{t("Unavailable: {id}", { id: track })}</option>}
         <optgroup label={t("Included")}>
           {included.map((name) => <option key={name} value={name}>{name.replace(/\.[^.]+$/, "")}</option>)}
@@ -199,7 +199,7 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
   const mixField = <label className="checkbox checkbox-hinted">
     <input type="checkbox" disabled={disabled || !music.length} checked={mix}
       onChange={(e) => set5({ agent_music_mix: e.target.checked })} />
-    <span>{t("Let Claude Code choose and mix tracks")}
+    <span>{t("Let Agent choose and mix tracks")}
       <small>{t(track
         ? "It may add other tracks from your music library and blend them by mood. The suggested track leads."
         : "It picks one or more tracks from your music library to fit the story.")}</small></span>
@@ -312,9 +312,9 @@ export default function AssemblySetup({ variant = "inspector", step5, panels, mu
       {mixField}
     </div>
     {openingHint}
-    {/* Motion, transitions, captions and sound levels are Claude Code's decisions; the 3:4 copy is still drawn by Grist. */}
+    {/* Motion, transitions, captions and sound levels are Agent's decisions; the 3:4 copy is still drawn by Grist. */}
     <details className="brief-more">
-      <summary>{t("3:4 panels")}<small>{t("Grist draws the 3:4 copy around the video Claude Code delivers.")}</small></summary>
+      <summary>{t("3:4 panels")}<small>{t("Grist draws the 3:4 copy around the video Agent delivers.")}</small></summary>
       <div className="brief-more-groups">{panelGroup}</div>
     </details>
   </section>;

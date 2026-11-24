@@ -3,7 +3,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
 
-from headless import claude_command, first_message, run_claude
+from headless import first_message, run_agent
+from local_agents import NAMES, discover, selected
 
 
 MOTION_CONCURRENCY = 3
@@ -14,13 +15,11 @@ def generate_motion(launch, program, env, max_turns):
     work = Path(launch["cwd"])
     payload = json.loads((work / "studio-payload.json").read_text(encoding="utf-8"))
     index = payload["segmentIndex"]
-    print(f"Generating motion for segment {index} with Claude Code…", flush=True)
-    try:
-        run_claude(program, env, launch, first_message(), max_turns, 1800, work)
-    except ValueError as exc:
-        raise ValueError(f"Claude Code did not complete segment {index}. See {work / 'claude-session.json'}") from exc
+    name = NAMES[launch["agent"]]
+    print(f"Generating motion for segment {index} with {name}…", flush=True)
+    run_agent(program, env, launch, first_message(), max_turns, 1800, work)
     if not (work / "index.html").is_file():
-        raise ValueError(f"Claude Code did not complete segment {index}. See {work / 'claude-session.json'}")
+        raise ValueError(f"{name} ended without saving the composition for segment {index}.")
     from core.infra.motion.renderer import render_clip
     # Cached verified output is reused; unfinished or stale output is rendered and verified here.
     render_clip(work, payload, work / "video.mp4", fps=int(payload.get("fps", 30)))
@@ -43,7 +42,7 @@ def run(request, params, steps, call):
     motions = [s["index"] for s in script["segments"] if s["index"] in targets and s.get("visualizer") == "hf"]
     launches = []
     if motions:
-        program, env = claude_command(request.get("claude", {}))
+        program, env = discover(selected(request["settings"], "4"))
         studio = Studio(Path(request["engine"]), Path(request["studio_data"]), Path(request["workspace"]))
         for index in motions:
             work = Path(request["motion_folders"][str(index)])

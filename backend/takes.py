@@ -2,7 +2,7 @@
 
 The engine assembles images/segment_N.(png|mp4) (the opening: images/opening.*) and prefers a
 still. Each part keeps its takes in images/takes/<segment_N|opening>/: stills as
-still-<id>.<ext>, motion clips as motion-<id>/ folders holding Claude Code's index.html, its
+still-<id>.<ext>, motion clips as motion-<id>/ folders holding Agent's index.html, its
 snapshots/ and the rendered video.mp4. Studio copies the selected take into the engine's place,
 and new output the engine writes there becomes a take, so nothing a segment had is lost.
 
@@ -81,7 +81,7 @@ def listing(p: Path, index: int) -> list[dict]:
 
 
 def motion(p: Path, work: Path) -> dict:
-    """Where a motion clip stands: Claude Code's composition, its keyframes, and the rendered video."""
+    """Where a motion clip stands: Agent's composition, its keyframes, and the rendered video."""
     html = work / "index.html"
     composed = html.stat().st_mtime if html.is_file() else None
     frames = sorted((work / "snapshots").glob("frame-*.png")) or sorted((work / "snapshots").glob("*.png"))
@@ -151,7 +151,7 @@ def add_still(p: Path, index: int, source: Path, move: bool = False) -> str:
 
 
 def add_motion(p: Path, index: int, work: Path | None = None, video: Path | None = None) -> str:
-    """A new motion clip: an existing composition folder, a rendered video, or an empty folder for Claude Code."""
+    """A new motion clip: an existing composition folder, a rendered video, or an empty folder for Agent."""
     d = folder(p, index)
     d.mkdir(parents=True, exist_ok=True)
     when = (work / "index.html").stat().st_mtime if work and (work / "index.html").is_file() else video.stat().st_mtime if video else None

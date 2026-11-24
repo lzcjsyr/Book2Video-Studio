@@ -86,7 +86,7 @@ class ProjectTests(unittest.TestCase):
         import shutil
         other = self.studio.workspace/'Second project'
         shutil.copytree(self.p, other)
-        with patch('context.prepare', side_effect=[{'id':'session-one'}, {'id':'session-two'}]):
+        with patch('context.prepare', side_effect=[{'id':'session-one', 'agent':'claude'}, {'id':'session-two', 'agent':'agy'}]):
             self.studio.prepare_agent(self.p.name, {'step':'1'})
             self.studio.prepare_agent(other.name, {'step':'1'})
         self.assertEqual(self.studio.state(self.p)['agent_active']['launch'], 'session-one')
@@ -159,7 +159,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(self.open().detail(project_id)['raw'], after['raw'])
         with self.assertRaisesRegex(Conflict, 'manuscript before generating segments'):
             self.studio.run_job(project_id, {'step': '2'})
-        with patch('context.prepare', return_value={'id': 'first-writing-session'}):
+        with patch('context.prepare', return_value={'id': 'first-writing-session', 'agent': 'agy'}):
             self.studio.prepare_agent(project_id, {'step': '1'})
         self.assertEqual(self.studio.state(self.studio.project(project_id))['agent_active']['step'], '1')
     def test_first_writing_draft_accepts_missing_content_then_a_complete_manuscript(self):
@@ -419,7 +419,7 @@ class ProjectTests(unittest.TestCase):
         from unittest.mock import patch
         import time
         stubborn=subprocess.Popen([sys.executable,'-c','import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint("ready",flush=True)\ntime.sleep(60)'],
-                                  stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
+                                  stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
         try:
             with patch('server.subprocess.Popen',return_value=stubborn), patch('server.STOP_GRACE',.5):
                 job=self.studio.run_job(self.p.name,{'step':'3'})
@@ -466,7 +466,7 @@ class ProjectTests(unittest.TestCase):
     def test_assembly_uses_the_default_method_and_respects_a_saved_override(self):
         from unittest.mock import patch
         (self.engine/'config.example.yaml').write_text('global:\n  opening_quote: false\nstep5: {}\n')
-        with self.assertRaisesRegex(ValueError, 'interactive Claude Code terminal'):
+        with self.assertRaisesRegex(ValueError, 'interactive Agent terminal'):
             self.studio.run_job(self.p.name, {'step':'5'})
         launch = {'assembly_edit': {'folder':'.studio/edits/test', 'skill':'content-led', 'source':'', 'delivered_before':None}}
         with patch('context.prepare', return_value=launch):
@@ -475,7 +475,7 @@ class ProjectTests(unittest.TestCase):
         state['settings'] = {'step5': {'assembly_method':'standard'}}
         self.studio.persist(self.p, state)
         self.assertEqual(self.spawn_job({'step':'5'})['step'], '5')
-        with self.assertRaisesRegex(ValueError, 'Choose Claude Code editing'):
+        with self.assertRaisesRegex(ValueError, 'Choose Agent editing'):
             self.studio.run_job(self.p.name, {'step':'5', 'mode':'agent'})
     def post_settings(self, settings):
         server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
@@ -675,7 +675,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(engine_settings({'step2':{'split_mode':'agent'}, 'step4_summary':{'llm_server':'kimi'}, 'step1':{'writing_mode':'direct', 'agent_skill':'x'}}),
                          {'step1_5':{'split_mode':'agent'}, 'step2':{'llm_server':'kimi'}, 'step1':{'agent_skill':'x'}})
         (self.engine/'config.example.yaml').write_text('step1_5:\n  num_segments: 9\nstep2:\n  llm_server: kimi\n')
-        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'kimi'}})
+        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'kimi'}, 'agents':{'default':'claude'}})
     def test_motion_agent_requires_a_direction(self):
         (self.p/'text/mini_summary.json').unlink()
         with self.assertRaisesRegex(Conflict, 'content summary'):
@@ -758,19 +758,19 @@ class ProjectTests(unittest.TestCase):
     def test_settings_outdate_only_their_own_step(self):
         self.studio.detail(self.p.name)
         state=self.studio.state(self.p);state['stale']={};self.studio.persist(self.p,state)
-        state=self.post_settings({'step2':{'split_mode':'auto'}})
+        state=self.post_settings({'step2':{'split_mode':'manual'}})
         self.assertEqual(sorted(state['stale']),['2'])
         state=self.post_settings({'step3':{'speech_rate':10}})
         self.assertEqual(sorted(state['stale']),['2','3'])
-    def test_target_count_outdates_only_agent_segmentation(self):
+    def test_legacy_smart_segmentation_falls_back_to_punctuation_without_outdating_outputs(self):
+        previous = (self.p / 'text/script.json').read_bytes()
         state = self.studio.state(self.p)
-        state['settings'] = {'step2': {'split_mode': 'punctuation', 'num_segments': 50}}
+        state['settings'] = {'step2': {'split_mode': 'agent', 'num_segments': 50, 'llm_server': 'kimi'}}
         state['stale'] = {}; self.studio.persist(self.p, state)
-        self.assertNotIn('2', self.post_settings({'step2': {'num_segments': 2}})['stale'])
-        self.assertIn('2', self.post_settings({'step2': {'split_mode': 'agent'}})['stale'])
-        state = self.studio.state(self.p); state['stale'] = {}; self.studio.persist(self.p, state)
-        self.assertIn('2', self.post_settings({'step2': {'num_segments': 3}})['stale'])
-
+        self.assertEqual(self.studio.state(self.p)['settings']['step2'], {'split_mode': 'punctuation'})
+        self.assertEqual((self.p / 'text/script.json').read_bytes(), previous)
+        self.assertNotIn('2', self.studio.state(self.p)['stale'])
+        self.assertIn('2', self.post_settings({'step2': {'split_mode': 'manual'}})['stale'])
 
     def test_keep_current_clears_needs_rebuild(self):
         state=self.studio.state(self.p);state['stale']={'3':{'reason':'Edit','segments':[1]},'4':{'reason':'Edit','segments':[]}};state['summary_stale']=True;self.studio.persist(self.p,state)
@@ -838,19 +838,19 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(state['settings']['step4']['image_model'],'gemini-3.1-flash-image');self.assertEqual(state['settings']['step4_summary']['llm_model'],'deepseek-flash')
         self.assertEqual(state['stale'],{});self.assertNotIn('summary_stale',state);self.assertEqual(state['reviewed'],{'2':'reviewed','4':'reviewed'})
 
-    def test_a_new_writing_model_keeps_the_manuscript_current(self):
+    def test_switching_the_writing_agent_keeps_the_manuscript_current(self):
         state=self.studio.state(self.p);state['stale']={};state['reviewed']={'1':'reviewed'};self.studio.persist(self.p,state)
         server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.studio=self.studio;server.token='test-token'
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
             conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
-            body={'settings':{'step1':{'llm_server':'kimi','llm_model':'kimi-k2'}}}
+            body={'settings':{'step1':{'agent_cli':'agy'}}}
             route='/api/projects/'+__import__('urllib.parse',fromlist=['quote']).quote(self.p.name)+'/settings'
             conn.request('POST',route,body=json.dumps(body),headers={'Authorization':'Bearer test-token','Content-Type':'application/json'})
             self.assertEqual(conn.getresponse().status,200);conn.close()
         finally:server.shutdown();server.server_close()
         state=self.studio.state(self.p)
-        self.assertEqual(state['settings']['step1'],{'llm_server':'kimi','llm_model':'kimi-k2'})
+        self.assertEqual(state['settings']['step1'],{'agent_cli':'agy'})
         self.assertEqual(state['stale'],{});self.assertEqual(state['reviewed'],{'1':'reviewed'})
 
     def test_saved_keys_override_environment_without_entering_project_data(self):
@@ -859,7 +859,9 @@ class ProjectTests(unittest.TestCase):
             self.studio.set_credentials({'DEEPSEEK_API_KEY': 'test-saved-secret'})
             result = self.studio.run_job(self.p.name, {'step': '3', 'indices': [1]})
             first_environment = spawn.call_args.kwargs['env']
-            self.assertEqual(first_environment['DEEPSEEK_API_KEY'], 'test-saved-secret')
+            self.assertEqual(first_environment['DEEPSEEK_API_KEY'], 'test-environment-fallback')
+            pipe = spawn.return_value.stdin
+            self.assertEqual(json.loads(pipe.write.call_args.args[0]), {'DEEPSEEK_API_KEY': 'test-saved-secret'})
             self.assertNotIn('test-saved-secret', json.dumps(result))
             self.assertNotIn('test-saved-secret', json.dumps(spawn.call_args.args))
             self.assertNotIn('test-saved-secret', json.dumps(self.studio.detail(self.p.name)))
@@ -869,7 +871,7 @@ class ProjectTests(unittest.TestCase):
             self.studio.jobs.clear()
             self.studio.run_job(self.p.name, {'step': '3'})
             self.assertEqual(spawn.call_args.kwargs['env']['DEEPSEEK_API_KEY'], 'test-environment-fallback')
-            self.assertEqual(first_environment['DEEPSEEK_API_KEY'], 'test-saved-secret')
+            self.assertEqual(json.loads(pipe.write.call_args.args[0]), {})
 
     def test_credential_updates_reject_unknown_variables_and_invalid_values(self):
         for keys in [{'PATH': 'anything'}, {'DEEPSEEK_API_KEY': ''}, {'DEEPSEEK_API_KEY': 'bad\nvalue'}, {'DEEPSEEK_API_KEY': 1}, []]:
@@ -1004,24 +1006,6 @@ class PipelineTests(unittest.TestCase):
 class AgentContextTests(unittest.TestCase):
     setUp=PipelineTests.setUp
     tearDown=PipelineTests.tearDown
-    def test_saved_key_reaches_both_agent_provider_environments(self):
-        atomic_json(self.p/'.studio/state.json', {'settings': {'step1': {'writing_mode': 'direct', 'llm_server': 'deepseek', 'llm_model': 'deepseek-chat'}, 'step4': {'llm_server': 'deepseek', 'llm_model': 'deepseek-chat'}}})
-        probe = "from agent_env import resolve; from pathlib import Path; import sys; value=resolve(Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]); assert value['ANTHROPIC_API_KEY']=='test-saved-secret'; assert value['ANTHROPIC_AUTH_TOKEN']=='test-saved-secret'"
-        for step in ['1', '4']:
-            result = subprocess.run([sys.executable, '-c', probe, str(ENGINE), str(self.p), step], cwd=DESKTOP/'backend', env={**os.environ, 'DEEPSEEK_API_KEY': 'test-saved-secret'}, capture_output=True, text=True, timeout=20)
-            self.assertEqual(result.returncode, 0, 'Agent environment did not use the saved provider key')
-    def test_every_agent_stage_resolves_its_configured_endpoint_model_and_key(self):
-        atomic_json(self.p/'.studio/state.json', {'settings': {
-            'step1': {'llm_server':'openrouter', 'llm_model':'writing-provider-model'},
-            'step4': {'llm_server':'kimi', 'llm_model':'motion-provider-model'},
-        }})
-        probe = "from agent_env import resolve; from pathlib import Path; import sys; v=resolve(Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]); assert v['ANTHROPIC_BASE_URL']==sys.argv[4]; assert v['ANTHROPIC_MODEL']==sys.argv[5]; assert v['ANTHROPIC_AUTH_TOKEN']==sys.argv[6]; assert v['ANTHROPIC_API_KEY']==sys.argv[7]"
-        for step in ['1','4','5','6']:
-            expected = ['https://api.moonshot.cn/anthropic','motion-provider-model','motion-fixture-key','motion-fixture-key'] if step == '4' else ['https://openrouter.ai/api','writing-provider-model','writing-fixture-key','']
-            with self.subTest(step=step):
-                result = subprocess.run([sys.executable,'-c',probe,str(ENGINE),str(self.p),step,*expected],
-                    cwd=DESKTOP/'backend',env={**os.environ,'OPENROUTER_API_KEY':'writing-fixture-key','KIMI_API_KEY':'motion-fixture-key'},capture_output=True,text=True,timeout=20)
-                self.assertEqual(result.returncode,0,'Stage did not resolve its configured endpoint, model and key')
     def test_real_stage_context_contracts(self):
         from server import Studio
         from context import prepare
@@ -1033,7 +1017,7 @@ class AgentContextTests(unittest.TestCase):
         for step in ['1','4']:
             launch=prepare(studio,self.p,{'step':step,'indices':[1],'folders':{1:self.p/'images/takes/segment_1/motion-test'}})
             context=Path(launch['context']).read_text()
-            self.assertIn('--append-system-prompt-file',launch['args']);self.assertNotIn('{output_json}',context)
+            self.assertEqual(launch['agent'], 'claude');self.assertNotIn('{output_json}',context)
             if step=='4':
                 self.assertIn('时长：1 秒',context)
                 payload=json.loads((self.p/'images/takes/segment_1/motion-test/studio-payload.json').read_text())
@@ -1052,7 +1036,6 @@ class AgentContextTests(unittest.TestCase):
                 for field in RAW:
                     self.assertIn(field, prompt)
                 self.assertNotIn('missing-old-manuscript.txt', prompt)
-                self.assertNotIn(str(ENGINE/'input'), launch['args'])
                 self.assertNotIn('{input_file}', prompt)
     def test_source_context_requires_source_and_grants_its_folder(self):
         from context import prepare
@@ -1064,7 +1047,6 @@ class AgentContextTests(unittest.TestCase):
         atomic_json(self.p/'.studio/state.json', {'settings': {}, 'source': str(source)})
         launch = prepare(studio, self.p, {'step': '1'})
         self.assertIn(str(source), Path(launch['context']).read_text())
-        self.assertIn(str(source.parent), launch['args'])
         self.assertNotIn(studio.library.prompt('step1_agent.md', 'direct').strip(), Path(launch['context']).read_text())
 
 class MotionRenderTests(unittest.TestCase):
@@ -1274,7 +1256,7 @@ class SegmentTakeTests(unittest.TestCase):
     def select(self,take,index=1):
         return self.studio.select_take(self.p.name,{'index':index,'take':take})
     def clip(self,index=1,frames=2,video=None,composed=1000):
-        """A motion clip as a Claude Code session leaves it, optionally rendered."""
+        """A motion clip as a Agent session leaves it, optionally rendered."""
         self.studio.detail(self.p.name)
         work=self.p/'images/takes'/f'segment_{index}'/'motion-20260101-000000-000-abcd';(work/'snapshots').mkdir(parents=True,exist_ok=True)
         (work/'index.html').write_text('<!DOCTYPE html>');(work/'studio-payload.json').write_text('{}')
@@ -1408,7 +1390,7 @@ class SegmentTakeTests(unittest.TestCase):
         self.studio.jobs.clear()
         state=self.studio.state(self.p);state['agent_active']={'step':'1','indices':[]}
         self.studio.persist(self.p,state)
-        with self.assertRaisesRegex(Conflict,'Claude Code session'):
+        with self.assertRaisesRegex(Conflict,'Agent session'):
             self.studio.delete_cover(self.p.name,{'path':'cover_a.png'})
         self.assertTrue((self.p/'cover_a.png').exists())
     def test_switching_type_in_segments_uses_the_newest_take_of_that_type(self):

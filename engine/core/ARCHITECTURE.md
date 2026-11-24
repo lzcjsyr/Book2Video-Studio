@@ -3,7 +3,7 @@
 ## Goal
 
 `core` is Grist's production engine. The desktop backend runs its
-steps 1.5–6 in job processes (writing, step 1, happens in Grist's Claude Code
+steps 1.5–6 in job processes (writing, step 1, happens in Grist's local Agent
 sessions). Orchestration lives in `pipeline`, business logic in `domain`, and
 external systems in `infra`. Packages export nothing themselves: import the
 module that defines a name (`from core.pipeline import steps`).
@@ -33,8 +33,7 @@ core/
     │   ├── image_providers.py
     │   ├── image_client.py    # Step 4 images, step 6 covers, step 3 voice batch + SRT
     │   ├── tts_client.py      # ByteDance TTS and silence trimming
-    │   ├── task_context.py    # Task manifests for Claude Code sessions
-    │   └── claude_agent.py    # Agent environments; Agent SDK runs for steps 1.5 and 4
+    │   └── task_context.py    # Task manifests for local Agent sessions
     ├── motion/                # Shared Chrome capture, capabilities, opening and agent clips
     └── media/
         ├── ffmpeg.py

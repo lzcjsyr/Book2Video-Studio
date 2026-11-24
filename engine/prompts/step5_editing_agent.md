@@ -1,4 +1,4 @@
-<!-- 第五步 · Claude Code 合成模板。会话提示 = agent_rules.md 的 rules + 本文件。保留花括号变量。 -->
+<!-- 第五步 · Agent 合成模板。会话提示 = agent_rules.md 的 rules + 本文件。保留花括号变量。 -->
 
 # 第五步：视频合成
 

@@ -1,9 +1,9 @@
-"""Assembly with Claude Code: the agent receives the materials and designs the whole video itself.
+"""Assembly with Agent: the agent receives the materials and designs the whole video itself.
 
 Studio gathers what earlier steps made (each segment's visual, narration text and recording, the
 opening's quote, background and recording, the music it may use) and the person's choices on the
 Assembly page, then supplies the template's execution contract. The agent writes its own run.py. Structure, timing,
-motion, captions, transitions and sound are Claude Code's decisions.
+motion, captions, transitions and sound are Agent's decisions.
 """
 from __future__ import annotations
 import hashlib
@@ -16,7 +16,6 @@ ROOT = '.studio/edits'
 DELIVERY = 'final_video.mp4'
 TIMING = 'timing.jsonl'
 # What an Assembly session may do without asking: work in its own folder, render and encode.
-ALLOWED_TOOLS = ['Edit', 'Write', 'Bash(cd:*)', 'Bash(python run.py:*)', 'Bash(python3 run.py:*)', 'Bash(ffmpeg:*)', 'Bash(ffprobe:*)']
 
 
 def read(path):
@@ -199,7 +198,7 @@ def prepare(studio, project, settings, session, revise=False, resume=False):
 
 
 def detail(project, edit, current_materials=None):
-    """Where the last Claude Code edit stands: whether its materials are still current and whether it delivered."""
+    """Where the last Agent edit stands: whether its materials are still current and whether it delivered."""
     if not edit:
         return None
     delivered = stamp(project / DELIVERY)

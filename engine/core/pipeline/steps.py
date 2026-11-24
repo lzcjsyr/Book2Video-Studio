@@ -1,6 +1,6 @@
 """流水线分步执行实现模块。
 
-本文件承载步骤 1.5~6 的核心实现与跨步骤辅助函数（步骤 1 写作由 Studio 的 Claude Code 会话完成），主要包括：
+本文件承载步骤 1.5~6 的核心实现与跨步骤辅助函数（步骤 1 写作由 Studio 的 Agent 会话完成），主要包括：
 1. 文本处理链路（分段脚本与描述小结生成）。
 2. 目录/文件落盘（script/音视频资源）。
 3. 多媒体生成链路（语音合成、开场视频、分段画面、最终视频合成、封面图生成）。
@@ -30,7 +30,6 @@ from core.infra.ai.image_client import (
     synthesize_voice_for_segments,
     _generate_single_image,
 )
-from core.infra.ai.claude_agent import run_step1_5_segment_agent
 from core.domain.summarizer import generate_description_summary, process_raw_to_script
 from core.infra.ai.tts_client import text_to_audio_bytedance
 from core.infra.project_paths import ProjectPaths
@@ -46,7 +45,7 @@ def _get_project_root() -> str:
 
 
 def _clean_redundant_agent_folders(project_output_dir: str) -> None:
-    """自动清理 Claude 子代理因引号规范化差异而在 output 目录中额外生成的冗余文件夹。"""
+    """自动清理 Agent因引号规范化差异而在 output 目录中额外生成的冗余文件夹。"""
     if not project_output_dir:
         return
     try:
@@ -194,10 +193,7 @@ def _resolve_segment_media_path(paths: ProjectPaths, index: int) -> Optional[str
 
 def run_step_1_5(
     project_output_dir: str,
-    num_segments: int,
     split_mode: str = "punctuation",
-    llm_server_step1_5: Optional[str] = None,
-    llm_model_step1_5: Optional[str] = None,
 ) -> Dict[str, Any]:
     try:
         print("正在处理原始内容为脚本...")
@@ -208,30 +204,8 @@ def run_step_1_5(
         raw_data = load_json_file(raw_json_path)
         if not raw_data:
             return {"success": False, "message": f"无法加载 raw.json 文件: {raw_json_path}"}
-        if split_mode not in {"punctuation", "manual", "agent"}:
-            split_mode = "punctuation"
-        if split_mode == "agent":
-            print(f"目标分段数: {num_segments}")
-
-        agent_segments = None
-        if split_mode == "agent":
-            print("正在调用Agent进行智能分段与画面模式选择...")
-            agent_segments = run_step1_5_segment_agent(
-                raw_json_path=raw_json_path,
-                output_json_path=os.path.join(paths.text, "_step1_5_segments.json"),
-                target_segments=num_segments,
-                session_log_path=os.path.join(paths.text, "_step1_5_agent_session.jsonl"),
-                repo_root=_get_project_root(),
-                llm_server=llm_server_step1_5,
-                llm_model=llm_model_step1_5,
-            )
-
-        script_data = process_raw_to_script(
-            raw_data,
-            num_segments,
-            split_mode,
-            agent_segments=agent_segments,
-        )
+        mode = split_mode if split_mode in {"manual", "punctuation"} else "punctuation"
+        script_data = process_raw_to_script(raw_data, mode)
 
         with open(script_path, "w", encoding="utf-8") as handle:
             json.dump(script_data, handle, ensure_ascii=False, indent=2)
@@ -504,7 +478,7 @@ def run_step_4(
     # 2. 并行调度任务：开场视频渲染与段落画面生成
     mode = (visual_mode or getattr(config, "VISUAL_MODE", "static_image") or "static_image").strip().lower()
     if mode != "static_image":
-        # Animated segments are Claude Code sessions that Studio prepares and runs itself.
+        # Animated segments are Agent sessions that Studio prepares and runs itself.
         return {"success": False, "message": f"不支持的画面生成模式: {visual_mode}"}
 
     def run_static(targets: Optional[List[int]]) -> Dict[str, Any]:
@@ -710,15 +684,7 @@ def _run_cover_generation(
     if not cover_image_server:
         raise ValueError("封面参数错误: cover_image_server 不能为空")
     try:
-        Config.validate_parameters(
-            num_segments=config.MIN_NUM_SEGMENTS,
-            llm_server=config.SUPPORTED_LLM_SERVERS[0],
-            image_server=cover_image_server,
-            tts_server=config.SUPPORTED_TTS_SERVERS[0],
-            image_model=cover_image_model,
-            image_size=cover_image_size,
-            llm_model=config.RECOMMENDED_MODELS["llm"][config.SUPPORTED_LLM_SERVERS[0]][0],
-        )
+        Config.validate_image_parameters(cover_image_server, cover_image_model, cover_image_size)
     except Exception as exc:
         raise ValueError(f"封面参数校验失败: {exc}") from exc
 

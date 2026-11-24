@@ -18,10 +18,6 @@ global:
 # 步骤1：原始文稿写作
 # =============================================================================
 step1:
-  # 可选：mimo / kimi / volcengine / deepseek / siliconflow / openrouter
-  llm_server: deepseek
-  # 默认使用 DeepSeek 的 deepseek-flash；切换供应商时按其要求填写完整模型名。
-  llm_model: deepseek-flash
   # 使用根目录 skills/step1/ 下的写作 skill；一般不需要改。
   agent_skill: book-seller
 
@@ -29,16 +25,9 @@ step1:
 # 步骤1.5：脚本分段
 # =============================================================================
 step1_5:
-  # 可选：mimo / kimi / volcengine / deepseek / siliconflow / openrouter
-  llm_server: deepseek
-  # 仅 split_mode=agent 时使用；默认与步骤1保持一致即可。
-  llm_model: deepseek-flash
-  # Agent 模式的目标分段数量；按标点和每行一段模式不使用此参数。
-  num_segments: 50
   # 分段方式：
   # - punctuation：按中英文句号、问号、感叹号、分号切分；保留标点，不按目标段数归并
   # - manual：按 raw 文稿中的换行切分；段尾带【motion】的段落会写为 visualizer=hf，否则为 image
-  # - agent：调用 Claude Agent 进行意群分段，并为每段选择 image / hf
   split_mode: manual
 
 # =============================================================================
@@ -80,10 +69,10 @@ step3:
 # 步骤4：画面生成
 # =============================================================================
 step4:
-  # 引擎只生成静态图（segment_i.png）；visualizer=hf 的段落由 Studio 用 Claude Code 制作 HTML 动画。
+  # 引擎只生成静态图（segment_i.png）；visualizer=hf 的段落由 Studio 用 本机 Agent 制作 HTML 动画。
   visual_mode: static_image
 
-  # HTML 动画参数，用于 Studio 的 Claude Code 动画会话。
+  # HTML 动画参数，用于 Studio 的 本机 Agent 动画会话。
   motion_style_preset: data_driven
   motion_max_turns: 60
   motion_render_fps: 30
@@ -92,7 +81,7 @@ step4:
   # 若有高限额 Key 可调大至 2-4 以加速生成。
   motion_concurrency: 1
 
-  # 步骤4专用 LLM：用于图像提示词脱敏/润色，也驱动 Claude Code 动画会话。
+  # 步骤4专用 LLM：用于图像提示词脱敏/润色。
   llm_server: deepseek
   llm_model: deepseek-flash
 

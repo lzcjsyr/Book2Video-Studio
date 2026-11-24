@@ -1,6 +1,6 @@
 """Text-related logic: summarization and script segmentation."""
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import re
 import json
 import datetime
@@ -287,9 +287,7 @@ def _build_fallback_summary(source_text: str, max_chars: int) -> str:
 
 def process_raw_to_script(
     raw_data: Dict[str, Any],
-    num_segments: int,
     split_mode: str = "punctuation",
-    agent_segments: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     将原始数据处理为分段脚本数据。
@@ -311,14 +309,8 @@ def process_raw_to_script(
         if not full_text:
             raise ValueError("原始数据的 content 字段为空")
 
-        # 根据模式分段
-        if split_mode == "agent":
-            segments = _normalize_agent_segments(agent_segments or [], full_text)
-            segments_text = [segment["content"] for segment in segments]
-        else:
-            segments_text = _split_text_into_segments(full_text, num_segments, split_mode)
-            segments = [_normalize_marked_segment(text) for text in segments_text]
-        actual_segments = len(segments_text)
+        segments = [_normalize_marked_segment(text) for text in _split_text_into_segments(full_text, split_mode)]
+        actual_segments = len(segments)
 
         # 汇总统计
         total_length = len(full_text)
@@ -329,7 +321,7 @@ def process_raw_to_script(
             "cover_subtitles": cover_subtitles,
             "golden_quotes": golden_quotes,
             "total_length": total_length,
-            "target_segments": num_segments if split_mode == "agent" else actual_segments,
+            "target_segments": actual_segments,
             "actual_segments": actual_segments,
             "created_time": datetime.datetime.now().isoformat(),
             "model_info": raw_data.get("model_info", {}),
@@ -373,13 +365,6 @@ def _split_text_by_newlines(full_text: str) -> List[str]:
 HF_MARKER_PATTERN = re.compile(r'\s*【(?:motion|hf)】\s*$', re.IGNORECASE)
 
 
-def _normalize_visualizer_value(visualizer: Any) -> str:
-    value = str(visualizer or "image").strip().lower()
-    if value in {"image", "hf"}:
-        return value
-    raise ValueError(f"visualizer 不支持: {value}")
-
-
 def _normalize_marked_segment(text: str) -> Dict[str, str]:
     content = str(text or "").strip()
     if HF_MARKER_PATTERN.search(content):
@@ -390,42 +375,7 @@ def _normalize_marked_segment(text: str) -> Dict[str, str]:
     return {"content": content, "visualizer": "image"}
 
 
-def _compact_text_for_compare(text: str) -> str:
-    return re.sub(r'\s+', '', text or "")
-
-
-def _ends_sentence(text: str) -> bool:
-    return bool(re.search(r'[。．.！？!?；;][”’"\'）》」』）)]*$', (text or "").strip()))
-
-
-def _normalize_agent_segments(agent_segments: List[Dict[str, Any]], full_text: str) -> List[Dict[str, str]]:
-    if not agent_segments:
-        raise ValueError("Agent分段结果为空")
-
-    normalized: List[Dict[str, str]] = []
-    for index, segment in enumerate(agent_segments, 1):
-        if not isinstance(segment, dict):
-            raise ValueError(f"Agent分段结果第{index}段格式错误")
-        content = str(segment.get("content") or "").strip()
-        if not content:
-            raise ValueError(f"Agent分段结果第{index}段为空")
-        try:
-            visualizer = _normalize_visualizer_value(segment.get("visualizer"))
-        except ValueError as exc:
-            raise ValueError(f"Agent分段结果第{index}段 {exc}") from exc
-        if index < len(agent_segments) and not _ends_sentence(content):
-            raise ValueError(f"Agent分段结果第{index}段疑似在句子内部切分")
-        normalized.append({"content": content, "visualizer": visualizer})
-
-    merged = _compact_text_for_compare("".join(segment["content"] for segment in normalized))
-    source = _compact_text_for_compare(full_text)
-    if merged != source:
-        raise ValueError("Agent分段结果与原文内容不一致")
-    return normalized
-
-
-def _split_text_into_segments(full_text: str, num_segments: int, mode: str = "punctuation") -> List[str]:
-    """Rule modes ignore the agent's target count."""
+def _split_text_into_segments(full_text: str, mode: str = "punctuation") -> List[str]:
     if mode == "manual":
         return _split_text_by_newlines(full_text)
     if mode != "punctuation":

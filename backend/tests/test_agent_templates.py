@@ -72,7 +72,7 @@ class AgentTemplateTests(unittest.TestCase):
     def test_the_assembly_template_is_one_file_with_every_setting_filled_in(self):
         from library import PROMPTS
         assembly=self.launch('5');prompt=Path(assembly['context']).read_text()
-        work=Path(assembly['cwd'])/assembly['assembly_edit']['folder']
+        work=Path(assembly['cwd'])
         # Studio fills every variable: the materials, the person's choices, delivery and the GPU guide are all in this one prompt.
         for field in PROMPTS['step5_editing_agent.md'][2]:self.assertNotIn('{'+field+'}',prompt)
         for text in ['## 用户的选择','320×180','## 交付','## GPU 与画面接口',str(work),str(work/'materials.json'),'content-led/SKILL.md']:self.assertIn(text,prompt)
@@ -113,11 +113,9 @@ class AgentTemplateTests(unittest.TestCase):
                 for field in ['source_name', 'content', 'total_length', 'video_titles', 'golden_quotes']:
                     self.assertIn(field, prompt)
                 self.assertNotIn(str(self.studio.library_root/'skills'), prompt)
-                self.assertNotIn(str(self.studio.library_root/'skills'), launch['args'])
                 self.assertNotIn('{skill_path}', prompt)
                 if mode == 'source':
                     self.assertIn(str(source), prompt)
-                    self.assertIn(str(source.parent), launch['args'])
                 else:
                     self.assertNotIn(str(source), prompt)
 
@@ -133,7 +131,6 @@ class AgentTemplateTests(unittest.TestCase):
                 self.assertIn(str(Path(launch['task'])), prompt)
                 self.assertIn('不自行进入下一步', prompt)
                 self.assertEqual(launch['context_chars'], len(prompt))
-                self.assertNotIn(str(self.studio.library_root/'skills'), launch['args'])
                 self.assertNotIn('ANTHROPIC_API_KEY', json.dumps(task))
                 if step in {'4', '6'}:
                     self.assertIn(str((Path(launch['cwd'])/'render.py').resolve()), task['protected'])

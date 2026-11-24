@@ -1,4 +1,4 @@
-"""Claude Code cover designs and deterministic HTML → PNG rendering."""
+"""Agent cover designs and deterministic HTML → PNG rendering."""
 from __future__ import annotations
 
 import json
@@ -183,7 +183,7 @@ def render(project, design, preview=False):
         raise ValueError("The bundled cover renderer is unavailable. Reinstall Grist.")
     info = detail(project, design)
     if not info["complete"]:
-        raise ValueError("Save every cover HTML design with Claude Code before rendering.")
+        raise ValueError("Save every cover HTML design with Agent before rendering.")
     run_id = uuid.uuid4().hex[:12]
     entries = []
     for entry in design["entries"]:

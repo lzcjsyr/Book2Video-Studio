@@ -142,18 +142,9 @@ class CoverAgentTests(unittest.TestCase):
             self.studio.run_job(self.id,{'step':'6','mode':'cover_render'})
     def test_api_mode_overrides_default_and_disables_agent(self):
         state=self.studio.state(self.p);state['settings']['step6']['cover_method']='api';self.studio.persist(self.p,state)
-        with self.assertRaisesRegex(ValueError,'Choose Claude Code'):
+        with self.assertRaisesRegex(ValueError,'Choose Agent'):
             self.activate()
         self.assertNotIn('agent_active',self.studio.state(self.p))
-    def test_cover_environment_uses_writings_provider_and_model(self):
-        import os
-        state=self.studio.state(self.p)
-        state['settings']['step1']={'llm_server':'deepseek','llm_model':'deepseek-chat'}
-        self.studio.persist(self.p,state)
-        probe="from agent_env import resolve; from pathlib import Path; import sys; a=resolve(Path(sys.argv[1]),Path(sys.argv[2]),'1'); b=resolve(Path(sys.argv[1]),Path(sys.argv[2]),'6'); assert a == b; assert b['ANTHROPIC_AUTH_TOKEN']=='cover-provider-test'"
-        result=subprocess.run([sys.executable,'-c',probe,str(ENGINE),str(self.p)],cwd=DESKTOP/'backend',
-                              env={**os.environ,'DEEPSEEK_API_KEY':'cover-provider-test'},capture_output=True,text=True,timeout=20)
-        self.assertEqual(result.returncode,0,'Cover environment must match the writing environment')
     def test_real_webgl_preview_and_final_pngs_have_exact_sizes_and_keep_candidates(self):
         from PIL import Image, ImageStat
         launch=self.activate();work=self.compose(launch)

@@ -20,14 +20,9 @@ load_dotenv()
 # =============================================================================
 OPENING_QUOTE: bool = True
 
-LLM_SERVER_STEP1: str = ""
-LLM_MODEL_STEP1: str = ""
 STEP1_AGENT_SKILL: str = ""
 
-NUM_SEGMENTS: int = 10
 STEP1_5_SPLIT_MODE: str = "punctuation"
-LLM_SERVER_STEP1_5: str = ""
-LLM_MODEL_STEP1_5: str = ""
 
 LLM_SERVER_STEP2: str = ""
 LLM_MODEL_STEP2: str = ""
@@ -136,15 +131,10 @@ COVER_IMAGE_COUNT: int = 1
 _YAML_SCHEMA: Dict[str, Dict[str, str]] = {
     "global": {"opening_quote": "OPENING_QUOTE"},
     "step1": {
-        "llm_server": "LLM_SERVER_STEP1",
-        "llm_model": "LLM_MODEL_STEP1",
         "agent_skill": "STEP1_AGENT_SKILL",
     },
     "step1_5": {
-        "num_segments": "NUM_SEGMENTS",
         "split_mode": "STEP1_5_SPLIT_MODE",
-        "llm_server": "LLM_SERVER_STEP1_5",
-        "llm_model": "LLM_MODEL_STEP1_5",
     },
     "step2": {
         "llm_server": "LLM_SERVER_STEP2",
@@ -262,10 +252,7 @@ _YAML_SCHEMA: Dict[str, Dict[str, str]] = {
 }
 
 _PARAM_CONSTANTS = {
-    "num_segments": "NUM_SEGMENTS",
     "step1_5_split_mode": "STEP1_5_SPLIT_MODE",
-    "llm_server_step1_5": "LLM_SERVER_STEP1_5",
-    "llm_model_step1_5": "LLM_MODEL_STEP1_5",
     "image_size": "IMAGE_SIZE",
     "video_size": "VIDEO_SIZE",
     "llm_model_step2": "LLM_MODEL_STEP2",
@@ -470,8 +457,6 @@ class Config:
     SEEDREAM_V5_MIN_PIXELS = 3686400
     # Seedream 5 rejects larger images ("image area must be at most 4624220 pixels"); larger sizes are requested smaller and scaled up.
     SEEDREAM_V5_MAX_PIXELS = 4624220
-    MIN_NUM_SEGMENTS = 5
-    MAX_NUM_SEGMENTS = 100
     SPEECH_SPEED_WPM = 250
 
     @classmethod
@@ -526,45 +511,10 @@ class Config:
         raise ValueError(f"不支持的模型类型: {model_type}")
 
     @classmethod
-    def validate_image_prompt_template(cls, template_name: str) -> str:
-        """Validate and normalize a configured step-4 image prompt template name."""
-        from core.prompts import (
-            DEFAULT_STEP4_IMAGE_PROMPT_TEMPLATE,
-            get_step4_image_description_prompt_template,
-        )
-
-        name = str(template_name or DEFAULT_STEP4_IMAGE_PROMPT_TEMPLATE).strip()
-        name = name or DEFAULT_STEP4_IMAGE_PROMPT_TEMPLATE
-        get_step4_image_description_prompt_template(name)
-        return name
-
-    @classmethod
-    def validate_parameters(
-        cls,
-        num_segments: int,
-        llm_server: str,
-        image_server: str,
-        tts_server: str,
-        image_model: str,
-        image_size: str,
-        *,
-        llm_model: str = None,
-        image_prompt_template: str = None,
-    ) -> None:
-        """验证所有参数的有效性"""
-        if not cls.MIN_NUM_SEGMENTS <= num_segments <= cls.MAX_NUM_SEGMENTS:
-            raise ValueError(f"num_segments必须在{cls.MIN_NUM_SEGMENTS}-{cls.MAX_NUM_SEGMENTS}之间")
-        if llm_server not in cls.SUPPORTED_LLM_SERVERS:
-            raise ValueError(f"不支持的LLM服务商: {llm_server}，支持的服务商: {cls.SUPPORTED_LLM_SERVERS}")
-        if llm_model is not None and not str(llm_model).strip():
-            raise ValueError("LLM模型不能为空")
+    def validate_image_parameters(cls, image_server: str, image_model: str, image_size: str) -> None:
         if image_server not in cls.SUPPORTED_IMAGE_SERVERS:
             raise ValueError(f"不支持的图像服务商: {image_server}，支持的服务商: {cls.SUPPORTED_IMAGE_SERVERS}")
-        if tts_server not in cls.SUPPORTED_TTS_SERVERS:
-            raise ValueError(f"不支持的TTS服务商: {tts_server}，支持的服务商: {cls.SUPPORTED_TTS_SERVERS}")
         cls.validate_model_provider_pair("image", image_server, image_model)
-        if image_prompt_template is not None:
-            cls.validate_image_prompt_template(image_prompt_template)
         if not cls.validate_image_size(image_size, image_model):
             raise ValueError(
                 f"图像尺寸 {image_size} 不符合模型 {image_model} 的要求。\n"

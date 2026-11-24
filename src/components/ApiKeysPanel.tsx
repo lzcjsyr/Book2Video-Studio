@@ -1,98 +1,13 @@
 import { useI18n } from "../i18n";
 import { useId, useEffect, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { AlertTriangle, CheckCircle2, Cloud, Image, KeyRound, MessageSquareText, ShieldCheck, TerminalSquare, Volume2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cloud, Image, KeyRound, MessageSquareText, ShieldCheck, Volume2, XCircle } from "lucide-react";
 import { api } from "../api";
-import type { ClaudeCodeMode, ClaudeCodeStatus, Settings } from "../types";
+import type { Settings } from "../types";
 import { adcModels, distinctGaps, keyNeeds, keyProviders, providerName, unmet, type KeyGroup, type KeyNeed } from "../keys";
 
 export type KeyStatus = { saved: Record<string, boolean>; applied: boolean };
 type AdcCheck = { ok?: boolean; checked?: string; project?: string; location?: string; message?: string; models?: { model: string; ok: boolean; message?: string }[] };
-
-const claudeModes: { id: ClaudeCodeMode; title: string; description: string }[] = [
-  { id: "api_key", title: "Built-in Claude Code · API key",
-    description: "Grist's own Claude Code, connected to the language-model providers chosen for Writing, Motion, Assembly and HTML covers. Uses the keys below." },
-  { id: "subscription", title: "Your Claude Code · subscription",
-    description: "The Claude Code installed on this computer, signed in with your Claude account. Your Claude plan covers Writing, Motion, Assembly and HTML cover sessions; they need no key." },
-];
-
-/** Which Claude Code runs the Writing and Motion sessions, and whether the installed one is signed in. */
-function ClaudeCodeSection({ mode, onMode }: { mode: ClaudeCodeMode; onMode?: (mode: ClaudeCodeMode) => void }) {
-  const uid = useId();
-  const { t } = useI18n();
-  const native = isTauri();
-  const [local, setLocal] = useState<ClaudeCodeStatus["local"]>(null);
-  const [checking, setChecking] = useState(false);
-  const [error, setError] = useState("");
-  const check = async () => {
-    setChecking(true);
-    setError("");
-    try {
-      setLocal((await invoke<ClaudeCodeStatus>("claude_code_status", { check: true })).local);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setChecking(false);
-    }
-  };
-  useEffect(() => {
-    if (native && mode === "subscription" && !local) void check();
-  }, [native, mode]);
-  const choose = async (next: ClaudeCodeMode) => {
-    setError("");
-    try {
-      await invoke<ClaudeCodeStatus>("claude_code_set_mode", { mode: next });
-      onMode?.(next);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-  return (
-    <section className="credential-group claude-code-modes" aria-labelledby={`${uid}-claude-code-title`}>
-      <h4 id={`${uid}-claude-code-title`}><TerminalSquare size={15} /> {t("Claude Code")}</h4>
-      <p className="small-muted">{t("Runs the interactive Writing, Motion, Assembly and HTML cover sessions.")}</p>
-      <div className="mode-options" role="radiogroup" aria-labelledby={`${uid}-claude-code-title`}>
-        {claudeModes.map((option) => (
-          <label key={option.id} className={`mode-option ${mode === option.id ? "selected" : ""}`}>
-            <input type="radio" name={`${uid}-claude-code-mode`} checked={mode === option.id} disabled={!native}
-              onChange={() => void choose(option.id)} />
-            <span>
-              <strong>{t(option.title)}</strong>
-              <span className="small-muted">{t(option.description)}</span>
-            </span>
-          </label>
-        ))}
-      </div>
-      {mode === "subscription" && (
-        <div className="claude-login" aria-live="polite">
-          {checking ? (
-            <span className="small-muted">{t("Looking for Claude Code on this computer…")}</span>
-          ) : local?.error ? (
-            <span className="key-missing"><XCircle size={13} /> {t(local.error)}</span>
-          ) : local?.logged_in ? (
-            <span className="key-ok">
-              <CheckCircle2 size={13} />{" "}
-              {t("Signed in{account}{plan}", {
-                account: local.email ? " · " + local.email : "",
-                plan: local.subscription ? " · " + t("{plan} plan", { plan: local.subscription.replace(/^\w/, (c) => c.toUpperCase()) }) : "",
-              })}
-            </span>
-          ) : local ? (
-            <span className="key-missing"><AlertTriangle size={13} /> {t("Not signed in. Run `claude` in Terminal and sign in, then check again.")}</span>
-          ) : null}
-          {local?.path && !checking && <span className="small-muted context-path">{local.version} · {local.path}</span>}
-          <div className="adc-check">
-            <button className="button" type="button" disabled={!native || checking} onClick={() => void check()}>
-              {checking ? t("Checking…") : t("Check again")}
-            </button>
-            <span className="small-muted">{t("Agent segmentation still uses an API key.")}</span>
-          </div>
-        </div>
-      )}
-      {error && <p className="credential-error" role="alert">{t(error)}</p>}
-    </section>
-  );
-}
 
 /** Google ADC has no key to save; its login, project and models are checked against Google instead. */
 function GoogleLoginCheck({ settings, needs }: { settings?: Settings | null; needs: KeyNeed[] }) {
@@ -153,18 +68,15 @@ function GoogleLoginCheck({ settings, needs }: { settings?: Settings | null; nee
 
 const groups: { id: KeyGroup; title: string; description: string; icon: typeof Image }[] = [
   { id: "text", title: "Language models", icon: MessageSquareText,
-    description: "Write the manuscript, plan the visuals and drive Claude Code for motion segments. Each step uses the provider chosen in its settings; one provider can serve them all." },
+    description: "Generate the content summary and refine image prompts." },
   { id: "image", title: "Image generation", icon: Image,
     description: "Segment images, the opening background and covers. Google ADC uses your Google Cloud login instead of a key." },
   { id: "voice", title: "Voice", icon: Volume2, description: "Narration for every segment and the opening quote." },
 ];
 
 /** Saved provider keys, grouped by what they do, against what the project's settings need. */
-export default function ApiKeysPanel({ settings, motion = false, claudeMode = "api_key", onClaudeMode, onStatus }: {
+export default function ApiKeysPanel({ settings, onStatus }: {
   settings?: Settings | null;
-  motion?: boolean;
-  claudeMode?: ClaudeCodeMode;
-  onClaudeMode?: (mode: ClaudeCodeMode) => void;
   onStatus?: (status: KeyStatus) => void;
 }) {
   const uid = useId();
@@ -200,7 +112,7 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
       update(result);
       setDrafts((d) => ({ ...d, [key]: "" }));
       setMessage(t(value === null ? "{provider} key removed." : "{provider} key saved.", { provider: providerName(key) }) + " " +
-        t(result.applied ? "New jobs and new Claude Code sessions use the updated keys." : "Keys will apply when the production service starts."));
+        t(result.applied ? "New jobs use the updated keys." : "Keys will apply when the production service starts."));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -208,7 +120,7 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
     }
   };
 
-  const needs = settings ? keyNeeds(settings, { motion, subscription: claudeMode === "subscription" }) : [];
+  const needs = settings ? keyNeeds(settings) : [];
   const missing = unmet(needs, status?.saved);
   const usesOf = (key: string) => needs.filter((n) => n.key === key).map((n) => t(n.use));
 
@@ -230,7 +142,6 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
           <button className="button" disabled={!!busy} onClick={() => void load()}>{t("Retry")}</button>
         </div>
       )}
-      <ClaudeCodeSection mode={claudeMode} onMode={onClaudeMode} />
       {settings && status && (
         <section className={`key-needs ${missing.length ? "incomplete" : "complete"}`} aria-labelledby={`${uid}-key-needs-title`}>
           <h4 id={`${uid}-key-needs-title`}>
@@ -306,7 +217,7 @@ export default function ApiKeysPanel({ settings, motion = false, claudeMode = "a
         </section>
       ))}
       <p className="small-muted credential-footnote">
-        {t("New jobs and new Claude Code sessions use the saved keys. Running jobs and terminal sessions keep their current keys.")}
+        {t("New jobs use the saved keys. Running jobs keep their current keys.")}
       </p>
     </div>
   );

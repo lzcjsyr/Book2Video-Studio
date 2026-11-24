@@ -61,7 +61,7 @@ if step == '5' and mode in (None, 'agent'):
     (p / 'final_video.mp4').write_bytes(f'video {time.time()}'.encode())
     if mode is None and request['settings'].get('three_by_four', {}).get('enabled', True):
         (p / 'final_video_3x4.mp4').write_bytes(b'portrait')
-    if mode == 'agent': result['args'] = request['launch']['args']
+    if mode == 'agent': result['launch'] = request['launch']
 if step == '5' and mode == 'three_by_four':
     (p / 'final_video_3x4.mp4').write_bytes(f'portrait {time.time()}'.encode())
 if step == '6' and mode == 'agent':
@@ -328,14 +328,13 @@ class AutoRunTests(unittest.TestCase):
         self.settings({'step5': {'assembly_method': 'agent', 'video_size': '320x180'}})
         job = self.studio.run_job(self.id, {'step': '5', 'mode': 'agent'})
         self.wait()
-        args = self.studio.jobs[job['id']]['result']['args']
-        self.assertNotIn('开始。', args)
-        self.assertNotIn('--allowedTools', args)
-        self.assertEqual(args[args.index('--add-dir') - 2], '--append-system-prompt-file')
-        with self.assertRaisesRegex(ValueError, 'interactive Claude Code terminal'):
+        launch = self.studio.jobs[job['id']]['result']['launch']
+        self.assertNotIn('first_message', launch)
+        self.assertEqual(launch['agent'], 'claude')
+        with self.assertRaisesRegex(ValueError, 'interactive Agent terminal'):
             self.studio.run_job(self.id, {'step': '5'})
         self.settings({'step5': {'assembly_method': 'standard'}})
-        with self.assertRaisesRegex(ValueError, 'Choose Claude Code editing'):
+        with self.assertRaisesRegex(ValueError, 'Choose Agent editing'):
             self.studio.run_job(self.id, {'step': '5', 'mode': 'agent'})
 
     def test_a_background_session_runs_claude_code_in_print_mode(self):
@@ -347,17 +346,18 @@ class AutoRunTests(unittest.TestCase):
                           f'pathlib.Path({str(project)!r}, "final_video.mp4").write_bytes(b"delivered")\n'
                           'print(json.dumps({"is_error": False, "result": "done"}))\n')
         claude.chmod(0o755)
-        launch = {'cwd': str(project), 'context': str(project / '.studio/agent/one/context.md'), 'args': ['--session-id', 'one', '--add-dir', str(project)],
+        launch = {'cwd': str(project), 'context': str(project / '.studio/agent/one/context.md'), 'agent': 'claude',
                   'assembly_edit': {'folder': '.studio/edits/one', 'delivered_before': None}}
-        with patch.dict(os.environ, {'STUDIO_CLAUDE': str(claude)}), patch.object(headless, 'claude_command', return_value=(str(claude), {})):
+        with patch.object(headless, 'discover', return_value=(str(claude), {})):
             result = headless.run_session({'step': '5', 'project': str(project), 'launch': launch})
         self.assertTrue(result['success'])
         argv = json.loads((project / 'argv.json').read_text())
-        self.assertEqual(argv[:2], ['-p', headless.first_message()])
-        for flag in ['--permission-mode', 'acceptEdits', '--output-format', 'json', '--session-id']: self.assertIn(flag, argv)
+        self.assertEqual(argv[:2], ['--print', headless.first_message()])
+        self.assertEqual(argv[2:6], ['--append-system-prompt-file', launch['context'], '--output-format', 'json'])
+        self.assertNotIn('--permission-mode', argv)
         (project / 'final_video.mp4').unlink()
         claude.write_text(f'#!{sys.executable}\nprint("{{\\"is_error\\": false}}")\n')
-        with patch.object(headless, 'claude_command', return_value=(str(claude), {})), self.assertRaisesRegex(ValueError, 'without delivering'):
+        with patch.object(headless, 'discover', return_value=(str(claude), {})), self.assertRaisesRegex(ValueError, 'without delivering'):
             headless.run_session({'step': '5', 'project': str(project), 'launch': launch})
 
     def test_runs_are_listed_planned_and_stopped_over_http(self):

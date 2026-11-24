@@ -168,7 +168,7 @@ export default function TakePicker({
           <section>
             <h4><Clapperboard size={12} /> {t("Motion clips")} <span>{clips.length}</span></h4>
             {clips.length ? <ul className="take-grid">{clips.map(tile)}</ul>
-              : <p className="take-empty">{t("No motion clips yet. Claude Code designs them with HTML / Three.js.")}</p>}
+              : <p className="take-empty">{t("No motion clips yet. Agent designs them with HTML / Three.js.")}</p>}
           </section>
         </>}
       </div>
@@ -179,7 +179,7 @@ export default function TakePicker({
             : queue === "queued" ? <ListX size={13} /> : queue === "add" ? <ListPlus size={13} /> : <Sparkles size={13} />} {t(newImageLabel)}
         </button>
         {!opening && (
-          <button className="button small" disabled={locked} title={locked ? t(lockReason) : t("Claude Code designs a new clip; the existing ones are kept")} onClick={onNewClip}>
+          <button className="button small" disabled={locked} title={locked ? t(lockReason) : t("Agent designs a new clip; the existing ones are kept")} onClick={onNewClip}>
             <Plus size={13} /><Clapperboard size={13} /> {t("New motion clip")}
           </button>
         )}

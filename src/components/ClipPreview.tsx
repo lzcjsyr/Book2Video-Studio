@@ -8,7 +8,7 @@ import type { Take } from "../types";
 
 /**
  * One motion clip up close: its video (or keyframes until it is rendered) and what can be done
- * with it — use it, render it, or have Claude Code revise this clip.
+ * with it — use it, render it, or have Agent revise this clip.
  */
 export default function ClipPreview({
   project,
@@ -36,11 +36,11 @@ export default function ClipPreview({
   inUse: boolean;
   narration: string;
   version: number;
-  /** Claude Code works on narration segments; the opening's clips can only be viewed. */
+  /** Agent works on narration segments; the opening's clips can only be viewed. */
   revisable: boolean;
-  /** Claude Code has this clip open now. */
+  /** Agent has this clip open now. */
   agentHere: boolean;
-  /** Claude Code is busy with another segment. */
+  /** Agent is busy with another segment. */
   agentElsewhere: number | null;
   locked: boolean;
   lockReason: string;
@@ -87,8 +87,8 @@ export default function ClipPreview({
           ) : (
             <div className="preview-empty">
               <Clapperboard size={28} />
-              <h2>{t(agentHere ? "Claude Code is designing this clip." : "This clip has no keyframes yet.")}</h2>
-              <p>{t(agentHere ? "Keyframes appear here as Claude Code saves its snapshots." : "Revise it with Claude Code to design it.")}</p>
+              <h2>{t(agentHere ? "Agent is designing this clip." : "This clip has no keyframes yet.")}</h2>
+              <p>{t(agentHere ? "Keyframes appear here as Agent saves its snapshots." : "Revise it with Agent to design it.")}</p>
             </div>
           )}
           {shown && <span className="preview-note">{t("Keyframe {index} of {count}", { index: frames.indexOf(shown) + 1, count: frames.length })}</span>}
@@ -130,7 +130,7 @@ export default function ClipPreview({
             <>
               <span className="small-muted">{motion?.progress?.phase === "capture"
                 ? t("Capturing frame {completed} of {total}", { completed: motion.progress.completed, total: motion.progress.total })
-                : t("Claude Code is working on this clip in the right pane.")}</span>
+                : t("Agent is working on this clip in the right pane.")}</span>
               <button className="button primary" disabled={!motion?.composition} onClick={onFinish}>
                 <Check size={14} /> {t("Finish session")}
               </button>
@@ -149,9 +149,9 @@ export default function ClipPreview({
               )}
               {revisable && (
                 <button className="button primary" disabled={locked || agentElsewhere !== null}
-                  title={agentElsewhere !== null ? t("Claude Code is working on segment {index}.", { index: agentElsewhere }) : locked ? t(lockReason) : undefined}
+                  title={agentElsewhere !== null ? t("Agent is working on segment {index}.", { index: agentElsewhere }) : locked ? t(lockReason) : undefined}
                   onClick={onRevise}>
-                  <TerminalSquare size={14} /> {t("Revise with Claude Code")}
+                  <TerminalSquare size={14} /> {t("Revise with Agent")}
                 </button>
               )}
             </>

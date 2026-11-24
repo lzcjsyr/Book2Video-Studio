@@ -79,9 +79,9 @@ test("persisted notices, revision labels, and known service errors render in Chi
   assert.equal(
     translate(
       "zh-CN",
-      "DeepSeek key saved. New jobs and new Claude Code sessions use the updated keys.",
+      "DeepSeek key saved. New jobs use the updated keys.",
     ),
-    "DeepSeek 密钥已保存。新任务和新的 Claude Code 会话将使用更新后的密钥。",
+    "DeepSeek 密钥已保存。新任务会使用更新后的密钥。",
   );
   assert.equal(translate("zh-CN", "5.5s"), "5.5秒");
 });

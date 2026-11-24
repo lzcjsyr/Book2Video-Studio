@@ -5,18 +5,14 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCollapsed } from "../collapse";
 import { useI18n } from "../i18n";
 import { libraryChoices } from "../library";
-import { languageModelChoices } from "../keys";
-import type { Bootstrap, ClaudeCodeMode } from "../types";
-import AgentConnection from "./AgentConnection";
+import type { Bootstrap } from "../types";
 import type { WritingOptions } from "../writing";
 
-export default function WritingSetup({ value, bootstrap, disabled, pending, subscription, onClaudeMode, onChange, onSave, onEditSkill }: {
+export default function WritingSetup({ value, bootstrap, disabled, pending, onChange, onSave, onEditSkill }: {
   value: WritingOptions;
   bootstrap: Bootstrap | null;
   disabled: boolean;
   pending: boolean;
-  subscription: boolean;
-  onClaudeMode: (mode: ClaudeCodeMode) => void;
   onChange: (value: WritingOptions) => void;
   onSave: () => void;
   onEditSkill: () => void;
@@ -28,7 +24,7 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
   const [collapsed, toggle] = useCollapsed("writing-setup");
   const skill = skills.find((s) => s.id === value.agent_skill);
   const summary = [
-    t(value.mode === "source" ? "Write from a document" : "Write directly with Claude Code"),
+    t(value.mode === "source" ? "Write from a document" : "Write directly with Agent"),
     value.agent_skill ? (skill ? t(skill.label) : value.agent_skill) : t("No skill"),
   ].join(" · ");
   return <section className={"writing-setup" + (collapsed ? " collapsed" : "")} aria-label={t("Writing setup")}>
@@ -49,7 +45,7 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
         <FileText size={17} /><span><strong>{t("Write from a document")}</strong><small>{t("Use a manuscript, book, or source folder")}</small></span>
       </button>
       <button type="button" aria-pressed={value.mode === "direct"} disabled={disabled} onClick={() => change("mode", "direct")}>
-        <TerminalSquare size={17} /><span><strong>{t("Write directly with Claude Code")}</strong><small>{t("Give your topic and instructions in the terminal")}</small></span>
+        <TerminalSquare size={17} /><span><strong>{t("Write directly with Agent")}</strong><small>{t("Give your topic and instructions in the terminal")}</small></span>
       </button>
     </div>
     {value.mode === "source" ? <label className="field writing-source">
@@ -67,7 +63,7 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
           }}><FolderOpen size={14} />{t("Choose folder")}</button>
         </>}
       </div>
-    </label> : <p className="small-muted writing-mode-description">{t("No source document is required. Claude Code will wait for your writing instructions in the terminal.")}</p>}
+    </label> : <p className="small-muted writing-mode-description">{t("No source document is required. Agent will wait for your writing instructions in the terminal.")}</p>}
     <div className="writing-skill-row">
       <label className="field">
         <span>{t("Writing skill")}</span>
@@ -79,20 +75,8 @@ export default function WritingSetup({ value, bootstrap, disabled, pending, subs
       </label>
       <button className="button small" disabled={disabled} onClick={onEditSkill}><FileText size={14} />{t("Edit or import writing skills")}</button>
     </div>
-    {!value.agent_skill && <p className="small-muted">{t("Claude Code follows your instructions without a writing skill. The app's output format still applies.")}</p>}
-    <details className="writing-agent-settings">
-      <summary>{t("Writing agent provider & model")}</summary>
-      <AgentConnection mode={subscription ? "subscription" : "api_key"} disabled={disabled} onMode={onClaudeMode} />
-      {subscription && <p className="small-muted">{t("Not used now: Writing runs in your own Claude Code on your Claude subscription. Change this in Settings → API keys.")}</p>}
-      <div className="form-grid">
-        <label className="field"><span>{t("Writing agent provider")}</span><select value={value.llm_server} disabled={disabled || subscription} onChange={(e) => change("llm_server", e.target.value)}>
-          {!languageModelChoices.some((c) => c.id === value.llm_server) && <option value={value.llm_server}>{t("Unavailable: {id}", { id: value.llm_server || "—" })}</option>}
-          {languageModelChoices.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-        </select></label>
-        <label className="field"><span>{t("Writing agent model")}</span><input value={value.llm_model} disabled={disabled || subscription} onChange={(e) => change("llm_model", e.target.value)} /></label>
-      </div>
-    </details>
-    {pending && <p className="small-muted" role="status">{t("Your selections will also be saved when you activate Claude Code.")}</p>}
+    {!value.agent_skill && <p className="small-muted">{t("Agent follows your instructions without a writing skill. The app's output format still applies.")}</p>}
+    {pending && <p className="small-muted" role="status">{t("Your selections will also be saved when you activate Agent.")}</p>}
     </div>
   </section>;
 }

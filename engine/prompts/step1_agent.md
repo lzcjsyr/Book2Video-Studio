@@ -1,4 +1,4 @@
-<!-- 第一步 · Claude Code 写作模板。会话提示 = agent_rules.md 的 rules + 本文件的 main。 -->
+<!-- 第一步 · Agent 写作模板。会话提示 = agent_rules.md 的 rules + 本文件的 main。 -->
 <!-- {source} 由 source 或 direct 节填入，{skill} 由 skill 或 no_skill 节填入。保留 section 标记和花括号变量。 -->
 
 <!-- section: main -->

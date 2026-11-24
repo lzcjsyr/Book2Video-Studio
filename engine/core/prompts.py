@@ -67,7 +67,6 @@ def _load_prompt_template_definitions(filename: str) -> dict[str, dict[str, str]
 # ================================================================================
 # 动态加载提示词模板
 # ================================================================================
-STEP1_5_SEGMENT_PROMPT_TEMPLATE = _load_prompt_file("step1_5_segment.md")
 description_summary_system_prompt = _load_prompt_file("step2_summary.md")
 STEP4_IMAGE_PROMPT_SAFETY_TEMPLATE = _load_prompt_file("step4_safety.md")
 STEP4_IMAGE_PROMPT_TEMPLATE_DEFINITIONS = _load_prompt_template_definitions("step4_image_templates.yaml")
@@ -134,7 +133,6 @@ def _read_step4_palette(skills_root: str | os.PathLike, palette: str) -> str:
 # 导出配置
 # ================================================================================
 __all__ = [
-    'STEP1_5_SEGMENT_PROMPT_TEMPLATE',
     'description_summary_system_prompt',
     'IMAGE_DESCRIPTION_PROMPT_TEMPLATE',
     'IMAGE_PROMPT_SAFETY_TEMPLATE',

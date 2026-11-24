@@ -1,6 +1,5 @@
 // Assemble everything Grist ships besides its own binary:
-//   build/runtime  Python with the engine's packages (including the Claude Code
-//                  CLI bundled by claude-agent-sdk), Node.js, the pinned
+//   build/runtime  Python with the engine's packages, Node.js, the pinned
 //                  browser automation libraries and Chrome, FFmpeg and FFprobe
 //   build/engine   the production engine (engine/): code, prompts, skills, sound effects, music
 //                  and defaults
@@ -194,7 +193,7 @@ async function stageRuntime() {
   }
 
 
-  // Skills and the Claude Code agent run `python`; macOS has no such command and its
+  // Skills and local Agents run `python`; macOS has no such command and its
   // python3 is a stub that asks to install developer tools. Point both at the bundled one.
   for (const name of ["python", "python3"]) {
     fs.writeFileSync(path.join(work, "bin", name),
@@ -205,7 +204,6 @@ async function stageRuntime() {
   const relative = (p) => path.relative(work, p).split(path.sep).join("/");
   const manifest = {
     python: pythonBin,
-    claude: `${sitePackages}/claude_agent_sdk/_bundled/claude`,
     node: "node/bin/node",
     motion_modules: "motion/node_modules",
     chrome: relative(chrome),
@@ -278,7 +276,7 @@ function smokeTest() {
   for (const folder of ["engine", "backend"]) {
     run(tool("python"), ["-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash", path.join(build, folder)], { env });
   }
-  run(tool("python"), ["-c", "import sys; sys.path.insert(0, sys.argv[1]); import core.pipeline.steps, claude_agent_sdk, fitz, moviepy, docx, yaml; print('Python engine imports: ok')",
+  run(tool("python"), ["-c", "import sys; sys.path.insert(0, sys.argv[1]); import core.pipeline.steps, fitz, moviepy, docx, yaml; print('Python engine imports: ok')",
     path.join(build, "engine")], { env });
   run(tool("python"), [path.join(root, "scripts/check_engine_contract.py"), path.join(build, "engine"), path.join(build, "backend")], { env });
   // The agent's shell finds the bundled Python by name, and it can read every input format.
@@ -286,7 +284,6 @@ function smokeTest() {
     'command -v python | grep -qF "$RUNTIME/bin/python" && python -c "import fitz, pdfplumber, ebooklib, mobi, docx, yaml; print(\'python on PATH with extractors: ok\')"'],
   { env: { ...env, RUNTIME: runtime } }).toString().trim());
   const version = (name, args) => execFileSync(tool(name), args, { env }).toString().split("\n")[0].trim();
-  console.log("Claude Code:", version("claude", ["--version"]));
   console.log("Node.js:", version("node", ["--version"]));
   run(tool("node"), ["-e", "const {createRequire}=require('node:module'); const r=createRequire(process.argv[1]+'/package.json'); for(const p of ['puppeteer-core','gsap','three']) r.resolve(p); console.log('Browser libraries: ok')", tool("motion_modules")], {env});
   console.log("Chrome:", version("chrome", ["--version"]));

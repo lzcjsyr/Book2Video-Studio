@@ -2510,23 +2510,6 @@ code {
   height: 34px;
   white-space: normal;
 }
-.writing-agent-settings {
-  margin-top: 16px;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-}
-.writing-agent-settings summary {
-  color: var(--text-3);
-  font-size: var(--fs-s);
-  cursor: pointer;
-  width: fit-content;
-}
-.writing-agent-settings summary:hover {
-  color: var(--text);
-}
-.writing-agent-settings .form-grid {
-  margin-top: 12px;
-}
 .opening-quote-panel {
   border-color: rgba(235, 162, 126, 0.24);
 }
@@ -3290,7 +3273,7 @@ code {
   background: var(--accent-soft);
 }
 
-/* ---------- Claude Code pane ------------------------------------------- */
+/* ---------- Agent pane ------------------------------------------- */
 .pane-resizer {
   width: 1px;
   min-width: 1px;
@@ -3374,9 +3357,6 @@ code {
   font-size: var(--fs-2xs);
   font-weight: 500;
   color: var(--text-2);
-}
-.agent-mode {
-  margin: 4px 0 0 14px;
 }
 .context-path {
   margin: 6px 0 0 14px;
@@ -4068,61 +4048,6 @@ code {
 .adc-result li.failed {
   color: var(--warn);
 }
-.claude-code-modes {
-  margin-top: 4px;
-}
-.mode-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 10px;
-  margin-top: 10px;
-}
-.mode-option {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 12px 14px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-l);
-  background: var(--bg-1);
-  cursor: pointer;
-  transition:
-    border-color 0.12s,
-    background 0.12s;
-}
-.mode-option:hover {
-  border-color: var(--line-3);
-}
-.mode-option.selected {
-  border-color: var(--accent-line);
-  background: var(--accent-softer);
-  box-shadow: inset 0 0 0 1px var(--accent-line);
-}
-.mode-option input {
-  margin-top: 3px;
-}
-.mode-option > span {
-  display: grid;
-  gap: 4px;
-}
-.mode-option strong {
-  font-size: var(--fs-m);
-  font-weight: 600;
-  color: var(--text);
-}
-.claude-login {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-  font-size: var(--fs-s);
-}
-.claude-login > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow-wrap: anywhere;
-}
-
 /* Skills & templates library. */
 #library-settings-panel {
   display: flex;
@@ -4473,7 +4398,7 @@ code {
   }
 }
 
-/* Covers share one work area with the Claude Code pane, leaving room for the preview. */
+/* Covers share one work area with the Agent pane, leaving room for the preview. */
 .covers-workspace .cover-setup {
   padding: 0 0 18px;
   border-bottom: 1px solid var(--line);
@@ -4547,7 +4472,7 @@ code {
 .assembly-methods { margin-bottom: 0; }
 .assembly-methods .cover-method { padding: 11px 14px; }
 .assembly-methods .cover-method strong { margin-bottom: 3px; }
-/* Claude Code editing: the brief it starts from, then the session's actions. */
+/* Agent editing: the brief it starts from, then the session's actions. */
 .editing-brief {
   margin-top: 14px;
   padding: 16px 18px;
@@ -5196,4 +5121,63 @@ code {
     position: static;
     order: -1;
   }
+}
+
+/* Local Agents */
+.local-agents > p {
+  margin: 0 0 14px;
+}
+.local-agent-list {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-1);
+}
+.local-agent-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+.local-agent-row + .local-agent-row {
+  border-top: 1px solid var(--line);
+}
+.local-agent-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  background: var(--bg-2);
+  color: var(--text-3);
+}
+.local-agent-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 9px;
+}
+.local-agent-status,
+.local-agent-path {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.local-agent-status::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 7px 2px 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+.local-agent-status.success { color: var(--ok); }
+.local-agent-status.warning { color: var(--warn); }
+.local-agent-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

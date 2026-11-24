@@ -43,13 +43,13 @@ export default function CoverSetup({ settings, library, disabled, onChange, onEd
         className={`cover-method${method === value ? " selected" : ""}`} aria-pressed={method === value}
         disabled={disabled} onClick={() => onChange("cover_method", value)}>
         {value === "api" ? <Image size={18} /> : <TerminalSquare size={18} />}
-        <span><strong>{t(value === "api" ? "Image API" : "Claude Code + HTML / Three.js")}</strong>
+        <span><strong>{t(value === "api" ? "Image API" : "Agent + HTML / Three.js")}</strong>
           <small>{t(value === "api" ? "Generate cover candidates with your image provider." : "Design editable HTML covers with 3D scenes, then render PNGs.")}</small></span>
       </button>)}
     </div>
     <div className="cover-copy"><span>{t("Selected cover copy")}</span><strong>{copy.title || t("Choose a cover title in Writing.")}</strong>
       {copy.subtitle && <p>{copy.subtitle}</p>}<small>{t("Edit the title and subtitle in Writing.")}</small></div>
-    {method === "agent" && <p className="small-muted">{t("Uses the same Claude Code login and agent provider as Writing.")} {t(agentMode)}</p>}
+    {method === "agent" && <p className="small-muted">{agentMode}</p>}
     <div className="cover-setup-fields">
       <fieldset className="cover-size-list" disabled={disabled}>
         <legend>{t("Cover sizes")}</legend>
