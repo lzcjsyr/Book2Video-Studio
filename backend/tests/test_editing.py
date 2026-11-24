@@ -279,16 +279,6 @@ print(json.dumps(report))
         outside=subprocess.run([*tool,'render-page','../../../text/raw.json','--seconds','1','--output','x.mp4'],cwd=work,capture_output=True,text=True,timeout=60)
         self.assertNotEqual(outside.returncode,0)
 
-    def test_two_pages_render_at_the_same_time_in_one_folder(self):
-        launch,work=self.prepare()
-        for name,colour in [('one','#c33'),('two','#3c3')]:
-            (work/f'{name}.html').write_text(f'<!doctype html><style>html,body{{margin:0;width:320px;height:180px;background:{colour}}}</style><div id="b"></div><script>const p=window.clipPayload;window.clip={{width:p.width,height:p.height,durationSeconds:p.durationSeconds,ready:Promise.resolve(),renderAt(t){{document.getElementById("b").textContent=t.toFixed(2)}}}};</script>')
-        tool=self.api_worker(launch,work)
-        runs=[subprocess.Popen([*tool,'render-page',f'{n}.html','--seconds','2','--output',f'{n}.mp4'],cwd=work,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for n in ['one','two']]
-        for run in runs:
-            _,errors=run.communicate(timeout=240);self.assertEqual(run.returncode,0,errors[-1500:])
-        for n in ['one','two']:self.assertEqual(json.loads((work/f'{n}.render.json').read_text())['frames'],60)
-
     def test_free_design_leaves_the_style_to_the_agent(self):
         self.settings(agent_skill='content-led')
         launch,_=self.prepare();prompt=Path(launch['context']).read_text()
@@ -306,6 +296,94 @@ print(json.dumps(report))
         self.assertNotEqual(signature(work,payload,entry='a.html'),before)
         # A changed page or script still counts.
         (work/'engine.js').write_text('changed');self.assertNotEqual(signature(work,payload,entry='a.html',ignore_media=True),before)
+
+    def test_assembly_helper_renders_composes_with_ass_and_delivers_atomically(self):
+        sys.path.insert(0, str(ENGINE))
+        from core.infra.motion.assembly import compose, run_manifest
+        _, work = self.prepare()
+        (work / 'scenes').mkdir(exist_ok=True)
+        (work / 'build').mkdir(exist_ok=True)
+        for name, colour in [('001', '#224466'), ('002', '#446622')]:
+            (work / f'scenes/{name}.html').write_text(
+                f'<!doctype html><style>html,body{{margin:0;width:320px;height:180px;overflow:hidden;background:{colour}}}</style>'
+                '<div id="t" style="color:#fff;font:24px sans-serif"></div>'
+                '<script>const p=window.clipPayload;window.clip={width:p.width,height:p.height,durationSeconds:p.durationSeconds,'
+                'ready:Promise.resolve(),renderAt(t){document.getElementById("t").textContent=t.toFixed(2)}};</script>',
+                encoding='utf-8',
+            )
+        ffmpeg('-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-ac', '1', '-ar', '48000', work / 'build/audio.wav')
+        ass = (
+            '[Script Info]\nScriptType: v4.00+\nPlayResX: 320\nPlayResY: 180\n\n'
+            '[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,'
+            'Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n'
+            'Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,12,1\n\n'
+            '[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n'
+            'Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,第一句\n'
+            'Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,第二句\n'
+        )
+        (work / 'build/captions.ass').write_text(ass, encoding='utf-8')
+        (work / 'build/captions.srt').write_text('1\n00:00:00,000 --> 00:00:02,000\n测试字幕\n', encoding='utf-8')
+        manifest = {
+            'fps': 30, 'workers': 2, 'audio': 'build/audio.wav', 'subtitles': 'build/captions.ass',
+            'clips': [{'html': 'scenes/001.html', 'frames': 30}, {'html': 'scenes/002.html', 'frames': 30}],
+        }
+        (work / 'render.json').write_text(json.dumps(manifest), encoding='utf-8')
+
+        # Hard-linked prior delivery must not be overwritten in place.
+        delivery = self.p / 'final_video.mp4'
+        delivery.write_bytes(b'old video bytes')
+        preserved = self.p / 'preserved_hardlink.mp4'
+        os.link(delivery, preserved)
+
+        report = run_manifest(work, delivery=delivery)
+        self.assertTrue(report['verified'])
+        self.assertEqual((report['width'], report['height'], report['fps'], report['frames']), (320, 180, 30, 60))
+        self.assertEqual(preserved.read_bytes(), b'old video bytes')
+        self.assertNotEqual(delivery.read_bytes(), b'old video bytes')
+        self.assertTrue((self.p / 'final_video.srt').is_file())
+        self.assertTrue((work / 'build/render_000.log').is_file())
+        self.assertTrue((work / 'build/render_001.log').is_file())
+
+        # Updating subtitles only needs compose; rendered clip stays untouched.
+        clip_mtime = (work / 'build/clip_000.mp4').stat().st_mtime_ns
+        (work / 'build/captions.ass').write_text(ass.replace('第二句', '改后第二句'), encoding='utf-8')
+        recomposed = compose(work, delivery=delivery)
+        self.assertTrue(recomposed['verified'])
+        self.assertEqual((work / 'build/clip_000.mp4').stat().st_mtime_ns, clip_mtime)
+
+        # Without subtitles, compose uses video stream copy.
+        self.settings(enable_subtitles=False)
+        (work / 'materials.json').write_text(
+            json.dumps({**editing.read(work / 'materials.json'), 'subtitles': False}), encoding='utf-8'
+        )
+        manifest.pop('subtitles')
+        (work / 'render.json').write_text(json.dumps(manifest), encoding='utf-8')
+        fast = compose(work, delivery=delivery)
+        self.assertTrue(fast['verified'])
+        self.assertEqual(fast['encoder'], 'copy')
+
+    def test_assembly_helper_rejects_audio_mismatch_and_outside_paths(self):
+        sys.path.insert(0, str(ENGINE))
+        from core.infra.motion.assembly import run_manifest
+        _, work = self.prepare()
+        (work / 'scenes').mkdir(exist_ok=True)
+        (work / 'build').mkdir(exist_ok=True)
+        (work / 'scenes/001.html').write_text('<p>hi</p>', encoding='utf-8')
+        ffmpeg('-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-ac', '1', '-ar', '48000', work / 'build/audio.wav')
+
+        (work / 'render.json').write_text(json.dumps({
+            'fps': 30, 'audio': 'build/audio.wav',
+            'clips': [{'html': 'scenes/001.html', 'frames': 30}],  # 1s vs 2s audio
+        }), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'Audio duration'):
+            run_manifest(work)
+
+        (work / 'render.json').write_text(json.dumps({
+            'fps': 30, 'audio': 'build/audio.wav',
+            'clips': [{'html': '../../../text/raw.json', 'frames': 60}],
+        }), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'inside the working directory'):
+            run_manifest(work)
 
 if __name__=='__main__':
     unittest.main()

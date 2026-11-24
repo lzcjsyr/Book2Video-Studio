@@ -186,11 +186,6 @@ class ProjectTests(unittest.TestCase):
         for content in [None, [], {}, 0]:
             with self.subTest(content=content), self.assertRaisesRegex(ValueError, 'manuscript cannot be empty'):
                 self.studio.save(project_id, {'kind': 'raw', 'value': {**copy.deepcopy(RAW), 'content': content}, 'expected_hash': ''})
-    def test_external_recording_invalidates_assembly_not_cover(self):
-        self.studio.detail(self.p.name)
-        recording(self.p/'voice/voice_1.wav')
-        d=self.studio.detail(self.p.name)
-        self.assertIn('5',d['state']['stale']);self.assertNotIn('6',d['state']['stale'])
     def test_new_recording_outdates_only_assembly(self):
         # Visuals come from the segment text; assembly fits each one, motion clips included, to its recording.
         script=copy.deepcopy(SCRIPT);script['segments'][1]['visualizer']='hf';atomic_json(self.p/'text/script.json',script)
