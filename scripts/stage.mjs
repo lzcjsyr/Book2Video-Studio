@@ -256,13 +256,20 @@ async function stageRuntime() {
   for (const file of ["package.json", "package-lock.json"]) fs.copyFileSync(path.join(lockDir, "motion", file),path.join(motion,file));
   run(node,[npm,"ci","--omit=dev","--no-audit","--no-fund"],{cwd:motion,env:nodeEnv});
   const chromeVersion = CHROME;
+  const chromeDir = path.join(work, "chrome");
+  const previousChrome = path.join(target, "chrome");
+  if (fs.existsSync(previousChrome)) {
+    // Reuse an already-staged Chrome of the same buildId instead of re-downloading ~100 MB.
+    copyTree(previousChrome, chromeDir);
+  }
+  console.log(`Preparing Chrome Headless Shell ${chromeVersion}...`);
   // v2 exposes an ESM build under exports; v3 is ESM-only at main.
   const browsersDir = path.join(motion, "node_modules/@puppeteer/browsers");
   const browsersPkg = JSON.parse(fs.readFileSync(path.join(browsersDir, "package.json"), "utf8"));
   const browsers = path.join(browsersDir, browsersPkg.exports?.["."]?.import ?? browsersPkg.main);
   const chrome = execFileSync(node, ["--input-type=module", "-e", `
     const { install, detectBrowserPlatform, Browser } = await import(${JSON.stringify(pathToFileURL(browsers).href)});
-    const result = await install({ cacheDir: ${JSON.stringify(path.join(work, "chrome"))},
+    const result = await install({ cacheDir: ${JSON.stringify(chromeDir)},
       browser: Browser.CHROMEHEADLESSSHELL, buildId: ${JSON.stringify(chromeVersion)}, platform: detectBrowserPlatform() });
     process.stdout.write(result.executablePath);`], { env: nodeEnv }).toString().trim();
 
