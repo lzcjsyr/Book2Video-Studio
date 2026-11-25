@@ -1,4 +1,4 @@
-"""The summary uses chat completions; Claude Code uses a separate Anthropic endpoint."""
+"""The summary uses the configured chat completions endpoint."""
 import json
 from pathlib import Path
 import sys
@@ -11,13 +11,12 @@ ENGINE = Path(__file__).resolve().parents[2] / 'build/engine'
 
 
 class SummaryGenerationTests(unittest.TestCase):
-    def test_mimo_summary_uses_chat_completions_and_keeps_agent_endpoint_separate(self):
+    def test_mimo_summary_uses_chat_completions(self):
         sys.path.insert(0, str(ENGINE))
         import httpx
         import openai
         from core.config import config, get_generation_params
         from core.infra.ai import llm_client
-        from core.infra.ai.claude_agent import build_step1_agent_env, build_step4_motion_agent_env
         from core.pipeline.steps import run_step_2
 
         received = []
@@ -35,13 +34,8 @@ class SummaryGenerationTests(unittest.TestCase):
             self.assertEqual(params['llm_base_url_step2'], 'https://api.xiaomimimo.com/v1')
             with httpx.Client(transport=httpx.MockTransport(respond)) as transport, \
                  patch.object(config, 'MIMO_API_KEY', 'fixture-mimo-key'), \
-                 patch.object(config, 'LLM_SERVER_STEP1', 'mimo'), \
-                 patch.object(config, 'LLM_MODEL_STEP1', 'mimo-v2.6-pro'), \
                  patch.object(llm_client, 'OpenAI', side_effect=lambda **kwargs: openai.OpenAI(**kwargs, http_client=transport)):
                 result = run_step_2(params['llm_server_step2'], params['llm_model_step2'], params['llm_base_url_step2'], str(project))
-                self.assertEqual(build_step1_agent_env()['ANTHROPIC_BASE_URL'], 'https://api.xiaomimimo.com/anthropic')
-                self.assertEqual(build_step4_motion_agent_env(llm_server='mimo', llm_model='mimo-v2.6-pro',
-                    llm_base_url=params['llm_base_url_step2'])['ANTHROPIC_BASE_URL'], 'https://api.xiaomimimo.com/anthropic')
             self.assertTrue(result['success'])
             self.assertTrue(json.loads((project/'text/mini_summary.json').read_text())['summary'])
             self.assertEqual(received[0][0], 'https://api.xiaomimimo.com/v1/chat/completions')

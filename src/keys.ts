@@ -1,4 +1,4 @@
-import type { ClaudeCodeMode, Settings } from "./types";
+import type { Settings } from "./types";
 
 // Which saved API key each provider uses, and which keys a project's settings need.
 export type KeyGroup = "text" | "image" | "voice";
@@ -11,9 +11,7 @@ export interface KeyProvider {
 }
 export const keyProviders: KeyProvider[] = [
   { key: "DEEPSEEK_API_KEY", name: "DeepSeek", group: "text" },
-  { key: "KIMI_API_KEY", name: "Kimi / Moonshot", group: "text" },
   { key: "MIMO_API_KEY", name: "Xiaomi MiMo", group: "text" },
-  { key: "OPENROUTER_API_KEY", name: "OpenRouter", group: "text" },
   { key: "SILICONFLOW_KEY", name: "SiliconFlow", group: "text" },
   { key: "VOLCENGINE_API_KEY", name: "Volcengine / Doubao", group: "image", alsoText: true },
   { key: "GOOGLE_CLOUD_API_KEY", name: "Google", group: "image" },
@@ -24,9 +22,7 @@ export const keyProviders: KeyProvider[] = [
 // local Google Cloud login instead of a key.
 const languageModels: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
-  kimi: "KIMI_API_KEY",
   mimo: "MIMO_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
   siliconflow: "SILICONFLOW_KEY",
   volcengine: "VOLCENGINE_API_KEY",
 };
@@ -59,64 +55,32 @@ export const imageModelFor = (server: string, model: string) =>
   imageModelFits(server, model) ? model : imageServiceChoices.find((c) => c.id === server)!.model;
 export const providerName = (key: string) => keyProviders.find((p) => p.key === key)?.name || key;
 
-export type NeedId = "writing" | "segments" | "voice" | "direction" | "motion_agent" | "images" | "covers" | "assembly_agent";
+export type NeedId = "voice" | "direction" | "images" | "covers";
 export interface KeyNeed {
   id: NeedId;
   use: string;
   provider: string;
-  // null: no key needed (Google ADC, a Claude subscription). undefined: the setting names an unsupported provider.
+  // null: no key needed (Google ADC). undefined: the setting names an unsupported provider.
   key: string | null | undefined;
   // What signs in instead of a key.
   login?: string;
 }
 const googleLogin = "Google Cloud login (no key)";
-const claudeLogin = "Your Claude Code login (no key)";
-const agyLogin = "Antigravity CLI (no key)";
-
-export function agentModeLabel(mode: ClaudeCodeMode): string {
-  if (mode === "agy") return "Antigravity CLI (agy)";
-  if (mode === "subscription") return "Your Claude Code · subscription";
-  return "Built-in Claude Code · API key";
-}
-
-/** Every key the whole production needs with these (effective) project settings.
- * Static images are written from a template and need no language model; only motion segments use the step 4 agent.
- * With `subscription`, the writing, motion, assembly and cover agents run in the user's installed Claude Code.
- * With `agentMode: "agy"`, all agent steps including agent segmentation run in Antigravity CLI (agy) without API keys. */
-export function keyNeeds(
-  settings: Settings,
-  { motion = false, subscription = false, agentMode }: { motion?: boolean; subscription?: boolean; agentMode?: ClaudeCodeMode } = {},
-): KeyNeed[] {
-  const mode: ClaudeCodeMode = agentMode ?? (subscription ? "subscription" : "api_key");
+/** Provider keys for production services. Local agents use their own credentials. */
+export function keyNeeds(settings: Settings): KeyNeed[] {
   const value = (section: string, key: string) => String(settings[section]?.[key] ?? "").trim().toLowerCase();
   const model = (id: NeedId, use: string, section: string): KeyNeed => {
     const provider = value(section, "llm_server");
     return { id, use, provider, key: languageModels[provider] };
   };
-  const agent = (id: NeedId, use: string, section: string): KeyNeed =>
-    mode === "agy"
-      ? { id, use, provider: "agy", key: null, login: agyLogin }
-      : mode === "subscription"
-      ? { id, use, provider: "claude_code", key: null, login: claudeLogin }
-      : model(id, use, section);
   const image = (id: NeedId, use: string, provider: string): KeyNeed =>
     ({ id, use, provider, key: imageServices[provider], ...(imageServices[provider] === null && { login: googleLogin }) });
   const imageServer = value("step4", "image_server");
-  const isAgy = mode === "agy";
   return [
-    agent("writing", "Writing agent", "step1"),
-    // Segmentation only calls a model when its split mode is "agent".
-    ...(value("step2", "split_mode") === "agent"
-      ? [isAgy ? { id: "segments" as const, use: "Agent segmentation", provider: "agy", key: null, login: agyLogin } : model("segments", "Agent segmentation", "step2")]
-      : []),
     ...(value("step3", "tts_provider") === "voxcpm2" ? [] : [{ id: "voice" as const, use: "Voice", provider: "bytedance", key: "BYTEDANCE_TTS_API_KEY" }]),
     model("direction", "Content summary", "step4_summary"),
-    ...(motion ? [agent("motion_agent", isAgy ? "Motion agent (Antigravity CLI)" : "Motion agent (Claude Code)", "step4")] : []),
-    ...(value("step5", "assembly_method") === "agent" ? [agent("assembly_agent", isAgy ? "Assembly agent (Antigravity CLI)" : "Assembly agent (Claude Code)", "step1")] : []),
     image("images", "Segment and opening images", imageServer),
-    value("step6", "cover_method") === "agent"
-      ? agent("covers", isAgy ? "Cover agent (Antigravity CLI)" : "Cover agent (Claude Code)", "step1")
-      : image("covers", "Covers", value("step6", "cover_image_server") || imageServer),
+    ...(value("step6", "cover_method") === "agent" ? [] : [image("covers", "Covers", value("step6", "cover_image_server") || imageServer)]),
   ];
 }
 

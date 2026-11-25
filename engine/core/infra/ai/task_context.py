@@ -1,4 +1,4 @@
-"""Small, source-bound task manifests for Studio's Claude Code sessions."""
+"""Small, source-bound task manifests for Studio's Agent sessions."""
 from __future__ import annotations
 
 import json

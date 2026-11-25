@@ -84,9 +84,61 @@ print(json.dumps(report))
         task=json.loads(Path(launch['task']).read_text())
         self.assertNotIn(str(work/'run.py'),task['protected'])
         self.assertIn(str(work),task['writable'])
-        args=launch['args'];self.assertEqual(args[args.index('--add-dir')-2:args.index('--add-dir')],['--append-system-prompt-file',launch['context']]);self.assertEqual(launch['cwd'],str(self.p))
-        self.assertEqual(args[args.index('--allowedTools')+1:args.index('--session-id')],editing.ALLOWED_TOOLS)
+        self.assertEqual(launch['cwd'], str(work))
+        self.assertEqual(launch['agent'], 'claude')
+        self.assertNotIn('first_message', launch)
+        self.assertIn('只在用户要求时才开始剪辑', prompt)
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
+
+    def test_opening_and_closing_a_revision_keeps_the_published_edit(self):
+        self.prepare()
+        empty = self.studio.finish_agent(self.id, {})
+        self.assertIsNone(empty['warning'])
+        self.assertIsNone(empty['assembly_edit'])
+        self.assertNotIn('5', empty['state']['stale'])
+
+        self.prepare()
+        video = self.p / 'final_video.mp4'
+        ffmpeg('-f', 'lavfi', '-i', 'color=c=black:s=320x180:d=1', '-pix_fmt', 'yuv420p', video)
+        original = self.studio.finish_agent(self.id, {})['assembly_edit']
+        state = self.studio.state(self.p)
+        state['reviewed']['5'] = True
+        self.studio.persist(self.p, state)
+        stamp = editing.stamp(video)
+
+        for exit_session in ('close', 'restart'):
+            with self.subTest(exit_session=exit_session):
+                self.prepare(revise=True)
+                self.assertEqual(self.studio.detail(self.id)['assembly_edit'], original)
+                if exit_session == 'close':
+                    result = self.studio.finish_agent(self.id, {})
+                    self.assertIsNone(result['warning'])
+                else:
+                    state = self.studio.state(self.p)
+                    state['agent_active']['owner'] = 999999
+                    self.studio.persist(self.p, state)
+                    self.studio = Studio(ENGINE, self.studio.data, self.studio.workspace)
+                    result = self.studio.detail(self.id)
+                self.assertTrue(result['state']['reviewed']['5'])
+                self.assertNotIn('5', result['state']['stale'])
+                self.assertEqual(result['assembly_edit'], original)
+                self.assertEqual(editing.stamp(video), stamp)
+
+        _, work = self.prepare(revise=True)
+        (work / 'run.py').write_text('# draft changes\n', encoding='utf-8')
+        result = self.studio.finish_agent(self.id, {})
+        self.assertIn('without delivering', result['warning'])
+        self.assertEqual(result['assembly_edit']['folder'], work.relative_to(self.p).as_posix())
+        self.assertEqual(editing.stamp(video), stamp)
+
+    def test_agy_loads_the_assembly_template_as_a_workspace_agent(self):
+        self.settings(agent_cli='agy')
+        launch, work = self.prepare()
+        self.assertEqual(launch['agent'], 'agy')
+        self.assertNotIn('first_message', launch)
+        definition = work / '.agents/agents/grist-assembly.md'
+        self.assertIn(Path(launch['context']).read_text(encoding='utf-8'),
+                      definition.read_text(encoding='utf-8'))
 
     def test_the_agent_gets_the_bundled_sound_effects(self):
         launch,work=self.prepare();found=editing.read(work/'materials.json');sounds=found['sound_effects']['sounds']
@@ -149,6 +201,7 @@ print(json.dumps(report))
         self.settings(bgm_filename=names[0])
         launch,work=self.prepare();music=editing.read(work/'materials.json')['music']
         self.assertEqual([t['name'] for t in music['tracks']],[names[0]]);self.assertIn(f'只用「{names[0]}」',Path(launch['context']).read_text())
+        (work / 'run.py').write_text('# draft using the suggested music\n')
         self.studio.finish_agent(self.id,{})
         self.settings(agent_music_mix=True)
         self.assertFalse(self.studio.detail(self.id)['assembly_edit']['current'])
@@ -157,6 +210,7 @@ print(json.dumps(report))
 
     def test_delivering_the_video_finishes_assembly(self):
         _,work=self.prepare()
+        (work / 'run.py').write_text('# draft without a delivery\n')
         detail=self.studio.finish_agent(self.id,{})
         self.assertIn('without delivering',detail['warning']);self.assertIn('5',detail['state']['stale'])
         launch,work=self.prepare(revise=True)
@@ -177,7 +231,8 @@ print(json.dumps(report))
         restarted=Studio(ENGINE,self.studio.data,self.studio.workspace).state(self.p)
         self.assertNotIn('agent_active',restarted);self.assertNotIn('5',restarted['stale'])
         # Without a delivery, the step stays marked for review.
-        os.remove(self.p/'final_video.mp4');self.prepare(revise=True)
+        os.remove(self.p/'final_video.mp4');_,work=self.prepare(revise=True)
+        (work / 'run.py').write_text('# draft without a delivery\n')
         state=self.studio.state(self.p);state['agent_active']['owner']=999999;self.studio.persist(self.p,state)
         self.assertIn('5',Studio(ENGINE,self.studio.data,self.studio.workspace).state(self.p)['stale'])
 
@@ -194,7 +249,7 @@ print(json.dumps(report))
         (revised/'run.py').write_text('# revised runner\n')
         self.assertEqual((first/'run.py').read_text(),'# agent-owned runner\n')
         prompt=Path(launch['context']).read_text()
-        self.assertNotIn('开始。',launch['args']);self.assertIn('修改上一次的合成',prompt);self.assertIn('按用户在对话里提出的要求修改',prompt)
+        self.assertNotIn('first_message', launch);self.assertIn('修改上一次的合成',prompt);self.assertIn('按用户在对话里提出的要求修改',prompt)
         # Materials are refreshed for the revision; the copy does not change the earlier folder.
         (revised/'my_design.html').write_text('<p>changed</p>');self.assertEqual((first/'my_design.html').read_text(),'<p>mine</p>')
 
@@ -224,16 +279,6 @@ print(json.dumps(report))
         outside=subprocess.run([*tool,'render-page','../../../text/raw.json','--seconds','1','--output','x.mp4'],cwd=work,capture_output=True,text=True,timeout=60)
         self.assertNotEqual(outside.returncode,0)
 
-    def test_two_pages_render_at_the_same_time_in_one_folder(self):
-        launch,work=self.prepare()
-        for name,colour in [('one','#c33'),('two','#3c3')]:
-            (work/f'{name}.html').write_text(f'<!doctype html><style>html,body{{margin:0;width:320px;height:180px;background:{colour}}}</style><div id="b"></div><script>const p=window.clipPayload;window.clip={{width:p.width,height:p.height,durationSeconds:p.durationSeconds,ready:Promise.resolve(),renderAt(t){{document.getElementById("b").textContent=t.toFixed(2)}}}};</script>')
-        tool=self.api_worker(launch,work)
-        runs=[subprocess.Popen([*tool,'render-page',f'{n}.html','--seconds','2','--output',f'{n}.mp4'],cwd=work,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for n in ['one','two']]
-        for run in runs:
-            _,errors=run.communicate(timeout=240);self.assertEqual(run.returncode,0,errors[-1500:])
-        for n in ['one','two']:self.assertEqual(json.loads((work/f'{n}.render.json').read_text())['frames'],60)
-
     def test_free_design_leaves_the_style_to_the_agent(self):
         self.settings(agent_skill='content-led')
         launch,_=self.prepare();prompt=Path(launch['context']).read_text()
@@ -252,12 +297,93 @@ print(json.dumps(report))
         # A changed page or script still counts.
         (work/'engine.js').write_text('changed');self.assertNotEqual(signature(work,payload,entry='a.html',ignore_media=True),before)
 
-    def test_both_agent_environments_use_writings_model(self):
-        state=self.studio.state(self.p);state['settings']['step1']={'llm_server':'deepseek','llm_model':'deepseek-chat'};self.studio.persist(self.p,state)
-        code="from pathlib import Path;from agent_env import resolve;import sys;a=resolve(Path(sys.argv[1]),Path(sys.argv[2]),'1');b=resolve(Path(sys.argv[1]),Path(sys.argv[2]),'5');assert a==b;assert b['ANTHROPIC_AUTH_TOKEN']=='editing-test-key'"
-        result=subprocess.run([sys.executable,'-c',code,str(ENGINE),str(self.p)],cwd=DESKTOP/'backend',env={**os.environ,'DEEPSEEK_API_KEY':'editing-test-key'},capture_output=True,text=True,timeout=20)
-        self.assertEqual(result.returncode,0,'Assembly and Writing must resolve the same provider environment')
+    def test_assembly_helper_renders_composes_with_ass_and_delivers_atomically(self):
+        sys.path.insert(0, str(ENGINE))
+        from core.infra.motion.assembly import compose, run_manifest
+        _, work = self.prepare()
+        (work / 'scenes').mkdir(exist_ok=True)
+        (work / 'build').mkdir(exist_ok=True)
+        for name, colour in [('001', '#224466'), ('002', '#446622')]:
+            (work / f'scenes/{name}.html').write_text(
+                f'<!doctype html><style>html,body{{margin:0;width:320px;height:180px;overflow:hidden;background:{colour}}}</style>'
+                '<div id="t" style="color:#fff;font:24px sans-serif"></div>'
+                '<script>const p=window.clipPayload;window.clip={width:p.width,height:p.height,durationSeconds:p.durationSeconds,'
+                'ready:Promise.resolve(),renderAt(t){document.getElementById("t").textContent=t.toFixed(2)}};</script>',
+                encoding='utf-8',
+            )
+        ffmpeg('-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-ac', '1', '-ar', '48000', work / 'build/audio.wav')
+        ass = (
+            '[Script Info]\nScriptType: v4.00+\nPlayResX: 320\nPlayResY: 180\n\n'
+            '[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,'
+            'Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n'
+            'Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,12,1\n\n'
+            '[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n'
+            'Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,第一句\n'
+            'Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,第二句\n'
+        )
+        (work / 'build/captions.ass').write_text(ass, encoding='utf-8')
+        (work / 'build/captions.srt').write_text('1\n00:00:00,000 --> 00:00:02,000\n测试字幕\n', encoding='utf-8')
+        manifest = {
+            'fps': 30, 'workers': 2, 'audio': 'build/audio.wav', 'subtitles': 'build/captions.ass',
+            'clips': [{'html': 'scenes/001.html', 'frames': 30}, {'html': 'scenes/002.html', 'frames': 30}],
+        }
+        (work / 'render.json').write_text(json.dumps(manifest), encoding='utf-8')
 
+        # Hard-linked prior delivery must not be overwritten in place.
+        delivery = self.p / 'final_video.mp4'
+        delivery.write_bytes(b'old video bytes')
+        preserved = self.p / 'preserved_hardlink.mp4'
+        os.link(delivery, preserved)
+
+        report = run_manifest(work, delivery=delivery)
+        self.assertTrue(report['verified'])
+        self.assertEqual((report['width'], report['height'], report['fps'], report['frames']), (320, 180, 30, 60))
+        self.assertEqual(preserved.read_bytes(), b'old video bytes')
+        self.assertNotEqual(delivery.read_bytes(), b'old video bytes')
+        self.assertTrue((self.p / 'final_video.srt').is_file())
+        self.assertTrue((work / 'build/render_000.log').is_file())
+        self.assertTrue((work / 'build/render_001.log').is_file())
+
+        # Updating subtitles only needs compose; rendered clip stays untouched.
+        clip_mtime = (work / 'build/clip_000.mp4').stat().st_mtime_ns
+        (work / 'build/captions.ass').write_text(ass.replace('第二句', '改后第二句'), encoding='utf-8')
+        recomposed = compose(work, delivery=delivery)
+        self.assertTrue(recomposed['verified'])
+        self.assertEqual((work / 'build/clip_000.mp4').stat().st_mtime_ns, clip_mtime)
+
+        # Without subtitles, compose uses video stream copy.
+        self.settings(enable_subtitles=False)
+        (work / 'materials.json').write_text(
+            json.dumps({**editing.read(work / 'materials.json'), 'subtitles': False}), encoding='utf-8'
+        )
+        manifest.pop('subtitles')
+        (work / 'render.json').write_text(json.dumps(manifest), encoding='utf-8')
+        fast = compose(work, delivery=delivery)
+        self.assertTrue(fast['verified'])
+        self.assertEqual(fast['encoder'], 'copy')
+
+    def test_assembly_helper_rejects_audio_mismatch_and_outside_paths(self):
+        sys.path.insert(0, str(ENGINE))
+        from core.infra.motion.assembly import run_manifest
+        _, work = self.prepare()
+        (work / 'scenes').mkdir(exist_ok=True)
+        (work / 'build').mkdir(exist_ok=True)
+        (work / 'scenes/001.html').write_text('<p>hi</p>', encoding='utf-8')
+        ffmpeg('-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-ac', '1', '-ar', '48000', work / 'build/audio.wav')
+
+        (work / 'render.json').write_text(json.dumps({
+            'fps': 30, 'audio': 'build/audio.wav',
+            'clips': [{'html': 'scenes/001.html', 'frames': 30}],  # 1s vs 2s audio
+        }), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'Audio duration'):
+            run_manifest(work)
+
+        (work / 'render.json').write_text(json.dumps({
+            'fps': 30, 'audio': 'build/audio.wav',
+            'clips': [{'html': '../../../text/raw.json', 'frames': 60}],
+        }), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'inside the working directory'):
+            run_manifest(work)
 
 if __name__=='__main__':
     unittest.main()

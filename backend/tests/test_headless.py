@@ -19,19 +19,34 @@ class HeadlessTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.cli = self.root / 'claude'
-        self.launch = {'cwd': str(self.root), 'args': []}
+        self.cli = self.root / ('claude.cmd' if os.name == 'nt' else 'claude')
+        self.launch = {'cwd': str(self.root), 'agent': 'claude', 'context': str(self.root / 'context.md')}
 
     def script(self, code):
-        self.cli.write_text(f'#!{sys.executable}\n' + code)
-        self.cli.chmod(0o755)
+        if os.name == 'nt':
+            helper = self.root / 'fake_cli.py'
+            helper.write_text(code, encoding='utf-8')
+            self.cli.write_text(f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\n', encoding='utf-8')
+        else:
+            self.cli.write_text(f'#!{sys.executable}\n' + code, encoding='utf-8')
+            self.cli.chmod(0o755)
 
     def run_session(self, prompt='test', timeout=5, logs=None):
-        return headless.run_claude(str(self.cli), os.environ.copy(), self.launch, prompt, 10, timeout, logs or self.root)
+        return headless.run_agent(str(self.cli), os.environ.copy(), self.launch, prompt, 10, timeout, logs or self.root)
 
     def test_stdin_is_closed_so_unattended_sessions_do_not_wait_for_input(self):
         self.script('import json,sys\nassert sys.stdin.read()==""\nprint(json.dumps({"is_error":False,"result":"done"}))\n')
         self.assertEqual(self.run_session()['result'], 'done')
+
+    def test_codebuddy_background_session_reads_the_result_at_the_end_of_the_transcript(self):
+        self.launch["agent"] = "codebuddy"
+        result = {"type": "result", "is_error": False, "result": "done"}
+        self.script(f'print({json.dumps([{"type": "message"}, result])!r})')
+        self.assertEqual(self.run_session(), result)
+        result["is_error"] = True
+        self.script(f'print({json.dumps([result])!r})')
+        with self.assertRaisesRegex(ValueError, "CodeBuddy Code did not finish"):
+            self.run_session()
 
     @unittest.skipIf(os.name == 'nt', 'POSIX process group supervision')
     def test_timeout_stops_background_render_even_when_it_ignores_term(self):
@@ -50,7 +65,7 @@ class HeadlessTests(unittest.TestCase):
         self.script(f'import subprocess,sys,time\nsubprocess.Popen([sys.executable,"-c",{child!r}])\ntime.sleep(60)\n')
         code = (f'import sys\nsys.path.insert(0,{str(Path(headless.__file__).parent)!r})\n'
                 'import headless,os\nheadless.install_signal_handlers()\n'
-                f'headless.run_claude({str(self.cli)!r},os.environ.copy(),{self.launch!r},"test",10,60,__import__("pathlib").Path({str(self.root)!r}))\n')
+                f'headless.run_agent({str(self.cli)!r},os.environ.copy(),{self.launch!r},"test",10,60,__import__("pathlib").Path({str(self.root)!r}))\n')
         runner = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             deadline = time.monotonic() + 5
@@ -125,54 +140,6 @@ class HeadlessTests(unittest.TestCase):
         (folder / 'materials.json').write_text(json.dumps(materials))
         self.assertEqual(headless.session_limits(request), (200, 10800))
         self.assertEqual(headless.session_limits({'step': '6'}), (100, 3600))
-
-    def test_agy_headless_sends_context_via_stream_json_and_checks_status(self):
-        agy = self.root / ('agy.cmd' if os.name == 'nt' else 'agy')
-        helper = self.root / 'fake_agy.py'
-        helper.write_text(
-            'import json, sys\n'
-            'msg = json.loads(sys.stdin.read())\n'
-            'assert msg["event"] == "user"\n'
-            'assert "RULES" in msg["message"]["content"] and "START" in msg["message"]["content"]\n'
-            'assert "--input-format" in sys.argv and "stream-json" in sys.argv\n'
-            'assert "--dangerously-skip-permissions" in sys.argv\n'
-            'assert "--add-dir" in sys.argv\n'
-            'print(json.dumps({"event": "init", "conversation_id": "c1"}))\n'
-            'print(json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "ok"}}))\n',
-            encoding='utf-8',
-        )
-        if os.name == 'nt':
-            agy.write_text(f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\n', encoding='utf-8')
-        else:
-            agy.write_text(f'#!{sys.executable}\n' + helper.read_text(encoding='utf-8'), encoding='utf-8')
-            agy.chmod(0o755)
-        ctx = self.root / 'context.md'
-        ctx.write_text('RULES', encoding='utf-8')
-        launch = {'cwd': str(self.root), 'context': str(ctx), 'dirs': [str(self.root)], 'args': []}
-        program, env = headless.claude_command({'mode': 'agy', 'agy_path': str(agy)})
-        self.assertEqual(program, str(agy))
-        self.assertNotIn('ANTHROPIC_API_KEY', env)
-        result = headless.run_claude(program, env, launch, 'START', 10, 10, self.root, cli='agy')
-        self.assertEqual(result['status'], 'SUCCESS')
-        self.assertTrue((self.root / 'agy-session.jsonl').is_file())
-
-    def test_agy_headless_raises_when_status_is_not_success(self):
-        agy = self.root / ('agy_fail.cmd' if os.name == 'nt' else 'agy_fail')
-        helper = self.root / 'fake_agy_fail.py'
-        helper.write_text(
-            'import json, sys\n'
-            'sys.stdin.read()\n'
-            'print(json.dumps({"event": "result", "result": {"status": "FAILED", "error": "boom"}}))\n',
-            encoding='utf-8',
-        )
-        if os.name == 'nt':
-            agy.write_text(f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\n', encoding='utf-8')
-        else:
-            agy.write_text(f'#!{sys.executable}\n' + helper.read_text(encoding='utf-8'), encoding='utf-8')
-            agy.chmod(0o755)
-        launch = {'cwd': str(self.root), 'args': []}
-        with self.assertRaisesRegex(ValueError, 'Antigravity CLI did not finish'):
-            headless.run_claude(str(agy), os.environ.copy(), launch, 'START', 10, 10, self.root, cli='agy')
 
     def assert_stopped(self, pid):
         status = subprocess.run(['ps', '-p', str(pid), '-o', 'stat='], capture_output=True, text=True).stdout.strip()

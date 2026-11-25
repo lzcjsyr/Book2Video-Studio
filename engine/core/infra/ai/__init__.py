@@ -1,1 +1,1 @@
-"""AI provider adapters: LLM, image, TTS and Claude Agent."""
+"""AI provider adapters: LLM, image and TTS."""

@@ -1,5 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-mod claude_code;
 mod credentials;
 mod terminal;
 
@@ -32,7 +31,6 @@ struct Bootstrap {
 #[derive(Deserialize)]
 struct Manifest {
     python: String,
-    claude: String,
     motion_modules: String,
     chrome: String,
     ffmpeg: String,
@@ -46,7 +44,6 @@ struct Manifest {
 #[derive(Clone)]
 pub(crate) struct Installation {
     python: PathBuf,
-    claude: PathBuf,
     engine: PathBuf,
     backend: PathBuf,
     data: PathBuf,
@@ -106,7 +103,6 @@ impl Installation {
         }
         let chrome = tool(&manifest.chrome);
         let ffmpeg = tool(&manifest.ffmpeg);
-        let claude = tool(&manifest.claude);
         let environment = vec![
             (
                 "PATH".into(),
@@ -119,14 +115,12 @@ impl Installation {
             ("AIGC_FFPROBE_PATH".into(), tool(&manifest.ffprobe).into()),
             ("PRODUCER_HEADLESS_SHELL_PATH".into(), chrome.into()),
             ("IMAGEIO_FFMPEG_EXE".into(), ffmpeg.into()),
-            ("STUDIO_CLAUDE".into(), claude.clone().into()),
             ("PYTHONNOUSERSITE".into(), "1".into()),
             ("PYTHONDONTWRITEBYTECODE".into(), "1".into()),
             ("PYTHONUTF8".into(), "1".into()),
         ];
         Ok(Self {
             python: tool(&manifest.python),
-            claude,
             engine: resources.join("engine"),
             backend,
             data,
@@ -464,8 +458,6 @@ fn main() {
             reveal_project_path,
             credentials::credential_status,
             credentials::credential_save,
-            claude_code::claude_code_status,
-            claude_code::claude_code_set_mode,
             terminal::terminal_start,
             terminal::terminal_write,
             terminal::terminal_resize,

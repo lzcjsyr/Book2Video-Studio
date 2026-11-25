@@ -47,8 +47,6 @@ import type {
   AutoRun,
   AutoRunOptions,
   Bootstrap,
-  ClaudeCodeMode,
-  ClaudeCodeStatus,
   Detail,
   Job,
   Launch,
@@ -79,11 +77,12 @@ import AssemblyEditing from "./components/AssemblyEditing";
 import AssemblySetup from "./components/AssemblySetup";
 import SegmentEditor from "./components/SegmentEditor";
 import { SegmentationControls, VoiceControls } from "./components/StepControls";
+import { agentNames, selectedAgent } from "./agents";
 import { writingOptions, sameWriting, type WritingOptions } from "./writing";
 import { useCollapsed } from "./collapse";
 import { parseSegmentNumbers } from "./visual-generation";
 import { librarySettings } from "./library";
-import { agentModeLabel, distinctGaps, keyNeeds, providerName, unmet, type NeedId } from "./keys";
+import { distinctGaps, keyNeeds, providerName, unmet, type NeedId } from "./keys";
 import AutoProduction from "./components/AutoProduction";
 import { autoNeeds } from "./autorun";
 import type { KeyStatus } from "./components/ApiKeysPanel";
@@ -133,7 +132,6 @@ const folderName = (path?: string) => pathParts(path).at(-1) || path || "";
 // The folders above the last one, for a compact "…/a / b" hint under a name.
 const folderTail = (path: string | undefined, above: number) =>
   pathParts(path).slice(-(above + 1), -1).join(" / ");
-const parentFolder = (path: string) => path.replace(/[\\/][^\\/]*[\\/]?$/, "") || path;
 // Where a new project folder will be created; mirrors the service's name cleanup.
 const projectDestination = (location: string, name: string) => {
   const base = location.trim().replace(/[\\/]+$/, "");
@@ -234,7 +232,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   }, [step, detail?.id, autoView]);
   // Saved API keys (names only) and the Settings tab to open, for key reminders.
   const [keyStatus, setKeyStatus] = useState<KeyStatus | null>(null);
-  const [claudeMode, setClaudeMode] = useState<ClaudeCodeMode>("api_key");
   const [settingsTab, setSettingsTab] = useState<"production" | "keys" | undefined>();
   function openSettings(tab?: "production" | "keys") {
     setSettingsTab(tab);
@@ -263,7 +260,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   const projectTitle = detail?.raw.source_name || projects.find(p => p.id === detail?.id)?.source_name || "";
   const hasDraft = unsaved || writingPending || modalDirty || (modal === "new" && Boolean(newName.trim()));
   const closeReason = hasDraft ? "Save your edits before closing this project tab."
-    : activeAgent ? "Finish the Claude Code session before closing this project tab."
+    : activeAgent ? "Finish the Agent session before closing this project tab."
     : busy ? "Wait for the current action before closing this project tab." : "";
   // What a closing question lists: edits Save can store, and an open editor it cannot (one per line).
   const unsavedItems = [
@@ -285,7 +282,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     if (!bootstrap) return;
     if (isTauri()) {
       invoke<KeyStatus>("credential_status").then(setKeyStatus).catch(() => {});
-      invoke<ClaudeCodeStatus>("claude_code_status", { check: false }).then(s => setClaudeMode(s.mode)).catch(() => {});
     }
     api<Project[]>("/projects").then(setProjects).catch(() => {});
   }, [active, bootstrap]);
@@ -349,7 +345,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       setError("");
       if (isTauri()) {
         invoke<KeyStatus>("credential_status").then(setKeyStatus).catch(() => setKeyStatus(null));
-        invoke<ClaudeCodeStatus>("claude_code_status", { check: false }).then((s) => setClaudeMode(s.mode)).catch(() => {});
       }
       const remembered = localStorage.getItem("studio-project");
       const choice = tab.projectId ? p.find(x => x.id === tab.projectId) : tab.blank ? undefined :
@@ -541,16 +536,12 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   // setup draft decides the writing agent), and the ones not saved yet.
   const keySettings: Settings = { ...bootstrap?.defaults };
   Object.entries(detail?.state.settings || {}).forEach(([k, v]) => (keySettings[k] = { ...keySettings[k], ...v }));
-  if (writing) keySettings.step1 = { ...keySettings.step1, llm_server: writing.llm_server };
   const coverAgent = keySettings.step6?.cover_method === "agent";
   // The pane stays mounted elsewhere so a running session survives navigation.
   const assemblyAgent = keySettings.step5?.assembly_method === "agent";
   const agentStep = !autoView && ((step === "5" && assemblyAgent) || step === "1" || step === "4" || (step === "6" && coverAgent));
   const agentShown = agentStep && agentVisible;
-  const hasMotion = Boolean(detail?.segments.some((s) => s.visualizer === "hf"));
-  const missingKeys = detail ? unmet(keyNeeds(keySettings, { motion: true, agentMode: claudeMode }), keyStatus?.saved) : [];
-  // The header and the API keys tab count the motion agent only when a segment uses motion.
-  const projectGaps = missingKeys.filter((n) => hasMotion || n.id !== "motion_agent");
+  const missingKeys = detail ? unmet(keyNeeds(keySettings), keyStatus?.saved) : [];
   /** Remind the user (and open the API keys tab) when a step's key is not saved. */
   function keysReady(ids: NeedId[]) {
     const gap = missingKeys.find((n) => ids.includes(n.id));
@@ -672,13 +663,12 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
         }[statusKind],
       );
 
-  /** Activate Claude Code; Visuals can name the motion clip to revise, or "new" for a new clip. */
+  /** Activate Agent; Visuals can name the motion clip to revise, or "new" for a new clip. */
   async function activateFor(indices?: number[], take?: string, revise = false) {
     if (!detail || unsaved) {
       notice("Save changes before activating the agent.");
       return;
     }
-    if (!keysReady([step === "1" ? "writing" : step === "6" ? "covers" : step === "5" ? "assembly_agent" : "motion_agent"])) return;
     if (step === "4" && indices?.includes(0)) {
       notice(
         "Generate the opening through Visuals; the motion agent works on narration segments.",
@@ -688,7 +678,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     await action(async () => {
       if (!isTauri())
         throw new Error(
-          t("Open the Tauri desktop app to activate Claude Code."),
+          t("Open the Tauri desktop app to activate Agent."),
         );
       if (step === "1") await saveWriting();
       const prepared = await api<Launch>(projectRoute(detail.id) + "/agent", {
@@ -703,7 +693,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     });
   }
   async function activate() {
-    await activateFor(step === "4" ? [selected] : undefined);
+    await activateFor(step === "4" ? [selected] : undefined, undefined,
+      step === "5" && Boolean(detail?.assembly_edit));
   }
   const finished = useCallback(() => {
     const id = projectRef.current;
@@ -722,7 +713,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
             api<Job>(projectRoute(d.id) + "/job", { step: "6", mode: "cover_render" })
               .then((job) => {
                 setJobs((jobs) => [...jobs, job]);
-                notice("Rendering covers from Claude Code's HTML designs…");
+                notice("Rendering covers from Agent's HTML designs…");
               })
               .catch((e) => notice(String(e)));
           // A first manuscript leads straight to setting up the rest of the production.
@@ -743,7 +734,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       if (unsaved) throw new Error(t("Save changes before generating."));
       if (step === "1" || (step === "6" && coverAgent) || (step === "5" && assemblyAgent)) {
         setModal(null);
-        await activate();
+        await activateFor();
         return;
       }
       let indices =
@@ -761,7 +752,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       if (selected === 0 && scope === "selected") {
         indices = [];
       }
-      const required: Partial<Record<Stage, NeedId[]>> = { "2": ["segments"], "3": ["voice"], "6": ["covers"] };
+      const required: Partial<Record<Stage, NeedId[]>> = { "3": ["voice"], "6": ["covers"] };
       if (!keysReady(required[step] || [])) return;
       const job = await api<Job>(projectRoute(detail.id) + "/job", {
         step,
@@ -778,7 +769,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   /** Start auto production with the project's saved settings, once the keys its plan needs are saved. */
   async function startAuto(options: AutoRunOptions, plan: AutoPlan) {
     if (!detail) return;
-    if (!keysReady(autoNeeds(plan, keySettings, { motion: hasMotion, summary: Boolean(String(detail.summary.summary || "").trim()) }))) return;
+    if (!keysReady(autoNeeds(plan, { summary: Boolean(String(detail.summary.summary || "").trim()) }))) return;
     await action(async () => {
       if (unsaved || writingPending) throw new Error(t("Save changes before generating."));
       const run = await api<AutoRun>(projectRoute(detail.id) + "/autorun", options);
@@ -866,7 +857,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       const opening = openingEnabled && (numbers ? numbers.includes(0) : visualScope === "all" || !detail.opening.visual);
       const needs: NeedId[] = [];
       if (opening || targets.some((s) => s.visualizer !== "hf")) needs.push("images");
-      if (targets.some((s) => s.visualizer === "hf")) needs.push("motion_agent");
       if (!String(detail.summary.summary || "").trim() || detail.state.summary_stale) needs.push("direction");
       if (!keysReady(needs)) return;
       const job = await api<Job>(projectRoute(detail.id) + "/job", {
@@ -882,7 +872,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     if (!detail) return;
     // Rendering a saved composition runs locally and needs no provider key.
     const needs: NeedId[] = body.visualizer === "hf"
-      ? ["motion_agent", ...(!String(detail.summary.summary || "").trim() || detail.state.summary_stale ? ["direction" as const] : [])]
+      ? (!String(detail.summary.summary || "").trim() || detail.state.summary_stale ? ["direction"] : [])
       : body.mode === "summary" ? ["direction"] : visualNeeds();
     if (body.mode !== "render" && !keysReady(needs)) return;
     await action(async () => {
@@ -931,14 +921,14 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     if (autoRunning) return "Wait for auto production to finish.";
     if (activeJob) return "Wait for the running job to finish.";
     if (agentSegments.includes(index) || (activeAgent && detail?.state.agent_active?.step !== "4"))
-      return "Finish the Claude Code session first.";
+      return "Finish the Agent session first.";
     if (dirty) return "Save your narration edit first.";
     // Not locked while a choice is being saved: a double-click's second click must still land.
     return "";
   }
   /** Why a new image cannot be made or queued right now, or "" when it can. */
   function imageLock() {
-    if (activeAgent) return "Finish the Claude Code session first.";
+    if (activeAgent) return "Finish the Agent session first.";
     if (unsaved) return "Save your changes first.";
     return busy ? "Working…" : "";
   }
@@ -1074,7 +1064,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       localStorage.setItem("studio-location", newLocation.trim());
       setModal(null);
       setLaunch(null);
-      notice("Project created. Activate Claude Code to begin writing.");
+      notice("Project created. Activate Agent to begin writing.");
     });
   }
   function resizeAgent(e: React.PointerEvent) {
@@ -1190,10 +1180,10 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
             {t(autoRunning ? "Auto production running" : "Production running")}
           </span>
         ) : null}
-        {detail && projectGaps.length > 0 && (
+        {detail && missingKeys.length > 0 && (
           <button className="key-reminder" onClick={() => openSettings("keys")}
-            title={projectGaps.map((n) => `${t(n.use)}: ${n.key ? t(providerName(n.key)) : t("unsupported provider")}`).join("\n")}>
-            <KeyRound size={13} /> {distinctGaps(projectGaps) === 1 ? t("1 API key missing") : t("{count} API keys missing", { count: distinctGaps(projectGaps) })}
+            title={missingKeys.map((n) => `${t(n.use)}: ${n.key ? t(providerName(n.key)) : t("unsupported provider")}`).join("\n")}>
+            <KeyRound size={13} /> {distinctGaps(missingKeys) === 1 ? t("1 API key missing") : t("{count} API keys missing", { count: distinctGaps(missingKeys) })}
           </button>
         )}
         <div className="header-actions">
@@ -1217,8 +1207,8 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
           {agentStep && !agentVisible && (
             <button
               className="icon-button"
-              title={t("Show Claude Code pane")}
-              aria-label={t("Show Claude Code pane")}
+              title={t("Show Agent pane")}
+              aria-label={t("Show Agent pane")}
               onClick={() => setAgentVisible(true)}
             >
               <PanelRightOpen size={17} />
@@ -1271,9 +1261,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
             </option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
-                {(p.linked
-                  ? `${p.source_name} · ${folderName(parentFolder(p.path))}`
-                  : p.source_name) + (p.problem ? ` · ${t(p.problem)}` : "")}
+                {folderName(p.path)}{p.problem ? ` · ${t(p.problem)}` : ""}
               </option>
             ))}
           </select>
@@ -1404,11 +1392,10 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
               <div className="stage-content" key="auto-production">
                 <AutoProduction detail={detail} bootstrap={bootstrap} settings={keySettings} run={autoRun} jobs={jobs}
                   locked={busy || activeAgent || jobLock || unsaved || writingPending}
-                  lockReason={activeAgent ? "Finish the Claude Code session first." : jobLock ? "Wait for the running job to finish."
+                  lockReason={activeAgent ? "Finish the Agent session first." : jobLock ? "Wait for the running job to finish."
                     : unsaved || writingPending ? "Save your changes first." : busy ? "Working…" : ""}
-                  claudeMode={claudeMode}
                   gaps={(plan) => {
-                    const ids = autoNeeds(plan, keySettings, { motion: hasMotion, summary: Boolean(String(detail.summary.summary || "").trim()) });
+                    const ids = autoNeeds(plan, { summary: Boolean(String(detail.summary.summary || "").trim()) });
                     return missingKeys.filter((n) => ids.includes(n.id));
                   }}
                   onSettings={saveSettings} onOpenStep={changeStage} onLibrary={openLibrary} onSettingsModal={openSettings}
@@ -1502,7 +1489,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                         return;
                       }
                       if ((step === "6" && coverAgent) || (step === "5" && assemblyAgent)) {
-                        activate();
+                        activateFor();
                         return;
                       }
                       // Outdated segments are the usual next work when there are some.
@@ -1519,8 +1506,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                 {step === "1" ? (
                   <div className="manuscript-workspace">
                     {writing && <WritingSetup value={writing} bootstrap={bootstrap}
-                      disabled={busy || activeAgent || jobLock} pending={writingPending} claudeMode={claudeMode}
-                      onClaudeMode={setClaudeMode}
+                      disabled={busy || activeAgent || jobLock} pending={writingPending}
                       onChange={editWriting} onEditSkill={() => openLibrary()}
                       onSave={() => action(async () => { await saveWriting(); notice("Writing setup saved."); })} />}
                     {/* The source name comes first: the opening clip shows it under the quote. */}
@@ -1579,7 +1565,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                       ariaLabel={t("Manuscript editor")}
                       value={String(draft.content || "")}
                       placeholder={t(
-                        "Choose a writing mode above, then activate Claude Code or enter your manuscript here.",
+                        "Choose a writing mode above, then activate Agent or enter your manuscript here.",
                       )}
                       onChange={(content) => edit({ ...draft, content })}
                       disabled={activeAgent}
@@ -1650,12 +1636,12 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                     {step === "6" && <>
                       <CoverSetup key={detail.id} settings={keySettings.step6 || {}} library={bootstrap?.library}
                         disabled={busy || activeAgent || jobLock} copy={coverCopy}
-                        agentMode={agentModeLabel(claudeMode)}
+                        agentMode={agentNames[selectedAgent(keySettings, "6")]}
                         onChange={saveCoverSetting} onEditStyles={() => openLibrary("cover_styles")} />
                       {coverAgent && <section className="cover-design-actions" aria-label={t("HTML cover design")}>
                         <div><strong>{t("HTML cover design")}</strong>
                           <p className="small-muted">{t(activeAgent && detail.state.agent_active?.step === "6"
-                            ? "Claude Code is designing covers in the right pane. Review its snapshots below, then finish to render candidates."
+                            ? "Agent is designing covers in the right pane. Review its snapshots below, then finish to render candidates."
                             : "Design, review snapshots, then render. Your existing cover candidates stay available.")}</p></div>
                         <div className="cover-design-buttons">
                           {activeAgent && detail.state.agent_active?.step === "6" ? <button className="button small primary"
@@ -1669,7 +1655,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                               onClick={() => action(async () => {
                                 const job = await api<Job>(projectRoute(detail.id) + "/job", { step: "6", mode: "cover_render" });
                                 setJobs((jobs) => [...jobs, job]);
-                                notice("Rendering covers from Claude Code's HTML designs…");
+                                notice("Rendering covers from Agent's HTML designs…");
                               })}>{t("Render saved HTML")}</button>
                           </>}
                         </div>
@@ -1848,11 +1834,11 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                         <Loader2 size={14} className="spin" />
                         <span>
                           {selectedTake
-                            ? t("Claude Code is working on {clip} in the right pane. Keyframes appear as it saves them.", { clip: visualName })
-                            : t("Claude Code is designing a new motion clip in the right pane.")}
+                            ? t("Agent is working on {clip} in the right pane. Keyframes appear as it saves them.", { clip: visualName })
+                            : t("Agent is designing a new motion clip in the right pane.")}
                         </span>
                         <button className="button small primary" disabled={!segment?.motion?.composition} onClick={() => agentHandle.current?.stop()}
-                          title={segment?.motion?.composition ? undefined : t("Available once Claude Code saves its composition.")}>
+                          title={segment?.motion?.composition ? undefined : t("Available once Agent saves its composition.")}>
                           <Play size={13} /> {t("Finish session")}
                         </button>
                       </div>
@@ -1935,7 +1921,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                                     "Generate cover candidates from your chosen title.",
                                   )
                                 : motion
-                                  ? t("Open the clip to revise it with Claude Code.")
+                                  ? t("Open the clip to revise it with Agent.")
                                   : step === "4" && selectedTakes.length
                                     ? t("Choose one of this part's versions, or make a new one.")
                                     : t(
@@ -2076,7 +2062,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                             <span>{t("Cover {index}", { index: i + 1 })}</span>
                           </button>
                           <DeleteControl item={t("Cover {index}", { index: i + 1 })}
-                            blocked={jobLock ? "Wait for the running job to finish." : activeAgent ? "Finish the Claude Code session first." : busy ? "Working…" : ""}
+                            blocked={jobLock ? "Wait for the running job to finish." : activeAgent ? "Finish the Agent session first." : busy ? "Working…" : ""}
                             onDelete={() => deleteCover(f)} />
                           </div>
                         ))}
@@ -2168,7 +2154,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                 onError={notice}
                 directWriting={step === "1" && writing?.mode === "direct"}
                 noWritingSkill={step === "1" && writing?.agent_skill === ""}
-                claudeMode={claudeMode}
+                agent={selectedAgent(keySettings, step)}
                 disabled={busy || unsaved || activeAgent || jobLock}
               />
             </div>
@@ -2194,7 +2180,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
         </span>
         <span>
           {activeAgent
-            ? t("Claude Code · interactive")
+            ? t("Agent · interactive")
             : autoRunning
               ? t("Auto production running")
               : busy
@@ -2219,8 +2205,6 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
           detail={detail}
           bootstrap={bootstrap}
           initialTab={settingsTab}
-          claudeMode={claudeMode}
-          onClaudeMode={setClaudeMode}
           onKeyStatus={setKeyStatus}
           onDirtyChange={setModalDirty}
           onVoiceReference={voiceReferenceChanged}
@@ -2663,7 +2647,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
                   disabled={busy}
                   onClick={generate}
                 >
-                  {step === "1" ? t("Activate Claude Code") : t("Generate")}
+                  {step === "1" ? t("Activate Agent") : t("Generate")}
                   <RefreshCw size={14} />
                 </button>
               )}

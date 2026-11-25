@@ -21,7 +21,6 @@ export function stagedRuntime(root) {
     AIGC_FFPROBE_PATH: tool("ffprobe"),
     PRODUCER_HEADLESS_SHELL_PATH: tool("chrome"),
     IMAGEIO_FFMPEG_EXE: tool("ffmpeg"),
-    STUDIO_CLAUDE: tool("claude"),
     PYTHONNOUSERSITE: "1",
     PYTHONDONTWRITEBYTECODE: "1",
     PYTHONUTF8: "1",

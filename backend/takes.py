@@ -2,7 +2,7 @@
 
 The engine assembles images/segment_N.(png|mp4) (the opening: images/opening.*) and prefers a
 still. Each part keeps its takes in images/takes/<segment_N|opening>/: stills as
-still-<id>.<ext>, motion clips as motion-<id>/ folders holding Claude Code's index.html, its
+still-<id>.<ext>, motion clips as motion-<id>/ folders holding Agent's index.html, its
 snapshots/ and the rendered video.mp4. Studio copies the selected take into the engine's place,
 and new output the engine writes there becomes a take, so nothing a segment had is lost.
 
@@ -81,7 +81,7 @@ def listing(p: Path, index: int) -> list[dict]:
 
 
 def motion(p: Path, work: Path) -> dict:
-    """Where a motion clip stands: Claude Code's composition, its keyframes, and the rendered video."""
+    """Where a motion clip stands: Agent's composition, its keyframes, and the rendered video."""
     html = work / "index.html"
     composed = html.stat().st_mtime if html.is_file() else None
     frames = sorted((work / "snapshots").glob("frame-*.png")) or sorted((work / "snapshots").glob("*.png"))
@@ -98,11 +98,11 @@ def motion(p: Path, work: Path) -> dict:
     try:progress=json.loads((work/'render-status.json').read_text())
     except (OSError,ValueError):progress=None
     # Keyframes and renders made before the latest composition edit are outdated (1 s for coarse clocks).
-    return {"progress":progress,"composition": str(html.relative_to(p)) if composed else None, "composed": composed,
-            "folder": str(work.relative_to(p)),
-            "keyframes": [str(f.relative_to(p)) for f in frames],
+    return {"progress":progress,"composition": html.relative_to(p).as_posix() if composed else None, "composed": composed,
+            "folder": work.relative_to(p).as_posix(),
+            "keyframes": [f.relative_to(p).as_posix() for f in frames],
             "keyframes_current": bool(frames) and composed is not None and min(f.stat().st_mtime for f in frames) >= composed - 1,
-            "video": str(video.relative_to(p)) if video else None,
+            "video": video.relative_to(p).as_posix() if video else None,
             "video_current": verified if verified is not None else bool(video) and (composed is None or video.stat().st_mtime >= composed - 1)}
 
 
@@ -134,11 +134,11 @@ def poster(work: Path, video: Path | None) -> Path | None:
 def describe(p: Path, take: dict) -> dict:
     created = made(take["id"])
     if take["kind"] in {"still", "background"}:
-        path = str(take["file"].relative_to(p))
+        path = take["file"].relative_to(p).as_posix()
         return {"id": take["id"], "kind": take["kind"], "created": created, "path": path, "poster": path}
     info = motion(p, take["dir"])
     frames = info["keyframes"]
-    frame = frames[len(frames) // 2] if frames else (str(f.relative_to(p)) if (f := poster(take["dir"], take["file"])) else None)
+    frame = frames[len(frames) // 2] if frames else (f.relative_to(p).as_posix() if (f := poster(take["dir"], take["file"])) else None)
     return {"id": take["id"], "kind": "motion", "created": created, "path": info["video"], "poster": frame, "motion": info}
 
 
@@ -151,7 +151,7 @@ def add_still(p: Path, index: int, source: Path, move: bool = False) -> str:
 
 
 def add_motion(p: Path, index: int, work: Path | None = None, video: Path | None = None) -> str:
-    """A new motion clip: an existing composition folder, a rendered video, or an empty folder for Claude Code."""
+    """A new motion clip: an existing composition folder, a rendered video, or an empty folder for Agent."""
     d = folder(p, index)
     d.mkdir(parents=True, exist_ok=True)
     when = (work / "index.html").stat().st_mtime if work and (work / "index.html").is_file() else video.stat().st_mtime if video else None

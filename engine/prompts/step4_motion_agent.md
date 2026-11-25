@@ -1,4 +1,4 @@
-<!-- 第四步 · Claude Code 段落动画模板。会话提示 = agent_rules.md 的 rules + 本文件的 main。 -->
+<!-- 第四步 · Agent 段落动画模板。会话提示 = agent_rules.md 的 rules + 本文件的 main。 -->
 <!-- {segments} 由每个所选段落的 segment 节拼成；新片段的 {new} 填入 new 节。保留 section 标记和花括号变量。 -->
 
 <!-- section: main -->

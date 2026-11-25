@@ -41,7 +41,7 @@ export interface Take {
   poster: string | null;
   motion?: Motion;
 }
-/** Where a segment's motion stands: Claude Code's composition, its keyframes, the rendered video. */
+/** Where a segment's motion stands: Agent's composition, its keyframes, the rendered video. */
 export interface Motion {
   progress?: { phase: string; completed: number; total: number } | null;
   composition: string | null;
@@ -95,7 +95,7 @@ export interface Detail {
   };
   covers: string[];
   voice_reference?: string | null;
-  /** The last Claude Code edit: its folder and style, whether its materials are current and whether it delivered a video. */
+  /** The last Agent edit: its folder and style, whether its materials are current and whether it delivered a video. */
   assembly_edit?: { folder: string; skill: string; current: boolean; delivered: boolean } | null;
   cover_design?: { folder: string; entries: { html: string; width: number; height: number }[]; files: string[]; previews: string[]; complete: boolean; current: boolean } | null;
   exports: string[];
@@ -243,21 +243,5 @@ export interface Launch {
   cwd: string;
   context: string;
   scope: string;
-  args: string[];
-  dirs?: string[];
-}
-
-/** How the agent CLI runs: bundled Claude Code with an API key, the user's installed Claude Code, or Antigravity CLI (agy). */
-export type ClaudeCodeMode = "api_key" | "subscription" | "agy";
-export interface ClaudeCodeStatus {
-  mode: ClaudeCodeMode;
-  local: null | {
-    path: string | null;
-    version: string | null;
-    logged_in: boolean;
-    auth_method: string | null;
-    subscription: string | null;
-    email: string | null;
-    error: string | null;
-  };
+  agent: import("./agents").AgentId;
 }

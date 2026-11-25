@@ -12,8 +12,8 @@ import {
   PanelRightClose,
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
-import { agentModeLabel } from "../keys";
-import type { ClaudeCodeMode, Launch, Stage } from "../types";
+import { agentNames, type AgentId } from "../agents";
+import type { Launch, Stage } from "../types";
 
 /** Lets the workspace end the session (for example "Finish session") the same way the Stop button does. */
 export type AgentHandle = { stop: () => Promise<void> };
@@ -29,7 +29,7 @@ export default function AgentPane({
   onError,
   directWriting,
   noWritingSkill = false,
-  claudeMode,
+  agent,
   disabled,
 }: {
   handle?: React.Ref<AgentHandle>;
@@ -43,7 +43,7 @@ export default function AgentPane({
   onError: (message: string) => void;
   directWriting: boolean;
   noWritingSkill?: boolean;
-  claudeMode: ClaudeCodeMode;
+  agent: AgentId;
   disabled: boolean;
 }) {
   const { t } = useI18n();
@@ -139,6 +139,7 @@ export default function AgentPane({
       rows: terminal.current?.rows || 24,
     })
       .then(() => {
+        if (session.current?.id !== launch.id) return;
         setRunning(true);
         terminal.current?.focus();
       })
@@ -159,12 +160,11 @@ export default function AgentPane({
     onFinished();
   }
   useImperativeHandle(handle, () => ({ stop }));
-  const isAgy = claudeMode === "agy";
   return (
     <aside className="agent-pane">
       <div className="pane-heading">
         <span>
-          <TerminalSquare size={15} /> {t(isAgy ? "Antigravity CLI" : "Claude Code")}
+          <TerminalSquare size={15} /> {agentNames[launch?.agent ?? agent]}
         </span>
         <button
           className="icon-button"
@@ -182,9 +182,6 @@ export default function AgentPane({
             {(launch?.scope && t(launch.scope)) || (step === "1" ? t("Writing") : step === "6" ? t("Covers") : step === "5" ? t("Assembly") : target || t("Visuals"))}
           </span>
         </div>
-        <p className="small-muted agent-mode">
-          {t(agentModeLabel(claudeMode))}
-        </p>
         {launch && (
           <p title={launch.cwd} className="context-path">
             {launch.cwd.split(/[\\/]/).slice(-3).join(" / ")}
@@ -204,21 +201,13 @@ export default function AgentPane({
             <p>
               {t(
                 step === "5"
-                  ? isAgy
-                    ? "Antigravity CLI starts editing the whole video, opening included, as soon as it opens. Guide it here at any time."
-                    : "Claude Code starts editing the whole video, opening included, as soon as it opens. Guide it here at any time."
+                  ? "Activate Agent, then type what you want to review or change."
                   : step === "6"
-                  ? isAgy
-                    ? "Your cover copy, sizes and style are prepared. Direct Antigravity CLI to design covers in HTML and Three.js here."
-                    : "Your cover copy, sizes and style are prepared. Direct Claude Code to design covers in HTML and Three.js here."
+                  ? "Your cover copy, sizes and style are prepared. Direct Agent to design covers in HTML and Three.js here."
                   : step === "1" && noWritingSkill
-                  ? isAgy
-                    ? "No writing skill is selected. Give Antigravity CLI your writing instructions here."
-                    : "No writing skill is selected. Give Claude Code your writing instructions here."
+                  ? "No writing skill is selected. Give Agent your writing instructions here."
                   : directWriting
-                  ? isAgy
-                    ? "Your writing skill is prepared. Give Antigravity CLI your topic and requirements here; no source document is needed."
-                    : "Your writing skill is prepared. Give Claude Code your topic and requirements here; no source document is needed."
+                  ? "Your writing skill is prepared. Give Agent your topic and requirements here; no source document is needed."
                   : "Source, skills, and selected segments are prepared automatically. Give your instructions here.",
               )}
             </p>
@@ -227,7 +216,7 @@ export default function AgentPane({
               disabled={disabled || !isTauri()}
               onClick={onActivate}
             >
-              <Play size={14} /> {t(isAgy ? "Activate Antigravity CLI" : "Activate Claude Code")}
+              <Play size={14} /> {t("Activate Agent")}
               <ArrowUpRight size={14} />
             </button>
             <span className="small-muted">

@@ -13,11 +13,7 @@ from core.shared import logger, APIError, ContentBlocked, http_status, retry_on_
 
 def _get_openai_api_key(server: str) -> str:
     server = (server or "").strip().lower()
-    if server == "openrouter":
-        if not config.OPENROUTER_API_KEY:
-            raise APIError("OPENROUTER_API_KEY未配置", retryable=False)
-        return config.OPENROUTER_API_KEY
-    elif server == "siliconflow":
+    if server == "siliconflow":
         if not config.SILICONFLOW_KEY:
             raise APIError("SILICONFLOW_KEY未配置", retryable=False)
         return config.SILICONFLOW_KEY
@@ -25,10 +21,6 @@ def _get_openai_api_key(server: str) -> str:
         if not config.MIMO_API_KEY:
             raise APIError("MIMO_API_KEY未配置", retryable=False)
         return config.MIMO_API_KEY
-    elif server == "kimi":
-        if not config.KIMI_API_KEY:
-            raise APIError("KIMI_API_KEY 或 MOONSHOT_API_KEY 未配置", retryable=False)
-        return config.KIMI_API_KEY
     elif server == "deepseek":
         if not config.DEEPSEEK_API_KEY:
             raise APIError("DEEPSEEK_API_KEY未配置", retryable=False)

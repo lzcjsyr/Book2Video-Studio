@@ -7,14 +7,14 @@ import type { Detail, LibraryCatalog, Settings } from "../types";
 export const styleLabels: Record<string, string> = { "content-led": "Free design", "editorial-explainer": "Editorial explainer", "cinematic-essay": "Cinematic essay", "kinetic-social": "Kinetic social" };
 
 /**
- * How Assembly makes the video. With Claude Code editing, the panel holds the brief: the style direction,
- * the person's choices (children) and the session's actions. Claude Code designs, renders and delivers
+ * How Assembly makes the video. With Agent editing, the panel holds the brief: the style direction,
+ * the person's choices (children) and the session's actions. Agent designs, renders and delivers
  * the video itself. A new edit starts from the page header.
  */
 export default function AssemblyEditing({ settings, edit, library, active, locked, children, onChange, onDesign, onFinish, onLibrary }: {
   settings: Settings[string]; edit: Detail["assembly_edit"]; library?: LibraryCatalog;
   active: boolean; locked: boolean;
-  /** The basic choices Claude Code starts from. */
+  /** The basic choices Agent starts from. */
   children?: ReactNode;
   onChange: (patch: Record<string, unknown>) => Promise<boolean>;
   onDesign: (revise: boolean) => void; onFinish: () => void; onLibrary: () => void;
@@ -27,7 +27,7 @@ export default function AssemblyEditing({ settings, edit, library, active, locke
         className={`cover-method${agent === (method === "agent") ? " selected" : ""}`} aria-pressed={agent === (method === "agent")}
         onClick={() => onChange({ assembly_method: method })}>
         {method === "agent" ? <TerminalSquare size={18} /> : <Film size={18} />}
-        <span><strong>{t(method === "agent" ? "Claude Code editing" : "Standard assembly")}</strong>
+        <span><strong>{t(method === "agent" ? "Agent editing" : "Standard assembly")}</strong>
           <small>{t(method === "agent" ? "Polish timing, captions, emphasis and sound with an editing skill." : "Assemble selected visuals and recordings with your saved settings.")}</small></span>
       </button>)}
     </div>
@@ -35,7 +35,7 @@ export default function AssemblyEditing({ settings, edit, library, active, locke
       <div className="editing-brief-heading">
         <div>
           <h2>{t("Editing brief")}</h2>
-          <p className="small-muted">{t("Claude Code designs the whole video from the recordings, visuals and text, following these choices. Changes apply to a new or revised edit.")}</p>
+          <p className="small-muted">{t("Agent designs the whole video from the recordings, visuals and text, following these choices. Changes apply to a new or revised edit.")}</p>
         </div>
         <div className="editing-skill-row">
           <label className="field"><span>{t("Style direction")}</span>
@@ -49,7 +49,7 @@ export default function AssemblyEditing({ settings, edit, library, active, locke
       </div>
       {children}
       <div className="editing-session">
-        {active ? <div className="agent-banner"><span>{t("Claude Code is making the video in the right pane.")}</span>
+        {active ? <div className="agent-banner"><span>{t("Give Agent your instructions in the right pane.")}</span>
           <button className="button small primary" onClick={onFinish}><Check size={13} />{t("Finish session")}</button></div>
           : <div className="cover-design-buttons">
             <button className="button small" disabled={locked || !edit} onClick={() => onDesign(true)}>{t("Revise last edit")}</button>

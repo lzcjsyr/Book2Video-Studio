@@ -31,11 +31,10 @@ function NumberSetting({ label, value, min, max, disabled, onSave }: {
 
 export function SegmentationControls({ settings, disabled, onChange }: Props) {
   const { t } = useI18n();
-  const mode = String(settings.split_mode || "manual") === "auto" ? "punctuation" : String(settings.split_mode || "manual");
+  const mode = (settings.split_mode ?? "manual") === "manual" ? "manual" : "punctuation";
   const hints: Record<string, string> = {
     punctuation: "Each period, question mark, exclamation mark or semicolon ends a segment, in English or Chinese. Decimal numbers stay together.",
     manual: "Each manuscript line becomes a segment. Lines ending in 【motion】 become motion segments.",
-    agent: "An agent groups sentences by meaning and chooses image or motion for each segment.",
   };
   return <div className="segmentation-controls" role="group" aria-label={t("Segmentation controls")}>
     <select aria-label={t("Split method")} value={mode} disabled={disabled}
@@ -43,10 +42,7 @@ export function SegmentationControls({ settings, disabled, onChange }: Props) {
       onChange={(e) => onChange({ split_mode: e.target.value })}>
       <option value="punctuation">{t("Split by punctuation")}</option>
       <option value="manual">{t("One segment per line")}</option>
-      <option value="agent">{t("Agent (split by meaning)")}</option>
     </select>
-    {mode === "agent" && <NumberSetting label={t("Target segments")} value={Number(settings.num_segments ?? 50)} min={1}
-      disabled={disabled} onSave={(num_segments) => onChange({ num_segments })} />}
   </div>;
 }
 

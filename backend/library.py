@@ -37,15 +37,14 @@ GROUPS = {
     "templates": ("Production templates", "prompt", "prompts"),
 }
 PROMPTS = {
-    "agent_rules.md": ("Rules for every Claude Code session", True, {"task_file"}),
-    "step1_agent.md": ("Claude Code writing template", True, {"source", "skill", "extra_requirements", "output_json", "opening_quote_state", "project_dir", "text_dir", "input_file", "skill_path"}),
-    "step1_5_segment.md": ("Segmentation template", None, {"raw_json_path", "output_json_path", "target_segments"}),
-    "step4_motion_agent.md": ("Claude Code motion template", True, {"segment_count", "segments", "style_label", "style_best_for", "style_definition", "palette", "palette_definition", "style_references", "reference_limit", "recipe_paths", "reference_paths", "skill_entries", "segment_index", "duration", "work_dir", "new"}),
+    "agent_rules.md": ("Rules for every Agent session", True, {"task_file"}),
+    "step1_agent.md": ("Agent writing template", True, {"source", "skill", "extra_requirements", "output_json", "opening_quote_state", "project_dir", "text_dir", "input_file", "skill_path"}),
+    "step4_motion_agent.md": ("Agent motion template", True, {"segment_count", "segments", "style_label", "style_best_for", "style_definition", "palette", "palette_definition", "style_references", "reference_limit", "recipe_paths", "reference_paths", "skill_entries", "segment_index", "duration", "work_dir", "new"}),
     "step4_opening_bg.md": ("Opening image template", True, {"summary", "style_block"}),
     "step4_safety.md": ("Image prompt refinement", True, {"prompt"}),
     "step6_cover.md": ("Cover image template", True, {"cover_title", "cover_subtitle", "style_block"}),
-    "step6_cover_agent.md": ("Claude Code cover template", True, {"title", "subtitle", "covers", "design_dir"}),
-    "step5_editing_agent.md": ("Claude Code assembly template", None, {"style", "skill_path", "materials", "video_size", "narration_speed", "subtitles", "music", "opening", "session", "work_dir", "delivery", "engine_path"}),
+    "step6_cover_agent.md": ("Agent cover template", True, {"title", "subtitle", "covers", "design_dir"}),
+    "step5_editing_agent.md": ("Agent assembly template", None, {"style", "skill_path", "materials", "video_size", "narration_speed", "subtitles", "music", "opening", "session", "work_dir", "delivery", "engine_path"}),
 }
 TEXT_EXTENSIONS = {".md", ".txt", ".yaml", ".yml", ".json", ".py", ".js", ".mjs", ".ts", ".tsx", ".html", ".css", ".toml"}
 TEMPLATE_SECTIONS = {

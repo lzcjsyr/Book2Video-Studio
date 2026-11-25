@@ -30,15 +30,16 @@ import opening
 import exports
 import autorun
 import local_voice
+from local_agents import NAMES, check as check_agent
 
 STAGES = ["1", "2", "3", "4", "5", "6"]
 # The CLI engine numbers Segments 1.5 and keeps the content summary (part of step 4 here) as its
 # step 2. Studio uses its own step numbers and translates settings at the engine boundary.
 ENGINE_SECTIONS = {"step2": "step1_5", "step4_summary": "step2"}
 DESKTOP_SECTIONS = {engine: desktop for desktop, engine in ENGINE_SECTIONS.items()}
-SETTINGS_SECTIONS = {"global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "motion_opening"}
+SETTINGS_SECTIONS = {"agents", "global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "motion_opening"}
 # Which service or model makes the next output. Changing one leaves finished work current.
-PROVIDER_SETTINGS = {"llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill", "agent_music_mix"}
+PROVIDER_SETTINGS = {"agent_cli", "llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill", "agent_music_mix"}
 LINKS_FILE = "projects.json"
 HIDDEN_FILE = "hidden-projects.json"
 # Default project folders of the app's earlier names, beside today's.
@@ -69,12 +70,12 @@ TYPE_REASONS = {"Visual type changed", RENDER_REASON}
 TEXT_FILES = {"raw": "raw.json", "script": "script.json", "summary": "mini_summary.json"}
 METADATA_FIELDS = ("video_titles", "cover_titles", "cover_subtitles", "golden_quotes")
 # Settings the desktop keeps for itself; the engine's configuration rejects unknown keys.
-DESKTOP_SETTINGS = {"step1": {"writing_mode"}, "step3": {"tts_provider"}, "step6": {"cover_method"}, "step5": {"assembly_method", "agent_skill", "agent_music_mix"}}
+DESKTOP_SETTINGS = {"step1": {"writing_mode", "llm_server", "llm_model"}, "step2": {"num_segments", "llm_server", "llm_model"}, "step3": {"tts_provider"}, "step6": {"cover_method"}, "step5": {"assembly_method", "agent_skill", "agent_music_mix"}}
 # Covers are drawn by an image service from the text alone and write only cover files, so a cover job
 # runs beside the jobs that leave the text as it is: recordings, visuals and assembly.
 BESIDE_COVERS = {"3", "4", "5"}
-PROVIDER_KEYS = {"OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "MIMO_API_KEY", "KIMI_API_KEY", "SILICONFLOW_KEY", "VOLCENGINE_API_KEY", "GOOGLE_CLOUD_API_KEY", "BYTEDANCE_TTS_API_KEY"}
-# Seconds a stopped job has to end (its Claude Code sessions included) before it is killed.
+PROVIDER_KEYS = {"DEEPSEEK_API_KEY", "MIMO_API_KEY", "SILICONFLOW_KEY", "VOLCENGINE_API_KEY", "GOOGLE_CLOUD_API_KEY", "BYTEDANCE_TTS_API_KEY"}
+# Seconds a stopped job has to end (its Agent sessions included) before it is killed.
 STOP_GRACE = 10
 
 
@@ -201,8 +202,17 @@ DURATION_CACHE = {}
 
 def engine_settings(settings):
     """Project settings as the engine's configuration accepts them (its section names, no desktop-only keys)."""
-    return {ENGINE_SECTIONS.get(section, section): {k: v for k, v in values.items() if k not in DESKTOP_SETTINGS.get(section, ())}
-            for section, values in settings.items()}
+    return {ENGINE_SECTIONS.get(section, section): {k: v for k, v in values.items() if k != "agent_cli" and k not in DESKTOP_SETTINGS.get(section, ())}
+            for section, values in settings.items() if section != "agents"}
+
+
+def clear_retired_model_overrides(settings):
+    """Fall back to the bundled provider and model for older projects."""
+    for section in ("step4_summary", "step4"):
+        fields = settings.get(section)
+        if isinstance(fields, dict) and str(fields.get("llm_server", "")).strip().lower() in {"kimi", "openrouter"}:
+            fields.pop("llm_server")
+            fields.pop("llm_model", None)
 
 
 def signal_job(process, force=False):
@@ -216,12 +226,36 @@ def signal_job(process, force=False):
         pass
 
 
+def _pid_alive(pid):
+    """Cross-platform check whether a process ID is still running."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return False
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
 def segmentation_output(values):
-    """Target count affects only agent segmentation."""
-    result = dict(values)
-    if result.get("split_mode", "punctuation") != "agent":
-        result.pop("num_segments", None)
-    return result
+    mode = values.get("split_mode", "punctuation")
+    return {"split_mode": mode if mode in {"manual", "punctuation"} else "punctuation"}
 
 
 class Conflict(Exception):
@@ -280,11 +314,8 @@ class Studio:
                 atomic_json(path, state)
             active = state.get("agent_active")
             if active:
-                try:
-                    os.kill(active.get("owner", -1), 0) if active.get("owner") else (_ for _ in ()).throw(ProcessLookupError())
+                if _pid_alive(active.get("owner")):
                     continue
-                except (ProcessLookupError, PermissionError):
-                    pass
                 state.pop("agent_active", None)
                 for index in active.get("created", []):
                     # A new motion clip the interrupted session never composed goes; its segment's previous visual returns.
@@ -296,7 +327,11 @@ class Studio:
                         if not previous_take:
                             state["takes"].pop(str(index))
                 stale = state.setdefault("stale", {})
-                # Assembly's Claude Code delivers the video itself; an interrupted session that delivered it is done.
+                # Assembly's Agent delivers the video itself; an interrupted session that delivered it is done.
+                if active["step"] == "5" and "assembly_edit" in active:
+                    self.finish_assembly_session(path.parents[1], state, active)
+                    atomic_json(path, state)
+                    continue
                 edit = editing.detail(path.parents[1], state.get("assembly_edit")) if active["step"] == "5" else None
                 if edit and edit["delivered"]:
                     stale.pop("5", None)
@@ -419,7 +454,14 @@ class Studio:
             self.credentials = dict(keys)
 
     def state(self, p: Path):
-        return read_json(p / ".studio/state.json", {"stale": {}, "reviewed": {}, "settings": {}, "source": "", "events": []})
+        state = read_json(p / ".studio/state.json", {"stale": {}, "reviewed": {}, "settings": {}, "source": "", "events": []})
+        settings = state.get("settings", {})
+        if "step2" in settings:
+            settings["step2"] = segmentation_output(settings["step2"])
+        for key in ("llm_server", "llm_model"):
+            settings.get("step1", {}).pop(key, None)
+        clear_retired_model_overrides(settings)
+        return state
 
     def effective(self, state):
         """The settings a job uses: the defaults, then the project's saved choices."""
@@ -429,6 +471,7 @@ class Studio:
         return settings
 
     def persist(self, p: Path, state):
+        clear_retired_model_overrides(state.get("settings", {}))
         atomic_json(p / ".studio/state.json", state)
 
     def invalidate(self, state, stage, indices=None, project=None):
@@ -511,7 +554,7 @@ class Studio:
             dest = p / ".studio/history" / revision / relative
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, dest)
-            copied.append(str(relative))
+            copied.append(relative.as_posix())
         state = self.state(p)
         state["events"].insert(0, {"id": revision, "label": label, "time": datetime.now().isoformat(), "files": copied})
         self.persist(p, state)
@@ -539,7 +582,7 @@ class Studio:
         if "step5" in sections:
             sections["step5"].setdefault("assembly_method", "agent")
             sections["step5"].setdefault("agent_skill", "content-led")
-            # Claude Code editing may mix several library tracks instead of only the suggested one.
+            # Agent editing may mix several library tracks instead of only the suggested one.
             sections["step5"].setdefault("agent_music_mix", True)
             # Music is licensed and not always bundled; the engine silently skips a missing track,
             # so start new projects without one rather than with a track that cannot play.
@@ -548,6 +591,7 @@ class Studio:
                 sections["step5"]["bgm_filename"] = None
         if "step6" in sections:
             sections["step6"].setdefault("cover_method", "agent")
+        sections["agents"] = {"default": "claude"}
         return {k: v for k, v in sections.items() if k in SETTINGS_SECTIONS}
 
     def google_adc_status(self):
@@ -582,13 +626,9 @@ class Studio:
 
     def components(self):
         """The programs production relies on, and whether each ships with the app."""
-        import headless
         bundle = self.engine.parent
-        saved_cli = read_json(self.data / "claude-code.json", {})
         found = {
             "Python": sys.executable,
-            "Claude Code": os.environ.get("STUDIO_CLAUDE") or shutil.which("claude"),
-            "Antigravity CLI (agy)": headless.find_agy(saved_cli),
             "Node.js": shutil.which("node"),
             "Browser libraries": os.environ.get("AIGC_MOTION_MODULES"),
             "Chrome Headless Shell": os.environ.get("AIGC_BROWSER_PATH"),
@@ -855,7 +895,7 @@ class Studio:
         return takes.ready(p, idx, take)
 
     def motion_folder(self, p, state, index, take=None):
-        """The motion clip a render or a Claude Code session works on: the given take, else the selected one."""
+        """The motion clip a render or a Agent session works on: the given take, else the selected one."""
         take = take or state.get("takes", {}).get(str(index))
         found = takes.find(p, index, take) if take else None
         return found["dir"] if found and found["kind"] == "motion" else None
@@ -879,7 +919,7 @@ class Studio:
             selections, _ = self.sync_takes(p, state, script)
             hashes["script"] = state["hashes"]["script"] = fingerprint(p / "text/script.json")
             segments = []
-            relative = lambda f: str(f.relative_to(p)) if f else None
+            relative = lambda f: f.relative_to(p).as_posix() if f else None
             parts = {}
             for index in [0] + [int(s["index"]) for s in script.get("segments", [])]:
                 listed = [takes.describe(p, t) for t in takes.listing(p, index)]
@@ -898,7 +938,7 @@ class Studio:
             artifact_paths = [f for folder in ["images", "voice"] for f in (p / folder).rglob("*") if f.is_file() and f.suffix.lower() in MEDIA
                               and not f.relative_to(p).as_posix().startswith(takes.ROOT + "/")]
             artifact_paths += [f for f in p.iterdir() if f.is_file() and f.suffix.lower() in MEDIA]
-            assets = {str(f.relative_to(p)): f"{f.stat().st_mtime_ns}:{f.stat().st_size}" for f in artifact_paths}
+            assets = {f.relative_to(p).as_posix(): f"{f.stat().st_mtime_ns}:{f.stat().st_size}" for f in artifact_paths}
             previous = state.get("assets")
             if previous is not None:
                 changes = {k for k in previous.keys() | assets.keys() if previous.get(k) != assets.get(k)}
@@ -910,7 +950,7 @@ class Studio:
                         self.invalidate(state, stage, indices, project=p)
             state["assets"] = assets
             opening_audio = self.asset(p, "voice", "opening", [".wav"])
-            covers = [str(f.relative_to(p)) for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA]
+            covers = [f.relative_to(p).as_posix() for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA]
             ready = {"1": bool(raw.get("content")), "2": bool(segments), "3": bool(segments) and all(s["audio"] for s in segments), "4": bool(segments) and all(s["visual"] for s in segments), "5": (p / "final_video.mp4").is_file(), "6": bool(covers)}
             if self.opening_on(state):
                 ready["3"] = ready["3"] and bool(opening_audio)
@@ -930,8 +970,8 @@ class Studio:
                 assembly_edit = editing.detail(p, state["assembly_edit"], edit_source)
             voice_reference = state["voice_reference"]["name"] if local_voice.reference(p, state) else None
             revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design, assembly_edit, voice_reference], sort_keys=True).encode()).hexdigest()
-            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "voice_reference": voice_reference, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio),
-                                                  "clip": str(opening_clip.relative_to(p)) if opening_clip else None}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
+            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "voice_reference": voice_reference, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": opening_audio.relative_to(p).as_posix() if opening_audio else None, "duration": duration(opening_audio),
+                                                  "clip": opening_clip.relative_to(p).as_posix() if opening_clip else None}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
 
     @staticmethod
     def beside(a, b):
@@ -1072,7 +1112,7 @@ class Studio:
             state = self.state(p)
             active = state.get("agent_active")
             if active and (active["step"] != "4" or index in (active.get("indices") or [])):
-                raise Conflict("Finish the Claude Code session before changing this segment's visual.")
+                raise Conflict("Finish the Agent session before changing this segment's visual.")
             script = read_json(p / "text/script.json", {})
             segment = next((s for s in script.get("segments", []) if s.get("index") == index), None)
             if index != 0 and segment is None:
@@ -1107,7 +1147,7 @@ class Studio:
             state = self.state(p)
             active = state.get("agent_active")
             if active and (active["step"] != "4" or index in (active.get("indices") or [])):
-                raise Conflict("Finish the Claude Code session before deleting this segment's versions.")
+                raise Conflict("Finish the Agent session before deleting this segment's versions.")
             self.sync_takes(p, state)
             self.persist(p, state)
             found = takes.find(p, index, take)
@@ -1135,7 +1175,7 @@ class Studio:
                 raise ValueError("This cover is no longer in the project. Refresh and choose again.")
             state = self.state(p)
             if state.get("agent_active"):
-                raise Conflict("Finish the Claude Code session first.")
+                raise Conflict("Finish the Agent session first.")
             # Without a saved choice, the first candidate is the cover in use.
             chosen = state.get("selected_cover") if state.get("selected_cover") in covers else covers[0]
             self.snapshot(p, [p / path], "Before deleting a cover")
@@ -1156,8 +1196,7 @@ class Studio:
         settings = {**self.defaults().get("step1", {}), **state.get("settings", {}).get("step1", {})}
         source = state.get("source", "")
         return {"mode": settings.get("writing_mode", "source" if source else "direct"), "source": source,
-                "agent_skill": str(settings.get("agent_skill", "book-seller")),
-                "llm_server": str(settings.get("llm_server", "")), "llm_model": str(settings.get("llm_model", ""))}
+                "agent_skill": str(settings.get("agent_skill", "book-seller"))}
 
     def set_opening(self, project_id, body):
         p = self.project(project_id)
@@ -1209,8 +1248,7 @@ class Studio:
                 raise ValueError("Invalid writing setup.")
             if options != previous:
                 state.setdefault("settings", {}).setdefault("step1", {}).update({
-                    "writing_mode": options["mode"], "agent_skill": options["agent_skill"],
-                    "llm_server": options["llm_server"], "llm_model": options["llm_model"]})
+                    "writing_mode": options["mode"], "agent_skill": options["agent_skill"]})
                 state["source"] = options["source"]
                 # Setup applies to the next writing session. Preserve the current
                 # manuscript and its review state until it is actually rewritten.
@@ -1324,18 +1362,16 @@ class Studio:
                     folders[index] = work
                 self.persist(p, state)
             try:
-                launch = prepare(self, p, {**body, "folders": folders})
+                launch = prepare(self, p, {**body, "folders": folders, "headless": False})
             except Exception:
                 for index in created:
                     shutil.rmtree(folders[index], ignore_errors=True)
                 raise
             revised = [f for index, work in folders.items() if index not in created for f in work.rglob("*")]
-            # Assembly's Claude Code replaces the published video, so the current one is kept in history.
+            # The Assembly agent replaces the published video, so the current one is kept in history.
             exports_before = [f for f in p.glob("final_video*") if f.is_file()] if body["step"] == "5" else []
-            self.snapshot(p, list((p / "text").glob("*")) if body["step"] == "1" else revised + exports_before + [p / "text/script.json"], f"Before Claude Code · step {body['step']}")
+            self.snapshot(p, list((p / "text").glob("*")) if body["step"] == "1" else revised + exports_before + [p / "text/script.json"], f"Before {NAMES[launch['agent']]} · step {body['step']}")
             state = self.state(p)
-            if body["step"] == "5":
-                state["assembly_edit"] = launch["assembly_edit"]
             if body["step"] == "6":
                 state["cover_design"] = launch["cover_design"]
             for index, work in folders.items():
@@ -1345,6 +1381,10 @@ class Studio:
                 self.sync_takes(p, state)
             state["agent_active"] = {"step": body["step"], "indices": body.get("indices", []), "launch": launch["id"], "owner": os.getpid(), "raw_before": fingerprint(p / "text/raw.json"),
                                      "takes": {str(i): w.name for i, w in folders.items()}, "created": created, "previous": previous}
+            if body["step"] == "5":
+                edit = launch["assembly_edit"]
+                state["agent_active"]["assembly_edit"] = edit
+                state["agent_active"]["assembly_workspace_before"] = editing.workspace_stamp(Path(launch["cwd"]))
             self.persist(p, state)
             return launch
 
@@ -1373,7 +1413,7 @@ class Studio:
                         atomic_json(target, raw)
                 state.pop("agent_active", None)
                 if active["step"] == "5":
-                    warning = self.edit_ended(p, state)
+                    warning = self.finish_assembly_session(p, state, active)
                 elif active["step"] == "6":
                     warning = self.design_ended(p, state)
                 else:
@@ -1389,7 +1429,7 @@ class Studio:
                     missing = [i for i in indices if not (work[i] and (work[i] / "index.html").is_file())]
                     for i in missing:
                         if i in active.get("created", []):
-                            # A new clip Claude Code never composed is not kept; the segment goes back to its previous visual.
+                            # A new clip Agent never composed is not kept; the segment goes back to its previous visual.
                             shutil.rmtree(work[i], ignore_errors=True)
                             self.select(p, state, i, active.get("previous", {}).get(str(i)))
                     self.sync_takes(p, state)
@@ -1403,7 +1443,7 @@ class Studio:
                     elif pending:
                         state["stale"]["4"] = {"reason": RENDER_REASON, "segments": pending}
                     if missing:
-                        warning = f"Claude Code ended without a composition for segment {', '.join(map(str, missing))}. Activate Claude Code for it again."
+                        warning = f"Agent ended without a composition for segment {', '.join(map(str, missing))}. Activate Agent for it again."
             self.persist(p, state)
         result = self.detail(project_id)
         result["warning"] = warning
@@ -1412,8 +1452,19 @@ class Studio:
         return result
 
     @staticmethod
+    def finish_assembly_session(p, state, active):
+        """Keep a published edit intact when the interactive session did not change it."""
+        if edit := active.get("assembly_edit"):
+            before = active.get("assembly_workspace_before")
+            if (before and editing.stamp(p / editing.DELIVERY) == edit["delivered_before"]
+                    and editing.workspace_stamp(editing.folder(p, edit)) == before):
+                return None
+            state["assembly_edit"] = edit
+        return Studio.edit_ended(p, state)
+
+    @staticmethod
     def edit_ended(p, state):
-        """Claude Code renders and delivers final_video.mp4 itself; the 3:4 copy is then drawn around it again.
+        """Agent renders and delivers final_video.mp4 itself; the 3:4 copy is then drawn around it again.
         Returns why Assembly still needs work, or None when the video was delivered."""
         info = editing.detail(p, state.get("assembly_edit"))
         if info and info["delivered"]:
@@ -1422,15 +1473,15 @@ class Studio:
             if (p / "final_video_3x4.mp4").is_file():
                 state["three_by_four_stale"] = True
             return None
-        warning = "Claude Code ended without delivering the final video. Start a new edit, or revise this one."
+        warning = "Agent ended without delivering the final video. Start a new edit, or revise this one."
         state["stale"]["5"] = {"reason": warning, "segments": []}
         return warning
 
     @staticmethod
     def design_ended(p, state):
-        """Claude Code saved its HTML covers; they become candidates when rendered. Returns what is missing, or None."""
+        """Agent saved its HTML covers; they become candidates when rendered. Returns what is missing, or None."""
         info = cover_designs.detail(p, state.get("cover_design"))
-        warning = None if info and info["complete"] else "Save every cover HTML design with Claude Code before rendering."
+        warning = None if info and info["complete"] else "Save every cover HTML design with Agent before rendering."
         state["stale"]["6"] = {"reason": warning or RENDER_COVERS, "segments": []}
         state["reviewed"].pop("6", None)
         return warning
@@ -1445,7 +1496,7 @@ class Studio:
             if self.busy(project_id, step, own):
                 raise Conflict("Finish the active project job or agent first.")
             if step not in STAGES or step == "1":
-                raise ValueError("Step 1 runs interactively through Activate Claude Code.")
+                raise ValueError("Step 1 runs interactively through Activate Agent.")
             voice_request = None
             if step == "3" and self.uses_local_voice(self.state(p)):
                 detail = self.detail(project_id)
@@ -1455,25 +1506,27 @@ class Studio:
                                  "reference": str(local_voice.reference(p, detail["state"]))}
             if step == "4" and body.get("mode") not in {"segments", "static", "render", "opening", "summary"}:
                 raise ValueError("Unknown visual generation action.")
-            # "agent": Claude Code edits the video, or designs the covers, without a terminal (automatic production).
+            # "agent": Agent edits the video, or designs the covers, without a terminal (automatic production).
             if step == "5" and body.get("mode") not in {None, "three_by_four", "agent"}:
                 raise ValueError("Unknown assembly action.")
             if step == "5" and body.get("mode") != "three_by_four" and (self.effective(self.state(p)).get("step5", {}).get("assembly_method") == "agent") != (body.get("mode") == "agent"):
-                raise ValueError("Edit the video through the interactive Claude Code terminal." if body.get("mode") is None else "Choose Claude Code editing in Assembly first.")
+                raise ValueError("Edit the video through the interactive Agent terminal." if body.get("mode") is None else "Choose Agent editing in Assembly first.")
+            if step == "5" and body.get("mode") == "agent" and not own:
+                raise ValueError("Start Auto production to run Agent editing in the background.")
             if step == "6":
                 if body.get("mode") not in {None, "cover_render", "agent"}:
                     raise ValueError("Unknown cover action.")
                 cover_agent = self.effective(self.state(p)).get("step6", {}).get("cover_method") == "agent"
                 if body.get("mode") == "agent" and not cover_agent:
-                    raise ValueError("Choose Claude Code + HTML / Three.js in Cover setup first.")
+                    raise ValueError("Choose Agent + HTML / Three.js in Cover setup first.")
                 if body.get("mode") == "cover_render":
                     info = self.detail(project_id).get("cover_design")
                     if not info or not info["complete"]:
-                        raise ValueError("Save every cover HTML design with Claude Code before rendering.")
+                        raise ValueError("Save every cover HTML design with Agent before rendering.")
                     if not info["current"]:
                         raise ValueError("Cover copy or setup changed. Revise the HTML design before rendering.")
                 elif body.get("mode") is None and cover_agent:
-                    raise ValueError("Design covers through the interactive Claude Code terminal.")
+                    raise ValueError("Design covers through the interactive Agent terminal.")
             # Earlier steps need their outputs; an outdated output still lets later steps run.
             if step == "2" and not self.detail(project_id)["ready"]["1"]:
                 raise Conflict("Write and save the manuscript before generating segments.")
@@ -1551,13 +1604,13 @@ class Studio:
             if summary:
                 paths += [p / "text/mini_summary.json"]
             if step == "5":
-                # Claude Code may also deliver subtitles beside the video.
+                # Agent may also deliver subtitles beside the video.
                 paths = [p / "final_video_3x4.mp4"] if body.get("mode") == "three_by_four" else list(p.glob("final_video*" if body.get("mode") == "agent" else "final_video*.mp4"))
                 paths = [f for f in paths if f.is_file()]
             if step == "6":
                 # A design session adds HTML of its own; the covers are kept when it is rendered.
                 paths = [] if body.get("mode") == "agent" else list(p.glob("cover_*"))
-            # A Claude Code session without a terminal is prepared first: missing materials stop it before anything is kept.
+            # A Agent session without a terminal is prepared first: missing materials stop it before anything is kept.
             launch = None
             if body.get("mode") == "agent":
                 from context import prepare
@@ -1573,8 +1626,7 @@ class Studio:
                     if segment["index"] in body["indices"] and segment.get("visualizer") == "hf":
                         motion_takes[str(segment["index"])] = takes.add_motion(p, segment["index"])
                 request.update(motion_folders={i: str(takes.folder(p, int(i)) / take) for i, take in motion_takes.items()},
-                               studio_data=str(self.data), workspace=str(self.workspace),
-                               claude=read_json(self.data / "claude-code.json", {"mode": "api_key"}))
+                               studio_data=str(self.data), workspace=str(self.workspace))
             if step == "6" and body.get("mode") == "cover_render":
                 request["cover_design"] = self.state(p)["cover_design"]
             if launch:
@@ -1585,7 +1637,7 @@ class Studio:
                 else:
                     state["cover_design"] = launch["cover_design"]
                 self.persist(p, state)
-                request.update(launch=launch, claude=read_json(self.data / "claude-code.json", {"mode": "api_key"}))
+                request["launch"] = launch
             if step == "4" and body.get("mode") == "render":
                 # Each segment renders its selected motion clip, or the one clip asked for.
                 state = self.state(p)
@@ -1603,21 +1655,20 @@ class Studio:
             if motion_takes:
                 job["_motion_takes"] = motion_takes
             self.jobs[job_id] = job
-            environment = {**os.environ, **self.credentials, LIBRARY_ENV: str(self.library_root)}
-            job["_secrets"] = [environment[k] for k in PROVIDER_KEYS if environment.get(k)]
+            environment = {**os.environ, LIBRARY_ENV: str(self.library_root)}
+            job["_secrets"] = [value for k in PROVIDER_KEYS if (value := self.credentials.get(k) or environment.get(k))]
             try:
-                # Keep the native host's shutdown pipe out of the worker's standard input.
-                process = subprocess.Popen(
-                    [sys.executable, "-u", str(Path(__file__).with_name("runner.py")), json.dumps(request, ensure_ascii=False)],
-                    env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, encoding="utf-8", errors="replace", start_new_session=os.name != "nt",
-                    creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0,
-                )
+                process = subprocess.Popen([sys.executable, "-u", str(Path(__file__).with_name("runner.py")), json.dumps(request, ensure_ascii=False)], env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", start_new_session=os.name != "nt", creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0)
             except OSError:
                 self.jobs.pop(job_id, None)
                 for index, take in motion_takes.items():
                     shutil.rmtree(takes.folder(p, int(index)) / take, ignore_errors=True)
                 raise
+            try:
+                process.stdin.write(json.dumps(self.credentials) + "\n")
+                process.stdin.close()
+            except BrokenPipeError:
+                pass  # The monitor will report the worker's startup error.
             job["process"] = process
             threading.Thread(target=self.observe_job, args=(job, process), daemon=True).start()
             return self.public_job(job)
@@ -1747,7 +1798,7 @@ class Studio:
         p = self.project(project_id)
         with self.lock:
             if self.state(p).get("agent_active"):
-                raise Conflict("Finish the Claude Code session first.")
+                raise Conflict("Finish the Agent session first.")
             index = body.get("index")
             available = {s.get("index") for s in read_json(p / "text/script.json", {}).get("segments", [])}
             if self.opening_on(self.state(p)):
@@ -1907,6 +1958,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"applied": True})
             if parts == ["api", "google-adc"]:
                 return self.json(studio.check_google_adc(body) if method == "POST" else studio.google_adc_status())
+            if len(parts) == 3 and parts[:2] == ["api", "local-agents"] and method == "GET":
+                if parts[2] not in NAMES:
+                    raise ValueError("Unknown local Agent.")
+                return self.json(check_agent(parts[2]))
             if parts == ["api", "bootstrap"]:
                 return self.json(studio.bootstrap())
             if parts == ["api", "voices"]:

@@ -1,10 +1,9 @@
-use crate::claude_code::Mode;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tauri::{Emitter, Manager};
@@ -30,12 +29,9 @@ impl Terminals {
 pub struct Launch {
     id: String,
     project: String,
-    step: String,
+    agent: String,
     cwd: String,
     context: String,
-    args: Vec<String>,
-    #[serde(default)]
-    dirs: Vec<String>,
 }
 #[derive(Clone, Serialize)]
 struct Output {
@@ -76,13 +72,9 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
     }
     let manifest = context.parent().unwrap().join("launch.json");
     let trusted: Launch =
-        serde_json::from_slice(&std::fs::read(manifest).map_err(|e| e.to_string())?)
+        serde_json::from_slice(&std::fs::read(&manifest).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-    if trusted.id != launch.id
-        || trusted.args != launch.args
-        || trusted.cwd != launch.cwd
-        || trusted.dirs != launch.dirs
-    {
+    if trusted.id != launch.id || trusted.agent != launch.agent || trusted.cwd != launch.cwd || trusted.context != launch.context {
         return Err("Agent launch context changed".into());
     }
     // The project can be anywhere the user created it; the service says which folders are
@@ -100,26 +92,9 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
         })
         .map_err(|e| e.to_string())?;
     let installation = crate::installation(&app)?;
-    let mode = crate::claude_code::mode(&app);
-    let (program, provider) = match mode {
-        Mode::ApiKey => (
-            installation.claude.clone(),
-            resolve_provider(&installation, &project_root, &trusted.step, crate::credentials::load()?)?,
-        ),
-        Mode::Subscription => (crate::claude_code::local_program(&app, &installation)?, HashMap::new()),
-        Mode::Agy => (crate::claude_code::local_agy_program(&app)?, HashMap::new()),
-    };
-    let command = session_command(&installation, &program, &trusted, mode, &provider)?;
-    let child = pair.slave.spawn_command(command).map_err(|e| match mode {
-        Mode::ApiKey => format!("Cannot launch Claude Code: {e}. Reinstall Grist."),
-        Mode::Subscription => format!(
-            "Cannot launch your Claude Code ({}): {e}. Check it in Settings → API keys.",
-            program.display()
-        ),
-        Mode::Agy => format!(
-            "Cannot launch Antigravity CLI ({}): {e}. Check it in Settings → API keys.",
-            program.display()
-        ),
+    let command = session_command(&installation, &manifest, &trusted)?;
+    let child = pair.slave.spawn_command(command).map_err(|e| {
+        format!("Cannot launch {}: {e}. Check it in Settings → Local Agents.", trusted.agent)
     })?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -209,60 +184,31 @@ pub fn terminal_stop(state: tauri::State<Terminals>, id: String) -> Result<(), S
     }
     Ok(())
 }
-/// Interactive Antigravity CLI (`agy`) arguments for a trusted launch.
-fn agy_args(launch: &Launch) -> Vec<String> {
-    let mut args = Vec::new();
-    let mut dirs = Vec::new();
-    for dir in &launch.dirs {
-        if !dir.trim().is_empty() && !dirs.iter().any(|d| d == dir) {
-            dirs.push(dir.clone());
-        }
-    }
-    if let Some(parent) = Path::new(&launch.context).parent() {
-        let parent = parent.display().to_string();
-        if !dirs.iter().any(|d| d == &parent) {
-            dirs.push(parent);
-        }
-    }
-    for dir in dirs {
-        args.push("--add-dir".into());
-        args.push(dir);
-    }
-    if launch.step == "5" {
-        args.push("--mode".into());
-        args.push("accept-edits".into());
-    }
-    let prompt = if launch.step == "5" {
-        format!(
-            "Read and strictly follow all rules and task instructions in {}, then start editing and delivering the video immediately.",
-            launch.context
-        )
-    } else {
-        format!(
-            "Read and strictly follow all rules and task instructions in {} for this session. Briefly confirm that you have loaded the task context and are ready for my instructions.",
-            launch.context
-        )
-    };
-    args.push("-i".into());
-    args.push(prompt);
-    args
+#[derive(Deserialize)]
+struct AgentCommand {
+    program: PathBuf,
+    path: String,
+    args: Vec<String>,
 }
 
-/// The agent CLI command for a trusted launch: its arguments and folder, the bundled
-/// environment, and the connection the mode calls for.
 fn session_command(
     installation: &crate::Installation,
-    program: &Path,
+    manifest: &Path,
     launch: &Launch,
-    mode: Mode,
-    provider: &HashMap<String, String>,
 ) -> Result<CommandBuilder, String> {
-    let mut command = CommandBuilder::new(program);
-    if mode == Mode::Agy {
-        command.args(agy_args(launch));
-    } else {
-        command.args(&launch.args);
+    let resolved = installation
+        .command(&installation.python)
+        .arg(installation.backend_script("local_agents.py"))
+        .arg(manifest)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !resolved.status.success() {
+        return Err(String::from_utf8_lossy(&resolved.stderr).trim().into());
     }
+    let agent: AgentCommand =
+        serde_json::from_slice(&resolved.stdout).map_err(|e| e.to_string())?;
+    let mut command = CommandBuilder::new(agent.program);
+    command.args(&agent.args);
     command.cwd(&launch.cwd);
     command.env("TERM", "xterm-256color");
     for (name, value) in installation.environment() {
@@ -271,7 +217,8 @@ fn session_command(
     for name in crate::Installation::CLEARED {
         command.env_remove(name);
     }
-    crate::claude_code::configure_connection(&mut command, mode, provider)?;
+    command.env("PATH", agent.path);
+    command.env_remove("CLAUDECODE");
     Ok(command)
 }
 
@@ -291,34 +238,6 @@ fn take_text(pending: &mut Vec<u8>) -> Option<String> {
     Some(text)
 }
 
-/// Built-in mode: the engine resolves the step's provider endpoint and key. Credentials go
-/// straight to the child and are never emitted to the WebView or written into a manifest.
-fn resolve_provider(
-    installation: &crate::Installation,
-    project_root: &Path,
-    step: &str,
-    keys: std::collections::BTreeMap<String, String>,
-) -> Result<HashMap<String, String>, String> {
-    let resolved = installation
-        .command(&installation.python)
-        .arg(installation.backend_script("agent_env.py"))
-        .arg(&installation.engine)
-        .arg(project_root)
-        .arg(step)
-        .envs(keys)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !resolved.status.success() {
-        return Err(format!(
-            "Cannot prepare the configured agent provider: {}",
-            String::from_utf8_lossy(&resolved.stderr)
-        ));
-    }
-    let env: HashMap<String, String> = serde_json::from_slice(&resolved.stdout)
-        .map_err(|_| "The engine did not return a valid agent environment")?;
-    Ok(env)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,27 +245,6 @@ mod tests {
         path::PathBuf,
         time::{Duration, Instant},
     };
-
-    #[test]
-    fn agy_args_include_repeatable_add_dirs_and_initial_prompt() {
-        let launch = Launch {
-            id: "s1".into(),
-            project: "p1".into(),
-            step: "5".into(),
-            cwd: "/proj".into(),
-            context: "/proj/.studio/agent/s1/context.md".into(),
-            args: vec!["--session-id".into(), "s1".into()],
-            dirs: vec!["/proj".into(), "/lib/skills/step5".into(), "/proj".into()],
-        };
-        let args = agy_args(&launch);
-        assert!(args.windows(2).any(|w| w == ["--add-dir", "/proj"]));
-        assert!(args.windows(2).any(|w| w == ["--add-dir", "/lib/skills/step5"]));
-        assert!(args.windows(2).any(|w| w == ["--add-dir", "/proj/.studio/agent/s1"]));
-        assert!(args.windows(2).any(|w| w == ["--mode", "accept-edits"]));
-        let idx = args.iter().position(|a| a == "-i").expect("initial prompt");
-        assert!(args[idx + 1].contains("/proj/.studio/agent/s1/context.md"));
-        assert!(!args.iter().any(|a| a == "--session-id"));
-    }
 
     #[test]
     fn split_characters_wait_for_their_remaining_bytes() {
@@ -377,13 +275,10 @@ mod tests {
         out
     }
 
-    /// Talks to Claude Code exactly as an app session does: a launch prepared by the project
+    /// Talks to the selected local CLI exactly as an app session does: a launch prepared by the project
     /// service (STUDIO_TEST_LAUNCH; its data folder is STUDIO_TEST_DATA, by default the
     /// development one), the staged build, the mode's program and connection, a real
-    /// terminal. STUDIO_TEST_MODE=subscription uses the installed Claude Code and its login;
-    /// otherwise the built-in one is resolved for the step with a fixture key for every provider
-    /// and sent to STUDIO_TEST_PROVIDER_URL instead of the real endpoint:
-    /// `cargo test -- --ignored --nocapture interactive_session`.
+    /// terminal. Run with cargo test -- --ignored --nocapture interactive_session.
     #[test]
     #[ignore]
     fn interactive_session_answers_through_the_terminal() {
@@ -393,20 +288,7 @@ mod tests {
         // The data folder of the service that prepared the launch (its library holds the prompts).
         let data = std::env::var("STUDIO_TEST_DATA").map(PathBuf::from).unwrap_or_else(|_| build.join("dev-data"));
         let installation = crate::Installation::new(&build, data.clone(), data.join("projects")).unwrap();
-        // The launch's context is <project>/.studio/agent/<session>/context.md.
-        let project = Path::new(&launch.context).ancestors().nth(4).unwrap().to_path_buf();
-        let subscription = std::env::var("STUDIO_TEST_MODE").as_deref() == Ok("subscription");
-        let (mode, program, provider) = if subscription {
-            let program = crate::claude_code::find(&installation.claude).expect("Claude Code is installed");
-            (Mode::Subscription, program, HashMap::new())
-        } else {
-            let keys = crate::credentials::PROVIDERS.iter().map(|name| (name.to_string(), "fixture-key".to_string())).collect();
-            let mut provider = resolve_provider(&installation, &project, &launch.step, keys).unwrap();
-            println!("Resolved provider: {} · {}", provider["ANTHROPIC_BASE_URL"], provider["ANTHROPIC_MODEL"]);
-            provider.insert("ANTHROPIC_BASE_URL".into(), std::env::var("STUDIO_TEST_PROVIDER_URL").unwrap());
-            (Mode::ApiKey, installation.claude.clone(), provider)
-        };
-        let command = session_command(&installation, &program, &launch, mode, &provider).unwrap();
+        let command = session_command(&installation, Path::new(&path), &launch).unwrap();
         let pair = native_pty_system()
             .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
             .unwrap();
@@ -434,20 +316,17 @@ mod tests {
             None
         };
         let mut send = |keys: &str| { writer.write_all(keys.as_bytes()).unwrap(); writer.flush().unwrap(); };
-        // Claude Code's own trust question comes first in a folder it has not seen.
-        let started = wait_for(&["trust this folder", "shift+tab", "for shortcuts"], 60);
-        if started.as_deref() == Some("trust this folder") {
-            send("\x1b[B");
-            std::thread::sleep(Duration::from_millis(500));
-            send("\r");
+        if launch.agent == "agy" {
+            if wait_for(&["Do you trust the contents of this project?"], 20).is_some() {
+                // The test fixture is a disposable, empty workspace.
+                send("\r");
+            }
+        } else {
             assert!(wait_for(&["shift+tab", "for shortcuts"], 60).is_some(), "{}", plain(&screen.lock().unwrap()));
+            send("What is 17+25? Reply with only the number.");
+            std::thread::sleep(Duration::from_millis(800));
+            send("\r");
         }
-        assert!(started.is_some(), "Claude Code did not start:\n{}", plain(&screen.lock().unwrap()));
-        std::thread::sleep(Duration::from_secs(2));
-        screen.lock().unwrap().clear();
-        send("What is 17+25? Reply with only the number.");
-        std::thread::sleep(Duration::from_millis(800));
-        send("\r");
         let expected = std::env::var("STUDIO_TEST_EXPECT").unwrap_or_else(|_| "42".into());
         let answered = wait_for(&[&expected], 120);
         let transcript = plain(&screen.lock().unwrap());

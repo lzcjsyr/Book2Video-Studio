@@ -4,7 +4,7 @@ Each step runs the same jobs its page would, with the project's saved settings. 
 decided when it starts, from the state the steps before it left: with the "missing" scope only missing
 and outdated outputs are made, so finished work is kept; "all" makes everything again (Revision history
 keeps the previous outputs). A failed or stopped job ends the run, and the steps after it do not start.
-Claude Code steps (motion clips, Claude Code editing, HTML covers) run without a terminal.
+Agent steps (motion clips, Agent editing, HTML covers) run without a terminal.
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def next_job(studio, project_id, step, options, done, d=None):
                         and edit.get("skill") == settings.get("step5", {}).get("agent_skill", "content-led"):
                     body["revise"] = True
             return "assembly", body
-        # Claude Code delivers only the 16:9 video; Studio draws the 3:4 copy around it.
+        # Agent delivers only the 16:9 video; Studio draws the 3:4 copy around it.
         if settings.get("three_by_four", {}).get("enabled", True) is not False and "three_by_four" not in done and d["ready"]["5"] \
                 and (state.get("three_by_four_stale") or "final_video_3x4.mp4" not in d["exports"]):
             return "three_by_four", {"step": "5", "mode": "three_by_four"}
@@ -168,7 +168,7 @@ def start(studio, project_id, body):
     with studio.lock:
         studio.project(project_id)
         if studio.busy(project_id):
-            raise Conflict("Finish the running job or Claude Code session first.")
+            raise Conflict("Finish the running job or Agent session first.")
         problem = plan(studio, project_id, options)["blocked"]
         if problem:
             raise ValueError(problem)

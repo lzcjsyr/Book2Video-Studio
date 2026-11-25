@@ -129,7 +129,7 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "variables"):
             self.save("templates", "step6_cover.md", "Forgot variables")
         with self.assertRaisesRegex(ValueError, "variables"):
-            self.save("templates", "step1_5_segment.md", "Forgot paths")
+            self.save("templates", "step4_opening_bg.md", "Forgot paths")
         path = self.library.group("image_styles")[2]
         path.write_text("only: Remaining style\n")
         with self.assertRaisesRegex(ValueError, "at least one"):

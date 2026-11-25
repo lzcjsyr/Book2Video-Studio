@@ -25,7 +25,7 @@ def check_image_model(server, model):
 def read_script(project):
     for name in ["script.json", "raw.json"]:
         if (project / "text" / name).is_file():
-            return json.loads((project / "text" / name).read_text())
+            return json.loads((project / "text" / name).read_text(encoding="utf-8"))
     return {}
 
 
@@ -87,7 +87,7 @@ def run(request):
     os.chdir(project)
     import yaml
     from core.config import apply_yaml_config, get_generation_params, config
-    merged = yaml.safe_load((engine / "config.example.yaml").read_text())
+    merged = yaml.safe_load((engine / "config.example.yaml").read_text(encoding="utf-8"))
     from server import engine_settings
     for section, fields in engine_settings(request.get("settings", {})).items():
         merged.setdefault(section, {}).update(fields)
@@ -113,7 +113,7 @@ def run(request):
         from visual_generation import run as generate_visuals
         return generate_visuals(request, params, steps, call)
     if request.get("mode") == "agent":
-        # Assembly or Covers by Claude Code without a terminal, prepared by the service (automatic production).
+        # Assembly or Covers by Agent without a terminal, prepared by the service (automatic production).
         from headless import run_session
         return run_session(request)
     if step == "4" and request.get("mode") == "render":
@@ -127,7 +127,7 @@ def run(request):
             # The motion clip to render: Studio names its folder (images/takes/segment_N/motion-…).
             work = folders.get(idx)
             if not work or not (work / "index.html").exists() or not (work / "studio-payload.json").exists():
-                raise ValueError(f"Segment {idx} has no saved composition. Activate Claude Code first.")
+                raise ValueError(f"Segment {idx} has no saved composition. Activate the Agent first.")
             payload = json.loads((work / "studio-payload.json").read_text())
             from server import duration
             segment = next(s for s in script["segments"] if s["index"] == idx)
@@ -168,7 +168,6 @@ def run(request):
     values = {**params, "project_output_dir": str(project), "target_segments": indices, "regenerate_opening": request.get("opening", False)}
     if step == "2":
         values["split_mode"] = params.get("step1_5_split_mode", "punctuation")
-        values["agent_cli"] = request.get("claude")
     if step == "4":
         values.update(visual_mode="static_image", llm_server=params["llm_server_step4"], llm_model=params["llm_model_step4"], llm_base_url=params["llm_base_url_step4"])
         check_image_model(params["image_server"], params["image_model"])
@@ -199,7 +198,7 @@ def run(request):
             check_image_model(values["cover_image_server"], params["cover_image_model"])
     if step == "3":
         # A voice left empty in Settings means the default voice.
-        default_voice = (yaml.safe_load((engine / "config.example.yaml").read_text()).get("step3") or {}).get("voice", "")
+        default_voice = (yaml.safe_load((engine / "config.example.yaml").read_text(encoding="utf-8")).get("step3") or {}).get("voice", "")
         values.update(tts_server=config.SUPPORTED_TTS_SERVERS[0], voice=params.get("voice") or default_voice)
     if step in {"3", "5"}:
         values["mute_cut_min_silence_ms"] = params.get("mute_cut_min_silence_ms", 200)
@@ -218,9 +217,12 @@ def run(request):
 
 
 if __name__ == "__main__":
+    # Import the Agent runner before overlaying production keys on this worker.
     from headless import install_signal_handlers
     install_signal_handlers()
     try:
+        if not sys.stdin.isatty() and (credentials := sys.stdin.readline()):
+            os.environ.update(json.loads(credentials))
         result = run(json.loads(sys.argv[1]))
         print("STUDIO_RESULT:" + json.dumps(result, ensure_ascii=False, default=str), flush=True)
         sys.exit(0 if result.get("success") else 1)

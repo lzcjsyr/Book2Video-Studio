@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adcModels, distinctGaps, imageModelFits, imageModelFor, keyNeeds, unmet } from "../src/keys.ts";
+import { adcModels, distinctGaps, imageModelFits, imageModelFor, keyNeeds, keyProviders, languageModelChoices, unmet } from "../src/keys.ts";
 
 const settings = {
   step1: { llm_server: "deepseek" },
-  step2: { split_mode: "auto", llm_server: "kimi" },
+  step2: { split_mode: "auto", llm_server: "mimo" },
   step4_summary: { llm_server: "deepseek" },
   step4: { llm_server: "volcengine", image_server: "doubao" },
   step6: { cover_image_server: "google_adc" },
@@ -13,16 +13,20 @@ const keys = (needs) => Object.fromEntries(needs.map((n) => [n.id, n.key]));
 
 test("each step needs the key of the provider chosen in its settings", () => {
   assert.deepEqual(keys(keyNeeds(settings)), {
-    writing: "DEEPSEEK_API_KEY",
     voice: "BYTEDANCE_TTS_API_KEY",
     direction: "DEEPSEEK_API_KEY",
     images: "VOLCENGINE_API_KEY",
     covers: null,
   });
 });
-test("segmentation needs a model key only in agent mode", () => {
-  const agent = { ...settings, step2: { split_mode: "agent", llm_server: "kimi" } };
-  assert.equal(keys(keyNeeds(agent)).segments, "KIMI_API_KEY");
+test("old intelligent segmentation settings need no key", () => {
+  const agent = { ...settings, step2: { split_mode: "agent", llm_server: "mimo" } };
+  assert.deepEqual(keyNeeds(agent), keyNeeds(settings));
+});
+test("API key fields and text provider menus only list supported language services", () => {
+  assert.deepEqual(languageModelChoices.map((provider) => provider.id), ["deepseek", "mimo", "siliconflow", "volcengine"]);
+  assert.deepEqual(keyProviders.filter((provider) => provider.group === "text").map((provider) => provider.key),
+    ["DEEPSEEK_API_KEY", "MIMO_API_KEY", "SILICONFLOW_KEY"]);
 });
 test("local VoxCPM2 does not require a cloud TTS key", () => {
   assert.equal(keyNeeds({ ...settings, step3: { tts_provider: "voxcpm2" } }).some((n) => n.id === "voice"), false);
@@ -30,20 +34,18 @@ test("local VoxCPM2 does not require a cloud TTS key", () => {
 });
 test("missing keys and unsupported providers are reported; Google ADC needs no key", () => {
   const saved = { DEEPSEEK_API_KEY: true, VOLCENGINE_API_KEY: false, BYTEDANCE_TTS_API_KEY: true };
-  assert.deepEqual(unmet(keyNeeds(settings, { motion: true }), saved).map((n) => n.id), ["motion_agent", "images"]);
+  assert.deepEqual(unmet(keyNeeds(settings), saved).map((n) => n.id), ["images"]);
   assert.deepEqual(unmet(keyNeeds(settings), saved, ["voice", "covers"]), []);
-  // Two steps share the missing Volcengine key: one key to add.
-  assert.equal(distinctGaps(unmet(keyNeeds(settings, { motion: true }), saved)), 1);
+  assert.equal(distinctGaps(unmet(keyNeeds(settings), saved)), 1);
   const typo = { ...settings, step4_summary: { llm_server: "deepsek" } };
   assert.deepEqual(unmet(keyNeeds(typo), { ...saved, VOLCENGINE_API_KEY: true }).map((n) => n.id), ["direction"]);
   // Before the saved keys are known, nothing is reported as missing.
   assert.deepEqual(unmet(keyNeeds(settings), undefined), []);
 });
-test("static images with Google ADC need no key; only motion segments need the step 4 model", () => {
+test("Google ADC needs no image key", () => {
   const adc = { ...settings, step4: { llm_server: "volcengine", image_server: "google_adc" } };
   const saved = { DEEPSEEK_API_KEY: true, BYTEDANCE_TTS_API_KEY: true };
   assert.deepEqual(unmet(keyNeeds(adc), saved), []);
-  assert.deepEqual(unmet(keyNeeds(adc, { motion: true }), saved).map((n) => n.id), ["motion_agent"]);
 });
 test("switching image service keeps a fitting model and replaces another service's model", () => {
   assert.equal(imageModelFor("google_adc", "doubao-seedream-4-0-250828"), "gemini-3.1-flash-image");
@@ -57,45 +59,11 @@ test("the connection check covers the models sent through Google ADC", () => {
   assert.deepEqual(adcModels(adc), ["gemini-3.1-flash-image", "gemini-3-pro-image"]);
   assert.deepEqual(adcModels({ ...adc, step6: { cover_image_server: "doubao", cover_image_model: "doubao-seedream-4-0-250828" } }), ["gemini-3.1-flash-image"]);
 });
-test("with a Claude subscription the writing and motion agents need no key; other steps still do", () => {
-  const needs = keyNeeds(settings, { motion: true, subscription: true });
-  const writing = needs.find((n) => n.id === "writing");
-  assert.equal(writing.key, null);
-  assert.equal(writing.login, "Your Claude Code login (no key)");
-  assert.equal(needs.find((n) => n.id === "motion_agent").key, null);
-  const saved = { BYTEDANCE_TTS_API_KEY: true };
-  assert.deepEqual(unmet(needs, saved).map((n) => n.id), ["direction", "images"]);
-  assert.equal(needs.find((n) => n.id === "covers").login, "Google Cloud login (no key)");
-});
-
-test("HTML cover agents use Writing's provider or Claude subscription and omit cover ADC checks", () => {
-  const agent = { ...settings, step6: { cover_method: "agent", cover_image_server: "google_adc", cover_image_model: "gemini-3-pro-image" } };
-  assert.equal(keyNeeds(agent).find((n) => n.id === "covers").key, "DEEPSEEK_API_KEY");
-  assert.equal(keyNeeds(agent, { subscription: true }).find((n) => n.id === "covers").key, null);
-  assert.deepEqual(adcModels(agent), []);
-});
-
-
-test("Assembly editing uses Writing's model key or the Claude subscription", () => {
-  const edit = { ...settings, step5: { assembly_method: "agent" } };
-  assert.equal(keyNeeds(edit).find((n) => n.id === "assembly_agent").key, "DEEPSEEK_API_KEY");
-  assert.equal(keyNeeds(edit, { subscription: true }).find((n) => n.id === "assembly_agent").key, null);
-  assert.equal(keyNeeds({ ...settings, step5: { assembly_method: "standard" } }).some((n) => n.id === "assembly_agent"), false);
-});
-
-test("with Antigravity CLI (agy) all agent steps including agent segmentation need no API key", () => {
-  const full = {
-    ...settings,
-    step2: { split_mode: "agent", llm_server: "kimi" },
-    step5: { assembly_method: "agent" },
-    step6: { cover_method: "agent" },
-  };
-  const needs = keyNeeds(full, { motion: true, agentMode: "agy" });
-  for (const id of ["writing", "segments", "motion_agent", "assembly_agent", "covers"]) {
-    const need = needs.find((n) => n.id === id);
-    assert.equal(need.key, null, `${id} should need no API key under agy`);
-    assert.equal(need.login, "Antigravity CLI (no key)");
+test("local agents do not use app API keys and HTML covers omit ADC checks", () => {
+  for (const cli of ["claude", "agy"]) {
+    const agent = { ...settings, agents: { default: cli }, step5: { assembly_method: "agent" },
+      step6: { cover_method: "agent", cover_image_server: "google_adc", cover_image_model: "gemini-3-pro-image" } };
+    assert.deepEqual(keyNeeds(agent).map(n => n.id), ["voice", "direction", "images"]);
+    assert.deepEqual(adcModels(agent), []);
   }
-  const saved = { BYTEDANCE_TTS_API_KEY: true };
-  assert.deepEqual(unmet(needs, saved).map((n) => n.id), ["direction", "images"]);
 });

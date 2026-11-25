@@ -48,35 +48,31 @@ export function planText(t: Translate, plan: AutoPlanStep | undefined, segments:
       if (!plan.after && plan.jobs && !plan.jobs.includes("assembly")) return t("Build the 3:4 copy");
       const portrait = settings.three_by_four?.enabled !== false;
       if (settings.step5?.assembly_method === "agent")
-        return t(portrait ? "Claude Code edits the video; Grist draws the 3:4 copy" : "Claude Code edits the video");
+        return t(portrait ? "Agent edits the video; Grist draws the 3:4 copy" : "Agent edits the video");
       return t(portrait ? "Assemble the video and the 3:4 copy" : "Assemble the video");
     }
     default:
       if (!plan.run) return t("Up to date · covers are current");
       if (settings.step6?.cover_method === "agent")
-        return t(plan.jobs?.join() === "covers" ? "Render the saved HTML covers" : "Claude Code designs HTML covers; Grist renders them");
+        return t(plan.jobs?.join() === "covers" ? "Render the saved HTML covers" : "Agent designs HTML covers; Grist renders them");
       return t("Generate cover candidates");
   }
 }
 
-/** The API keys (or Claude Code logins) a run with this plan uses. */
-export function autoNeeds(plan: AutoPlan | null, settings: Settings, { motion = false, summary = false } = {}): NeedId[] {
+/** The API keys a run with this plan uses. */
+export function autoNeeds(plan: AutoPlan | null, { summary = false } = {}): NeedId[] {
   if (!plan) return [];
   const step = (id: string) => plan.steps.find((s) => s.step === id);
   const runs = (id: string) => Boolean(step(id)?.run);
-  const agentSplit = settings.step2?.split_mode === "agent";
   const visuals = step("4");
   const needs: NeedId[] = [];
-  if (runs("2") && agentSplit) needs.push("segments");
   if (runs("3")) needs.push("voice");
   if (visuals?.run) {
     // After new segments, which kinds of visuals are needed is decided by them.
     const after = Boolean(visuals.after);
     if (after || visuals.images || visuals.opening) needs.push("images");
     if (visuals.summary || (after && !summary)) needs.push("direction");
-    if (visuals.motion || (after && (motion || agentSplit))) needs.push("motion_agent");
   }
-  if (runs("5") && settings.step5?.assembly_method === "agent") needs.push("assembly_agent");
   if (runs("6")) needs.push("covers");
   return needs;
 }

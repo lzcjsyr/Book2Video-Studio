@@ -24,11 +24,9 @@ const SERVICE: &str = "app.grist.desktop.provider-keys";
 /// Where builds named Book2Video Studio and Stuff 2 Video kept the keys.
 #[cfg(not(debug_assertions))]
 const LEGACY_SERVICE: &str = "com.book2video.studio.provider-keys";
-pub const PROVIDERS: [&str; 8] = [
-    "OPENROUTER_API_KEY",
+pub const PROVIDERS: [&str; 6] = [
     "DEEPSEEK_API_KEY",
     "MIMO_API_KEY",
-    "KIMI_API_KEY",
     "SILICONFLOW_KEY",
     "VOLCENGINE_API_KEY",
     "GOOGLE_CLOUD_API_KEY",
@@ -66,9 +64,17 @@ fn vault() -> Result<Entry, String> {
     Entry::new(SERVICE, VAULT).map_err(|_| "Cannot access the system credential store.".into())
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(any(not(debug_assertions), test))]
 const READ_ERROR: &str =
     "Cannot read saved API keys. Unlock the system credential store and retry.";
+
+#[cfg(any(not(debug_assertions), test))]
+fn decode_vault(json: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut keys: BTreeMap<String, String> =
+        serde_json::from_str(json).map_err(|_| READ_ERROR.to_string())?;
+    keys.retain(|name, _| PROVIDERS.contains(&name.as_str()));
+    Ok(keys)
+}
 
 /// Where debug builds keep the keys: `<repository>/.env`, beside the source.
 #[cfg(debug_assertions)]
@@ -141,7 +147,7 @@ fn adopt_legacy_keys() -> Result<BTreeMap<String, String>, String> {
     let legacy = Entry::new(LEGACY_SERVICE, VAULT)
         .map_err(|_| "Cannot access the system credential store.".to_string())?;
     let keys: BTreeMap<String, String> = match legacy.get_password() {
-        Ok(json) => serde_json::from_str(&json).map_err(|_| READ_ERROR.to_string())?,
+        Ok(json) => decode_vault(&json)?,
         Err(Error::NoEntry) => return Ok(BTreeMap::new()),
         Err(_) => return Err(READ_ERROR.into()),
     };
@@ -159,7 +165,7 @@ pub fn load() -> Result<BTreeMap<String, String>, String> {
     let keys = read_env_file()?;
     #[cfg(not(debug_assertions))]
     let keys = match vault()?.get_password() {
-        Ok(json) => serde_json::from_str(&json).map_err(|_| READ_ERROR.to_string())?,
+        Ok(json) => decode_vault(&json)?,
         Err(Error::NoEntry) => adopt_legacy_keys()?,
         Err(_) => return Err(READ_ERROR.into()),
     };
@@ -275,6 +281,17 @@ mod tests {
     #[test]
     fn unknown_provider_is_rejected_before_accessing_store() {
         assert!(supported("PATH").is_err());
+    }
+
+    #[test]
+    fn old_vault_keys_are_filtered_before_they_reach_the_service() {
+        let keys = decode_vault(
+            r#"{"KIMI_API_KEY":"retired","OPENROUTER_API_KEY":"retired","MIMO_API_KEY":"fixture"}"#,
+        )
+        .unwrap();
+        assert_eq!(keys, BTreeMap::from([("MIMO_API_KEY".into(), "fixture".into())]));
+        assert!(supported("KIMI_API_KEY").is_err());
+        assert!(supported("OPENROUTER_API_KEY").is_err());
     }
 
     #[test]

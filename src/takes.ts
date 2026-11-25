@@ -6,7 +6,7 @@ export function numbers(takes: Take[]) {
   return new Map(takes.map((take) => [take.id, ++count[take.kind]]));
 }
 
-/** Where a motion clip stands, from Claude Code's composition to a current render. */
+/** Where a motion clip stands, from Agent's composition to a current render. */
 export type ClipState = "rendered" | "outdated" | "unrendered" | "empty";
 export function clipState(motion: Motion | null | undefined): ClipState {
   if (motion?.video) return motion.video_current ? "rendered" : "outdated";
