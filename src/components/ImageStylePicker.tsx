@@ -41,7 +41,7 @@ export default function ImageStylePicker({ styles, selected, disabled, onSelect,
         <h2 id={`${uid}-image-style-picker-title`}>{t("Choose image style")}</h2>
         <button type="button" className="icon-button" aria-label={t("Close style picker")} onClick={onClose}><X size={18} /></button>
       </div>
-      <p id={`${uid}-image-style-picker-help`} className="small-muted image-style-picker-help">{t("Read the descriptions and select a style. Your choice saves automatically for this project.")}</p>
+      <p id={`${uid}-image-style-picker-help`} className="small-muted image-style-picker-help">{t("Select a style to use across projects.")}</p>
       <ul className="image-style-options" aria-label={t("Image styles")}>
         {styles.map((style) => <li key={style.id}>
           <button type="button" className={"image-style-option" + (style.id === selected ? " selected" : "")}

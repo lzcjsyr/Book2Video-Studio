@@ -230,6 +230,7 @@ class LibraryTests(unittest.TestCase):
     def test_writing_activation_uses_imported_skill_and_edited_template(self):
         from context import prepare
         studio = object.__new__(Studio); studio.engine = studio.library_root = self.engine
+        studio.data = self.engine.parent / "data"
         shutil.copy2(ENGINE / "config.example.yaml", self.engine / "config.example.yaml")
         project = self.engine / "output/test"; (project / ".studio").mkdir(parents=True)
         source = project / "source.txt"; source.write_text("Source")

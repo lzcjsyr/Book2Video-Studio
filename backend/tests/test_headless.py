@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import headless
@@ -42,6 +43,27 @@ class HeadlessTests(unittest.TestCase):
         self.script(f'print({json.dumps([result])!r})')
         with self.assertRaisesRegex(ValueError, "CodeBuddy Code did not finish"):
             self.run_session()
+
+    def test_codex_background_session_ends_with_a_completed_turn(self):
+        self.launch["agent"] = "codex"
+        finished = "\n".join([
+            json.dumps({"type": "thread.started"}),
+            json.dumps({"type": "item.completed", "item": {"type": "error", "message": "warning"}}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps({"type": "turn.completed", "usage": {}}),
+        ]) + "\n"
+        self.script(f'print({finished!r})')
+        self.assertEqual(self.run_session(), {"type": "turn.completed", "usage": {}})
+        self.script('print("interrupted before any turn completed")\n')
+        with self.assertRaisesRegex(ValueError, "Codex CLI did not finish"):
+            self.run_session()
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX process group supervision')
+    def test_completed_agent_result_survives_an_inaccessible_helper(self):
+        with patch.object(headless.os, "killpg", side_effect=PermissionError):
+            headless._signal_group(Mock(pid=1, poll=Mock(return_value=0)), signal.SIGTERM)
+            with self.assertRaises(PermissionError):
+                headless._signal_group(Mock(pid=1, poll=Mock(return_value=None)), signal.SIGTERM)
 
     @unittest.skipIf(os.name == 'nt', 'POSIX process group supervision')
     def test_timeout_stops_background_render_even_when_it_ignores_term(self):

@@ -46,7 +46,9 @@ def run(request, params, steps, call):
         studio = Studio(Path(request["engine"]), Path(request["studio_data"]), Path(request["workspace"]))
         for index in motions:
             work = Path(request["motion_folders"][str(index)])
-            launches.append((index, prepare(studio, project, {"step": "4", "indices": [index], "folders": {index: work}})))
+            launch = prepare(studio, project, {"step": "4", "indices": [index], "folders": {index: work}, "headless": True},
+                             state={"settings": request["settings"]})
+            launches.append((index, launch))
 
     processed, failed, errors = [], [], []
     opening_done = False

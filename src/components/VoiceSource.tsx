@@ -108,7 +108,7 @@ function LocalVoice({ detail, disabled, onReference }: {
 
 export function VoiceSource({ settings, detail, disabled = false, onChange, onReference, children }: {
   settings: Record<string, unknown>;
-  detail: Detail;
+  detail: Detail | null;
   disabled?: boolean;
   onChange: (provider: string) => void;
   onReference: (detail: Detail) => void;
@@ -124,7 +124,7 @@ export function VoiceSource({ settings, detail, disabled = false, onChange, onRe
         <option value="voxcpm2">{t("Local clone · VoxCPM2")}</option>
       </select>
     </label>
-    {local ? <LocalVoice key={detail.id} detail={detail} disabled={disabled} onReference={onReference} /> : children}
+    {local ? detail && <LocalVoice key={detail.id} detail={detail} disabled={disabled} onReference={onReference} /> : children}
   </div>;
 }
 

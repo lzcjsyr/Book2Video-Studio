@@ -69,6 +69,23 @@ class AgentTemplateTests(unittest.TestCase):
         for text in ['Cover','Subtitle','cover_320x320_1.html：320×320',launch['cwd']]:self.assertIn(text,prompt)
         self.assertNotIn('{',prompt.replace('{{','').split('importmap')[0])
 
+    def test_production_mode_rules_are_in_the_system_prompt_for_assembly_and_covers(self):
+        state = self.studio.state(self.p)
+        state['settings']['agents'] = {'default': 'agy'}
+        self.studio.persist(self.p, state)
+        for step, agent_name in [('5', 'grist-assembly'), ('6', 'grist-covers')]:
+            for automatic in [False, True]:
+                with self.subTest(step=step, automatic=automatic):
+                    launch = prepare(self.studio, self.p, {'step': step, 'headless': automatic})
+                    context = Path(launch['context']).read_text()
+                    self.assertNotIn('first_message', launch)
+                    self.assertEqual('这是自动制作' in context, automatic)
+                    self.assertEqual('只在用户明确要求时才开始工作' in context, not automatic)
+                    definition = Path(launch['cwd']) / '.agents/agents' / f'{agent_name}.md'
+                    self.assertIn(context, definition.read_text())
+                    if step == '6' and automatic:
+                        self.assertIn('应用会自动渲染最终封面', context)
+
     def test_the_assembly_template_is_one_file_with_every_setting_filled_in(self):
         from library import PROMPTS
         assembly=self.launch('5');prompt=Path(assembly['context']).read_text()

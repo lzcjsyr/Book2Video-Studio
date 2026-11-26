@@ -480,6 +480,35 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(conn.getresponse().status,200);conn.close()
         finally:server.shutdown();server.server_close()
         return self.studio.state(self.p)
+    def test_shared_preferences_reach_existing_and_new_projects_after_restart(self):
+        other = Path(self.studio.create({"name": "Earlier"})["path"])
+        self.studio.save_voice({"id": "custom", "name": "Narrator"})
+        self.post_settings({"step3": {"speech_rate": 20, "voice": "custom"},
+                            "three_by_four": {"title_text": "Only this video"}})
+        self.studio = self.open()
+        new = Path(self.studio.create({"name": "Later"})["path"])
+        for project in [other, new]:
+            state = self.studio.detail(project.name)["state"]
+            self.assertEqual(state["settings"]["step3"], {"speech_rate": 20, "voice": "custom"})
+            self.assertNotIn("title_text", state["settings"].get("three_by_four", {}))
+        self.assertEqual(self.studio.state(new)["stale"], {})
+        deleted = self.studio.delete_voice({"id": "custom"})
+        self.assertNotIn("custom", [voice["id"] for voice in deleted["voices"]])
+        self.assertEqual(self.open().state(new)["settings"]["step3"]["voice"], deleted["fallback"])
+
+    def test_shared_rate_changed_during_recording_outdates_the_finished_audio(self):
+        state = self.studio.state(self.p)
+        state["settings"] = {"step3": {"speech_rate": 25}}
+        self.studio.persist(self.p, state)
+        job = {"project": self.p.name, "step": "3", "status": "running", "scope": None, "result": {"success": True}}
+        self.studio.jobs["recording"] = job
+        self.studio.remember_settings({"step3": {"speech_rate": 20}})
+        self.assertEqual(self.studio.state(self.p)["settings"]["step3"]["speech_rate"], 25)
+        self.studio.job_ended(job, 0)
+        updated = self.studio.state(self.p)
+        self.assertEqual(updated["settings"]["step3"]["speech_rate"], 20)
+        self.assertIn("3", updated["stale"])
+
     def test_panel_settings_outdate_only_the_three_by_four_copy(self):
         (self.p/'final_video.mp4').write_bytes(b'master')
         state=self.studio.state(self.p);state['stale']={};state['reviewed']={'5':'reviewed'};self.studio.persist(self.p,state)
@@ -668,7 +697,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(engine_settings({'step2':{'split_mode':'agent'}, 'step4_summary':{'llm_server':'mimo'}, 'step1':{'writing_mode':'direct', 'agent_skill':'x'}}),
                          {'step1_5':{'split_mode':'agent'}, 'step2':{'llm_server':'mimo'}, 'step1':{'agent_skill':'x'}})
         (self.engine/'config.example.yaml').write_text('step1_5:\n  num_segments: 9\nstep2:\n  llm_server: mimo\n')
-        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'mimo'}, 'agents':{'default':'claude'}})
+        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'mimo'}, 'agents':{'default':'agy'}})
     def test_motion_agent_requires_a_direction(self):
         (self.p/'text/mini_summary.json').unlink()
         with self.assertRaisesRegex(Conflict, 'content summary'):
@@ -1026,6 +1055,7 @@ class AgentContextTests(unittest.TestCase):
         from server import Studio
         from context import prepare
         studio=object.__new__(Studio);studio.engine=studio.library_root=ENGINE
+        studio.data = self.p.parent / "data"
         source=self.p/'source.txt';source.write_text('Verification source')
         atomic_json(self.p/'.studio/state.json',{'settings':{},'source':str(source),'stale':{},'reviewed':{},'events':[]})
         atomic_json(self.p/'text/script.json',copy.deepcopy(SCRIPT));atomic_json(self.p/'text/mini_summary.json',{'summary':'Shared context'})
@@ -1033,7 +1063,7 @@ class AgentContextTests(unittest.TestCase):
         for step in ['1','4']:
             launch=prepare(studio,self.p,{'step':step,'indices':[1],'folders':{1:self.p/'images/takes/segment_1/motion-test'}})
             context=Path(launch['context']).read_text()
-            self.assertEqual(launch['agent'], 'claude');self.assertNotIn('{output_json}',context)
+            self.assertEqual(launch['agent'], 'agy');self.assertNotIn('{output_json}',context)
             if step=='4':
                 self.assertIn('时长：1 秒',context)
                 payload=json.loads((self.p/'images/takes/segment_1/motion-test/studio-payload.json').read_text())
@@ -1041,6 +1071,7 @@ class AgentContextTests(unittest.TestCase):
     def test_direct_context_excludes_previous_source_and_keeps_output_contract(self):
         from context import prepare
         studio = object.__new__(Studio); studio.engine = studio.library_root = ENGINE
+        studio.data = self.p.parent / "data"
         for source in ['', str(self.p/'missing-old-manuscript.txt')]:
             with self.subTest(source=source):
                 atomic_json(self.p/'.studio/state.json', {'settings': {'step1': {'writing_mode': 'direct'}}, 'source': source})
@@ -1056,6 +1087,7 @@ class AgentContextTests(unittest.TestCase):
     def test_source_context_requires_source_and_grants_its_folder(self):
         from context import prepare
         studio = object.__new__(Studio); studio.engine = studio.library_root = ENGINE
+        studio.data = self.p.parent / "data"
         atomic_json(self.p/'.studio/state.json', {'settings': {'step1': {'writing_mode': 'source'}}, 'source': ''})
         with self.assertRaisesRegex(ValueError, 'top of Writing'):
             prepare(studio, self.p, {'step': '1'})

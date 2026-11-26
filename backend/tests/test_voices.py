@@ -33,6 +33,27 @@ class VoiceLibraryTests(unittest.TestCase):
         for project, state in before.items():
             self.assertEqual(reopened.state(reopened.project(project)), state)
 
+    def test_settings_before_creating_a_project_and_default_image_style(self):
+        service = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        service.studio, service.token = self.studio, "test-token"
+        thread = threading.Thread(target=service.handle_request)
+        thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", service.server_port)
+            conn.request("POST", "/api/settings", json.dumps({"settings": {"step3": {"speech_rate": 20}}}),
+                         {"Authorization": "Bearer test-token"})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.load(response)["step3"]["speech_rate"], 20)
+            conn.close()
+        finally:
+            thread.join()
+            service.server_close()
+        project = Path(self.studio.create({"name": "New project"})["path"])
+        effective = self.studio.effective(self.studio.state(project))
+        self.assertEqual(effective["step3"]["speech_rate"], 20)
+        self.assertEqual(effective["step4"]["image_style_preset"], "style01")
+
     def test_rename_updates_one_voice_and_rejects_invalid_input_without_writing(self):
         self.studio.save_voice({'id': 'S_test123', 'name': '旧名称'})
         voices = self.studio.save_voice({'id': ' S_test123 ', 'name': ' 新名称 '})['voices']

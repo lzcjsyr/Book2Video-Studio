@@ -72,6 +72,7 @@ print(json.dumps(report))
         return [sys.executable,str(work/'run.py')]
 
     def test_the_agent_gets_the_materials_and_contract_without_a_preset_runner(self):
+        self.settings(agent_cli="claude")
         launch,work=self.prepare();found=editing.read(work/'materials.json');prompt=Path(launch['context']).read_text()
         segment=found['segments'][0]
         self.assertEqual((segment['index'],segment['text'],segment['visual_kind']),(1,'第一段。','image'))
@@ -87,7 +88,7 @@ print(json.dumps(report))
         self.assertEqual(launch['cwd'], str(work))
         self.assertEqual(launch['agent'], 'claude')
         self.assertNotIn('first_message', launch)
-        self.assertIn('只在用户要求时才开始剪辑', prompt)
+        self.assertIn('只在用户明确要求时才开始工作', prompt)
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
 
     def test_opening_and_closing_a_revision_keeps_the_published_edit(self):
