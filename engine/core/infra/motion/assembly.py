@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 import sys
 
+from .artifacts import stamp
 from .capabilities import inspect_machine
 from .encoding import encode, select_encoder
 from .renderer import _tool, capture, render_clip
@@ -352,6 +354,19 @@ def render_clips(
     return [results[idx] for idx in chosen]
 
 
+def _file_digest(path: Path) -> str:
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def _compose_cache_matches(candidate: Path, record: Path, inputs: dict) -> bool:
+    try:
+        cached = json.loads(record.read_text(encoding='utf-8'))
+        return isinstance(cached, dict) and cached.get('inputs') == inputs and cached.get('output') == _file_digest(candidate)
+    except (OSError, ValueError):
+        return False
+
+
 def compose(
     work: Path | str,
     manifest_path: Path | str = 'render.json',
@@ -359,7 +374,7 @@ def compose(
     delivery: Path | str | None = None,
     srt: Path | str | None = None,
 ) -> dict:
-    """Validate clips, concat, burn optional ASS subtitles, mux audio, verify, and atomically deliver."""
+    """Compose rendered clips or reuse the verified video stream when only audio changes."""
     work = Path(work).resolve()
     manifest = _load_manifest(work, manifest_path)
     width, height = _read_size(work, manifest)
@@ -372,45 +387,61 @@ def compose(
     build = work / 'build'
     build.mkdir(parents=True, exist_ok=True)
 
-    # Verify every clip and prepare pure-ASCII names for concat demuxer safety.
-    concat_entries: list[str] = []
-    for idx, clip in enumerate(clips):
-        clip_path = (
-            _inside(work, str(clip['video']), label=f'clip {idx} video')
-            if clip.get('video')
-            else build / f'clip_{idx:03d}.mp4'
-        )
+    clip_paths = [
+        _inside(work, str(clip['video']), label=f'clip {idx} video')
+        if clip.get('video') else build / f'clip_{idx:03d}.mp4'
+        for idx, clip in enumerate(clips)
+    ]
+    for clip_path in clip_paths:
         if not clip_path.is_file():
             raise FileNotFoundError(f'Rendered clip missing: {clip_path}. Run render first.')
-        verify_video(clip_path, width, height, fps, int(clip['frames']), expect_audio=False)
-        if clip_path.parent == build and clip_path.name.isascii() and "'" not in clip_path.name:
-            concat_entries.append(f"file '{clip_path.name}'")
-        else:
-            staged = build / f'_src_{idx:03d}.mp4'
-            staged.unlink(missing_ok=True)
-            try:
-                os.link(clip_path, staged)
-            except OSError:
-                shutil.copy2(clip_path, staged)
-            concat_entries.append(f"file '{staged.name}'")
-
-    concat_list = build / '_concat.txt'
-    concat_list.write_text('\n'.join(concat_entries) + '\n', encoding='utf-8')
+    video_sources = [*clip_paths, *([subtitles] if subtitles is not None else [])]
+    source_stamps = [stamp(path) for path in video_sources]
+    video_inputs = {
+        'width': width, 'height': height, 'fps': fps,
+        'clips': [[clip['frames'], _file_digest(path)] for clip, path in zip(clips, clip_paths)],
+        'subtitles': _file_digest(subtitles) if subtitles is not None else None,
+    }
 
     ffmpeg = _tool('ffmpeg')
     candidate = build / 'candidate_final.mp4'
+    record = build / 'candidate_final.compose.json'
+    temp_record = build / f'.candidate_final.{os.getpid()}.tmp.json'
     temp_candidate = build / f'.candidate_final.{os.getpid()}.tmp.mp4'
     temp_candidate.unlink(missing_ok=True)
     encode_timeout = max(120, math.ceil(total_seconds * 15))
     used_encoder = 'copy'
+    reuse_video = _compose_cache_matches(candidate, record, video_inputs)
+
+    if reuse_video:
+        video_input = ['-i', str(candidate)]
+    else:
+        # Validate clips and give concat filenames it can interpret safely.
+        concat_entries = []
+        for idx, (clip, clip_path) in enumerate(zip(clips, clip_paths)):
+            verify_video(clip_path, width, height, fps, clip['frames'], expect_audio=False)
+            if clip_path.parent == build and clip_path.name.isascii() and "'" not in clip_path.name:
+                concat_entries.append(f"file '{clip_path.name}'")
+            else:
+                staged = build / f'_src_{idx:03d}.mp4'
+                staged.unlink(missing_ok=True)
+                try:
+                    os.link(clip_path, staged)
+                except OSError:
+                    shutil.copy2(clip_path, staged)
+                concat_entries.append(f"file '{staged.name}'")
+
+        concat_list = build / '_concat.txt'
+        concat_list.write_text('\n'.join(concat_entries) + '\n', encoding='utf-8')
+
+        video_input = ['-f', 'concat', '-safe', '0', '-i', str(concat_list)]
 
     try:
-        if subtitles is None:
+        if reuse_video or subtitles is None:
             subprocess.run(
                 [
                     ffmpeg, '-nostdin', '-y', '-v', 'error',
-                    '-f', 'concat', '-safe', '0', '-i', str(concat_list),
-                    '-i', str(audio),
+                    *video_input, '-i', str(audio),
                     '-map', '0:v:0', '-map', '1:a:0',
                     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
                     '-movflags', '+faststart',
@@ -429,8 +460,7 @@ def compose(
                 subprocess.run(
                     [
                         ffmpeg, '-nostdin', '-y', '-v', 'error',
-                        '-f', 'concat', '-safe', '0', '-i', str(concat_list),
-                        '-c:v', 'copy', '-an', str(merged_silent),
+                        *video_input, '-c:v', 'copy', '-an', str(merged_silent),
                     ],
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
@@ -471,10 +501,14 @@ def compose(
 
         verify_video(temp_candidate, width, height, fps, total_frames, expect_audio=True)
         _check_decode(temp_candidate, total_seconds)
+        if source_stamps != [stamp(path) for path in video_sources]:
+            raise RuntimeError('Video fragments or subtitles changed during assembly. Run compose again.')
+        temp_record.write_text(json.dumps({'inputs': video_inputs, 'output': _file_digest(temp_candidate)}), encoding='utf-8')
         os.replace(temp_candidate, candidate)
-    except Exception:
+        os.replace(temp_record, record)
+    finally:
         temp_candidate.unlink(missing_ok=True)
-        raise
+        temp_record.unlink(missing_ok=True)
 
     delivered_path = None
     delivered_srt = None
@@ -501,6 +535,7 @@ def compose(
         'delivery': delivered_path,
         'srt': delivered_srt,
         'encoder': used_encoder,
+        'reused_video': reuse_video,
         'width': width,
         'height': height,
         'fps': fps,

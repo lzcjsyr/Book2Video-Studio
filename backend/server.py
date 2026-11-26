@@ -206,8 +206,11 @@ def engine_settings(settings):
             for section, values in settings.items() if section != "agents"}
 
 
-def clear_retired_model_overrides(settings):
-    """Fall back to the bundled provider and model for older projects."""
+def clear_retired_settings(settings):
+    """Discard options that older projects may still have saved."""
+    step5 = settings.get("step5")
+    if isinstance(step5, dict):
+        step5.pop("video_codec", None)
     for section in ("step4_summary", "step4"):
         fields = settings.get(section)
         if isinstance(fields, dict) and str(fields.get("llm_server", "")).strip().lower() in {"kimi", "openrouter"}:
@@ -460,8 +463,68 @@ class Studio:
             settings["step2"] = segmentation_output(settings["step2"])
         for key in ("llm_server", "llm_model"):
             settings.get("step1", {}).pop(key, None)
-        clear_retired_model_overrides(settings)
+        clear_retired_settings(settings)
+        shared = self.shared_settings()
+        if shared and not state.get("agent_active") and not self.running(self.project_id(p)):
+            self.apply_settings(state, shared)
         return state
+
+    def shared_settings(self):
+        settings = read_json(self.data / "production-settings.json", {})
+        clear_retired_settings(settings)
+        return settings
+
+    def remember_settings(self, patch, *, legacy=None):
+        if not isinstance(patch, dict) or any(section not in SETTINGS_SECTIONS or not isinstance(fields, dict)
+                                              for section, fields in patch.items()):
+            raise ValueError("Invalid production settings.")
+        if patch.get("step3", {}).get("tts_provider", "bytedance") not in {"bytedance", local_voice.PROVIDER}:
+            raise ValueError("Choose a supported voice source.")
+        # References, manuscript input mode and per-video panel copy belong to the project.
+        local_fields = {"step1": {"writing_mode"}, "three_by_four": {"title_text", "subtitle_text", "bottom_text"}}
+        shared = self.shared_settings()
+        # An explicit save in an older project can adopt its choices once. Later saves
+        # only replace fields the user edited, even with several project tabs open.
+        for section, fields in (legacy or {}).items():
+            if section in SETTINGS_SECTIONS:
+                for key, value in fields.items():
+                    if key not in local_fields.get(section, ()):
+                        shared.setdefault(section, {}).setdefault(key, value)
+        for section, fields in patch.items():
+            values = {k: v for k, v in fields.items() if k not in local_fields.get(section, ())}
+            if values:
+                shared.setdefault(section, {}).update(values)
+        clear_retired_settings(shared)
+        atomic_json(self.data / "production-settings.json", shared)
+
+    def apply_settings(self, state, patch):
+        if "video_codec" in patch.get("step5", {}):
+            patch = {**patch, "step5": {k: v for k, v in patch["step5"].items() if k != "video_codec"}}
+        old = state.setdefault("settings", {})
+        if all(all(k in old.get(section, {}) and old[section][k] == v for k, v in fields.items())
+               for section, fields in patch.items()):
+            return
+        effective = self.effective(state)
+        stages = {"global": "3", "step2": "2", "step3": "3", "step4": "4",
+                  "step5": "5", "subtitles": "5", "step6": "6", "motion_opening": "5"}
+        for section, fields in patch.items():
+            before = effective.get(section, {})
+            after = {**before, **fields}
+            old.setdefault(section, {}).update(fields)
+            if section == "step2":
+                before, after = segmentation_output(before), segmentation_output(after)
+            changed = {k for k in after if after[k] != before.get(k)} - PROVIDER_SETTINGS
+            if section == "global" and "opening_quote" in changed:
+                self.update_opening(state, after["opening_quote"])
+                changed.remove("opening_quote")
+            if not changed:
+                continue
+            if section in stages:
+                self.mark_stale(state, stages[section], "Production settings changed")
+            elif section == "three_by_four":
+                state["three_by_four_stale"] = True
+            elif section == "step4_summary":
+                state["summary_stale"] = True
 
     def effective(self, state):
         """The settings a job uses: the defaults, then the project's saved choices."""
@@ -471,7 +534,7 @@ class Studio:
         return settings
 
     def persist(self, p: Path, state):
-        clear_retired_model_overrides(state.get("settings", {}))
+        clear_retired_settings(state.get("settings", {}))
         atomic_json(p / ".studio/state.json", state)
 
     def invalidate(self, state, stage, indices=None, project=None):
@@ -591,7 +654,7 @@ class Studio:
                 sections["step5"]["bgm_filename"] = None
         if "step6" in sections:
             sections["step6"].setdefault("cover_method", "agent")
-        sections["agents"] = {"default": "claude"}
+        sections["agents"] = {"default": "agy"}
         return {k: v for k, v in sections.items() if k in SETTINGS_SECTIONS}
 
     def google_adc_status(self):
@@ -738,6 +801,19 @@ class Studio:
             atomic_json(self.data / VOICES_FILE, {"voices": voices})
         return {"voices": voices}
 
+    def delete_voice(self, body):
+        voice_id = body.get("id")
+        with self.lock:
+            voices = [voice for voice in self.voices() if voice["id"] != voice_id]
+            fallback = voices[0]["id"] if voices else DEFAULT_VOICE["id"]
+            current = self.shared_settings().get("step3", {}).get("voice", DEFAULT_VOICE["id"])
+            if current == voice_id:
+                self.remember_settings({"step3": {"voice": fallback}})
+            else:
+                fallback = current
+            atomic_json(self.data / VOICES_FILE, {"voices": voices})
+            return {"voices": voices, "fallback": fallback}
+
     def music(self):
         """Background music: the bundled tracks, then the ones the user added."""
         listing = lambda folder: sorted(f.name for f in folder.glob("*") if f.is_file() and f.suffix.lower() in MUSIC) if folder.is_dir() else []
@@ -839,7 +915,7 @@ class Studio:
             try:
                 raw = read_json(p / "text/raw.json", {})
                 script = read_json(p / "text/script.json", {})
-                name = self.state(p).get("name") or p.name
+                name = read_json(p / ".studio/state.json", {}).get("name") or p.name
                 result.append({"id": project_id, "name": (raw.get("video_titles") or [name])[0], "source_name": raw.get("source_name") or name, "segments": len(script.get("segments", [])), "modified": p.stat().st_mtime, "path": str(p), "linked": outside})
             except OSError:
                 result.append({"id": project_id, "name": p.name, "source_name": p.name, "problem": "Cannot open this folder", "segments": 0, "modified": 0, "path": str(p), "linked": outside})
@@ -1212,27 +1288,32 @@ class Studio:
                 raise Conflict("Opening quote setting changed elsewhere. Refresh before changing it.")
             if previous != enabled:
                 state.setdefault("settings", {}).setdefault("global", {})["opening_quote"] = enabled
-                # Switching inclusion changes the assembly, not the narration,
-                # context, covers, or existing segment recordings/visuals.
-                state["stale"]["5"] = {"reason": "Opening quote usage changed", "segments": []}
-                state["reviewed"].pop("5", None)
-                for stage in ["3", "4"]:
-                    stale = state["stale"].get(stage)
-                    if not enabled and stale and stale["segments"] and 0 in stale["segments"]:
-                        state.setdefault("disabled_opening_stale", {})[stage] = {"reason": stale["reason"], "segments": [0]}
-                        stale["segments"] = [i for i in stale["segments"] if i != 0]
-                        if not stale["segments"]:
-                            state["stale"].pop(stage)
-                    elif enabled:
-                        suspended = state.get("disabled_opening_stale", {}).pop(stage, None)
-                        if suspended:
-                            state["reviewed"].pop(stage, None)
-                            if stale is None:
-                                state["stale"][stage] = suspended
-                            elif stale["segments"]:
-                                stale["segments"] = sorted(set(stale["segments"]) | {0})
+                self.update_opening(state, enabled)
+                self.remember_settings({"global": {"opening_quote": enabled}})
                 self.persist(p, state)
         return self.detail(project_id)
+
+    @staticmethod
+    def update_opening(state, enabled):
+        # Switching inclusion changes the assembly, not the narration,
+        # context, covers, or existing segment recordings/visuals.
+        state["stale"]["5"] = {"reason": "Opening quote usage changed", "segments": []}
+        state["reviewed"].pop("5", None)
+        for stage in ["3", "4"]:
+            stale = state["stale"].get(stage)
+            if not enabled and stale and stale["segments"] and 0 in stale["segments"]:
+                state.setdefault("disabled_opening_stale", {})[stage] = {"reason": stale["reason"], "segments": [0]}
+                stale["segments"] = [i for i in stale["segments"] if i != 0]
+                if not stale["segments"]:
+                    state["stale"].pop(stage)
+            elif enabled:
+                suspended = state.get("disabled_opening_stale", {}).pop(stage, None)
+                if suspended:
+                    state["reviewed"].pop(stage, None)
+                    if stale is None:
+                        state["stale"][stage] = suspended
+                    elif stale["segments"]:
+                        stale["segments"] = sorted(set(stale["segments"]) | {0})
 
     def save_writing(self, project_id, body):
         p = self.project(project_id)
@@ -1249,6 +1330,7 @@ class Studio:
             if options != previous:
                 state.setdefault("settings", {}).setdefault("step1", {}).update({
                     "writing_mode": options["mode"], "agent_skill": options["agent_skill"]})
+                self.remember_settings({"step1": {"agent_skill": options["agent_skill"]}})
                 state["source"] = options["source"]
                 # Setup applies to the next writing session. Preserve the current
                 # manuscript and its review state until it is actually rewritten.
@@ -1279,7 +1361,11 @@ class Studio:
         for folder in ["text", "images", "voice"]:
             (p / folder).mkdir()
         self.show(p)
-        state = self.state(p)
+        state = {"stale": {}, "reviewed": {}, "events": []}
+        inherited = self.shared_settings()
+        for section, fields in settings.items():
+            inherited.setdefault(section, {}).update(fields)
+        settings = inherited
         settings = {**settings, "step1": {**settings.get("step1", {}), "writing_mode": mode}}
         state.update(name=title, source=source, settings=settings)
         self.persist(p, state)
@@ -1704,11 +1790,13 @@ class Studio:
 
     def job_ended(self, job, code):
         with self.lock:
+            # Finish against the job's settings. The next idle read applies preferences
+            # changed elsewhere and marks any outputs made with older settings stale.
+            p = self.project(job["project"])
+            state = self.state(p)
             job.pop("_secrets", None)
             job["status"] = "cancelled" if job["status"] == "cancelling" else "succeeded" if code == 0 and (job.get("result") or {}).get("success") else "failed"
             job["ended"] = time.time()
-            p = self.project(job["project"])
-            state = self.state(p)
             # Pipeline-owned rewrites (including the DOCX bridge) have already
             # been accounted for by this job, rather than being external edits.
             state["hashes"] = {k: fingerprint(p / "text" / filename) for k, filename in TEXT_FILES.items()}
@@ -1962,8 +2050,15 @@ class Handler(BaseHTTPRequestHandler):
                 if parts[2] not in NAMES:
                     raise ValueError("Unknown local Agent.")
                 return self.json(check_agent(parts[2]))
+            if parts == ["api", "settings"]:
+                with studio.lock:
+                    if method == "POST":
+                        studio.remember_settings(body["settings"])
+                    return self.json(studio.shared_settings())
             if parts == ["api", "bootstrap"]:
                 return self.json(studio.bootstrap())
+            if parts == ["api", "voices", "delete"] and method == "POST":
+                return self.json(studio.delete_voice(body))
             if parts == ["api", "voices"]:
                 return self.json(studio.save_voice(body) if method == "POST" else {"voices": studio.voices()})
             if parts == ["api", "local-voice"]:
@@ -2047,37 +2142,9 @@ class Handler(BaseHTTPRequestHandler):
                             if studio.busy(project_id, "6" if set(body["settings"]) == {"step6"} and "source" not in body else None):
                                 raise Conflict("Stop production before changing its settings.")
                             state = studio.state(p)
-                            old = state.get("settings", {})
-                            effective = studio.defaults()
-                            for section, fields in old.items():
-                                effective.setdefault(section, {}).update(fields)
-                            # The engine's step-2 settings write the content summary used by Visuals.
-                            # Writing settings apply to the next writing session; the manuscript stays current (as in Writing setup).
-                            mapping = {"global": "3", "step2": "2", "step3": "3", "step4": "4", "step4_summary": "4", "step5": "5", "subtitles": "5", "step6": "6", "motion_opening": "5"}
-                            # Fields that are sent replace saved ones; anything left out keeps its saved value.
-                            settings = copy.deepcopy(old)
-                            for section, fields in body["settings"].items():
-                                settings[section] = {**old.get(section, {}), **fields} if isinstance(fields, dict) else fields
-                            if settings.get("step3", {}).get("tts_provider", "bytedance") not in {"bytedance", local_voice.PROVIDER}:
-                                raise ValueError("Choose a supported voice source.")
-                            output = lambda values: {k: v for k, v in values.items() if k not in PROVIDER_SETTINGS}
-                            def differs(k):
-                                before, after = effective.get(k, {}), {**effective.get(k, {}), **settings[k]}
-                                if k == "step2":
-                                    before, after = segmentation_output(before), segmentation_output(after)
-                                return output(after) != output(before)
-                            sections = [k for k in body["settings"] if k in mapping and differs(k)]
-                            # The 3:4 copy is redrawn around the landscape master, so its panels outdate only that copy.
-                            if "three_by_four" in body["settings"] and differs("three_by_four"):
-                                state["three_by_four_stale"] = True
-                            if "step4_summary" in sections:
-                                # Visuals follow a new summary once it is regenerated.
-                                state["summary_stale"] = True
-                            # Settings outdate only their own step; later steps follow once it is regenerated
-                            # and only where its outputs actually changed.
-                            for s in sorted({mapping[k] for k in sections if k != "step4_summary"}, key=STAGES.index):
-                                studio.mark_stale(state, s, "Production settings changed")
-                            state["settings"] = settings
+                            patch = body["settings"]
+                            studio.remember_settings(patch, legacy=state.get("settings"))
+                            studio.apply_settings(state, patch)
                             if "source" in body:
                                 state["source"] = body["source"]
                             studio.persist(p, state)

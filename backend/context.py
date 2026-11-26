@@ -8,14 +8,15 @@ import sys
 import uuid
 from pathlib import Path
 
-from local_agents import prepare_assembly_agent, selected
+from local_agents import prepare_workspace_agent, selected
 
 
-def prepare(studio, project, body):
+def prepare(studio, project, body, *, state=None):
     step = body["step"]
     if step not in {"1", "4", "5", "6"}:
         raise ValueError("Interactive agents are available for Writing, Visuals, Assembly and Covers.")
-    state = studio.state(project)
+    if state is None:
+        state = studio.state(project)
     settings = studio.effective(state)
     agent = selected(settings, step)
     session = str(uuid.uuid4())
@@ -144,8 +145,16 @@ def prepare(studio, project, body):
             facts={'selected_segments': [s['index'] for s in chosen], 'fps': fps})
 
     task_path = write_task_context(context_dir / 'task.json', stage=step, cwd=cwd, **task)
-    if step == "5" and not body.get("headless"):
-        prompt = "这是交互式剪辑会话。根据用户在对话中提出的请求行动。只在用户要求时才开始剪辑、修改文件或渲染。\n\n" + prompt
+    if step in {"5", "6"}:
+        if body.get("headless"):
+            prompt += "\n\n" + part("agent_rules.md", "automatic")
+            if step == "6":
+                prompt += "\n封面设计和预览检查完成后直接结束。应用会自动渲染最终封面，无需用户操作。"
+        else:
+            task_name = "剪辑" if step == "5" else "封面设计"
+            prompt = f"这是交互式{task_name}会话。只在用户明确要求时才开始工作、修改文件或渲染。\n\n" + prompt
+    if agent == "claude" and not body.get("headless") and cwd != project:
+        prompt += f"\n\n终端从项目根目录启动。本次任务的工作目录是 {cwd}。请在该目录执行命令，按该目录解析任务中的相对路径。"
     prompt = part("agent_rules.md", "rules", task_file=task_path) + "\n\n" + prompt
     prompt_path = context_dir / "context.md"
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -154,11 +163,12 @@ def prepare(studio, project, body):
               "task": str(task_path), "context_chars": len(prompt), "scope": scope}
     if step == "5":
         launch["assembly_edit"] = assembly_edit
+    if step == "5" or (not body.get("headless") and cwd != project):
         launch["project_dir"] = str(project.resolve())
-        if agent == "agy":
-            prepare_assembly_agent(cwd, prompt)
     if step == "6":
         launch["cover_design"] = launch_design
+    if agent == "agy" and step in {"5", "6"}:
+        prepare_workspace_agent(step, cwd, prompt)
     # Keep the prompt in a file for history; no API credentials are written here.
     (context_dir / "launch.json").write_text(json.dumps(launch, ensure_ascii=False, indent=2), encoding="utf-8")
     return launch

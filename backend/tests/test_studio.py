@@ -480,6 +480,35 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(conn.getresponse().status,200);conn.close()
         finally:server.shutdown();server.server_close()
         return self.studio.state(self.p)
+    def test_shared_preferences_reach_existing_and_new_projects_after_restart(self):
+        other = Path(self.studio.create({"name": "Earlier"})["path"])
+        self.studio.save_voice({"id": "custom", "name": "Narrator"})
+        self.post_settings({"step3": {"speech_rate": 20, "voice": "custom"},
+                            "three_by_four": {"title_text": "Only this video"}})
+        self.studio = self.open()
+        new = Path(self.studio.create({"name": "Later"})["path"])
+        for project in [other, new]:
+            state = self.studio.detail(project.name)["state"]
+            self.assertEqual(state["settings"]["step3"], {"speech_rate": 20, "voice": "custom"})
+            self.assertNotIn("title_text", state["settings"].get("three_by_four", {}))
+        self.assertEqual(self.studio.state(new)["stale"], {})
+        deleted = self.studio.delete_voice({"id": "custom"})
+        self.assertNotIn("custom", [voice["id"] for voice in deleted["voices"]])
+        self.assertEqual(self.open().state(new)["settings"]["step3"]["voice"], deleted["fallback"])
+
+    def test_shared_rate_changed_during_recording_outdates_the_finished_audio(self):
+        state = self.studio.state(self.p)
+        state["settings"] = {"step3": {"speech_rate": 25}}
+        self.studio.persist(self.p, state)
+        job = {"project": self.p.name, "step": "3", "status": "running", "scope": None, "result": {"success": True}}
+        self.studio.jobs["recording"] = job
+        self.studio.remember_settings({"step3": {"speech_rate": 20}})
+        self.assertEqual(self.studio.state(self.p)["settings"]["step3"]["speech_rate"], 25)
+        self.studio.job_ended(job, 0)
+        updated = self.studio.state(self.p)
+        self.assertEqual(updated["settings"]["step3"]["speech_rate"], 20)
+        self.assertIn("3", updated["stale"])
+
     def test_panel_settings_outdate_only_the_three_by_four_copy(self):
         (self.p/'final_video.mp4').write_bytes(b'master')
         state=self.studio.state(self.p);state['stale']={};state['reviewed']={'5':'reviewed'};self.studio.persist(self.p,state)
@@ -668,7 +697,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(engine_settings({'step2':{'split_mode':'agent'}, 'step4_summary':{'llm_server':'mimo'}, 'step1':{'writing_mode':'direct', 'agent_skill':'x'}}),
                          {'step1_5':{'split_mode':'agent'}, 'step2':{'llm_server':'mimo'}, 'step1':{'agent_skill':'x'}})
         (self.engine/'config.example.yaml').write_text('step1_5:\n  num_segments: 9\nstep2:\n  llm_server: mimo\n')
-        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'mimo'}, 'agents':{'default':'claude'}})
+        self.assertEqual(self.studio.defaults(), {'step2':{'num_segments':9}, 'step4_summary':{'llm_server':'mimo'}, 'agents':{'default':'agy'}})
     def test_motion_agent_requires_a_direction(self):
         (self.p/'text/mini_summary.json').unlink()
         with self.assertRaisesRegex(Conflict, 'content summary'):
@@ -973,6 +1002,13 @@ class PipelineTests(unittest.TestCase):
         for field in ['video_titles', 'cover_titles', 'cover_subtitles', 'golden_quotes']:
             self.assertCountEqual(script[field], value[field])
             self.assertEqual(raw[field], script[field])
+    def assert_h264(self, path):
+        codec = subprocess.check_output([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", str(path)
+        ], text=True).strip()
+        self.assertEqual(codec, "h264")
+
     def test_real_offline_assembly_produces_both_deliverables(self):
         from PIL import Image
         from moviepy import VideoFileClip
@@ -989,9 +1025,10 @@ class PipelineTests(unittest.TestCase):
         (self.p/opening.RECORD).write_text(json.dumps({'signature':opening.signature(self.p,motion)}))
         for enabled in [True, False]:
             with self.subTest(opening=enabled):
-                self.run_worker('5',{'global':{'opening_quote':enabled},'step5':{'video_size':'320x180','video_output_fps':12,'video_codec':'h264','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0},'three_by_four':{'enabled':True}})
+                self.run_worker('5',{'global':{'opening_quote':enabled},'step5':{'video_size':'320x180','video_output_fps':12,'video_codec':'hevc','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0},'three_by_four':{'enabled':True}})
                 for name in ['final_video.mp4','final_video_3x4.mp4']:
                     target=self.p/name;self.assertGreater(target.stat().st_size,1000);self.assertAlmostEqual(duration(target),3.0 if enabled else 2.0,delta=.5)
+                    self.assert_h264(target)
                 with VideoFileClip(str(self.p/'final_video.mp4')) as video:
                     red, green, blue = video.get_frame(.2)[20,20]
                     self.assertEqual(bool(red > blue), enabled)
@@ -1002,7 +1039,7 @@ class PipelineTests(unittest.TestCase):
         atomic_json(self.p/'text/script.json',{**copy.deepcopy(SCRIPT),'cover_titles':['封面'],'golden_quotes':['开场金句']})
         for i in [1,2]:
             Image.new('RGB',(320,180),(30*i,80,100)).save(self.p/f'images/segment_{i}.png');recording(self.p/f'voice/voice_{i}.wav')
-        step5={'video_size':'320x180','video_output_fps':12,'video_codec':'h264','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0}
+        step5={'video_size':'320x180','video_output_fps':12,'video_codec':'hevc','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0}
         request=lambda settings, **extra: {'engine':str(ENGINE),'project':str(self.p),'step':'5','settings':settings,**extra}
         def worker(body):
             result=subprocess.run([sys.executable,'-u',str(DESKTOP/'backend/runner.py'),json.dumps(body,ensure_ascii=False)],stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=120)
@@ -1017,6 +1054,7 @@ class PipelineTests(unittest.TestCase):
         worker(request({'global':{'opening_quote':False},'step5':step5,'three_by_four':{'theme':'blur','top_share':0.3}},mode='three_by_four'))
         self.assertEqual((self.p/'final_video.mp4').read_bytes(),master)
         self.assertAlmostEqual(duration(self.p/'final_video_3x4.mp4'),2.0,delta=.5)
+        self.assert_h264(self.p/'final_video_3x4.mp4')
 
 
 class AgentContextTests(unittest.TestCase):
@@ -1026,6 +1064,7 @@ class AgentContextTests(unittest.TestCase):
         from server import Studio
         from context import prepare
         studio=object.__new__(Studio);studio.engine=studio.library_root=ENGINE
+        studio.data = self.p.parent / "data"
         source=self.p/'source.txt';source.write_text('Verification source')
         atomic_json(self.p/'.studio/state.json',{'settings':{},'source':str(source),'stale':{},'reviewed':{},'events':[]})
         atomic_json(self.p/'text/script.json',copy.deepcopy(SCRIPT));atomic_json(self.p/'text/mini_summary.json',{'summary':'Shared context'})
@@ -1033,7 +1072,7 @@ class AgentContextTests(unittest.TestCase):
         for step in ['1','4']:
             launch=prepare(studio,self.p,{'step':step,'indices':[1],'folders':{1:self.p/'images/takes/segment_1/motion-test'}})
             context=Path(launch['context']).read_text()
-            self.assertEqual(launch['agent'], 'claude');self.assertNotIn('{output_json}',context)
+            self.assertEqual(launch['agent'], 'agy');self.assertNotIn('{output_json}',context)
             if step=='4':
                 self.assertIn('时长：1 秒',context)
                 payload=json.loads((self.p/'images/takes/segment_1/motion-test/studio-payload.json').read_text())
@@ -1041,6 +1080,7 @@ class AgentContextTests(unittest.TestCase):
     def test_direct_context_excludes_previous_source_and_keeps_output_contract(self):
         from context import prepare
         studio = object.__new__(Studio); studio.engine = studio.library_root = ENGINE
+        studio.data = self.p.parent / "data"
         for source in ['', str(self.p/'missing-old-manuscript.txt')]:
             with self.subTest(source=source):
                 atomic_json(self.p/'.studio/state.json', {'settings': {'step1': {'writing_mode': 'direct'}}, 'source': source})
@@ -1056,6 +1096,7 @@ class AgentContextTests(unittest.TestCase):
     def test_source_context_requires_source_and_grants_its_folder(self):
         from context import prepare
         studio = object.__new__(Studio); studio.engine = studio.library_root = ENGINE
+        studio.data = self.p.parent / "data"
         atomic_json(self.p/'.studio/state.json', {'settings': {'step1': {'writing_mode': 'source'}}, 'source': ''})
         with self.assertRaisesRegex(ValueError, 'top of Writing'):
             prepare(studio, self.p, {'step': '1'})

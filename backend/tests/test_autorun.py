@@ -325,7 +325,7 @@ class AutoRunTests(unittest.TestCase):
 
     def test_a_background_edit_is_only_started_by_auto_production(self):
         self.produce()
-        self.settings({'step5': {'assembly_method': 'agent', 'video_size': '320x180'}})
+        self.settings({'step5': {'assembly_method': 'agent', 'agent_cli': 'claude', 'video_size': '320x180'}})
         with self.assertRaisesRegex(ValueError, 'Start Auto production'):
             self.studio.run_job(self.id, {'step': '5', 'mode': 'agent'})
         run = self.run_to_end(scope='all', covers=False)
@@ -362,7 +362,7 @@ class AutoRunTests(unittest.TestCase):
             result = headless.run_session({'step': '5', 'project': str(project), 'launch': launch})
         self.assertTrue(result['success'])
         argv = json.loads((project / 'argv.json').read_text(encoding='utf-8'))
-        self.assertEqual(argv[:2], ['--print', headless.first_message()])
+        self.assertEqual(argv[:2], ['--print', '请根据要求开始工作。'])
         self.assertEqual(argv[2:6], ['--append-system-prompt-file', launch['context'], '--output-format', 'json'])
         self.assertEqual(argv[argv.index('--permission-mode') + 1], 'acceptEdits')
         self.assertIn('Bash(python *)', argv[argv.index('--allowedTools') + 1])

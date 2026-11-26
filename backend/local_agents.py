@@ -8,18 +8,21 @@ import subprocess
 import sys
 import tempfile
 
-NAMES = {"claude": "Claude Code", "agy": "AGY", "codebuddy": "CodeBuddy Code"}
+NAMES = {"claude": "Claude Code", "agy": "AGY", "codebuddy": "CodeBuddy Code", "codex": "Codex CLI"}
 # Capture the desktop's environment before runner.py applies production API keys.
 LOCAL_ENV = os.environ.copy()
 LOCAL_ENV.pop("CLAUDECODE", None)
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-ASSEMBLY_AGENT = "grist-assembly"
+WORKSPACE_AGENTS = {
+    "5": ("grist-assembly", "Video assembly in Grist"),
+    "6": ("grist-covers", "Cover design in Grist"),
+}
 
 
 def selected(settings, step):
     override = settings.get(f"step{step}", {}).get("agent_cli")
     default = settings.get("agents", {}).get("default")
-    return next((agent for agent in (override, default) if isinstance(agent, str) and agent in NAMES), "claude")
+    return next((agent for agent in (override, default) if isinstance(agent, str) and agent in NAMES), "agy")
 
 
 def discover(agent):
@@ -60,55 +63,81 @@ def discover(agent):
     return program, env
 
 
-def prepare_assembly_agent(cwd, context):
+def prepare_workspace_agent(step, cwd, context):
     """AGY loads the Markdown body of a workspace agent as its system prompt."""
-    definition = cwd / ".agents" / "agents" / f"{ASSEMBLY_AGENT}.md"
+    name, description = WORKSPACE_AGENTS[step]
+    definition = cwd / ".agents" / "agents" / f"{name}.md"
     definition.parent.mkdir(parents=True, exist_ok=True)
     definition.write_text(
-        f"---\nname: {ASSEMBLY_AGENT}\ndescription: Video assembly in Grist\n"
+        f"---\nname: {name}\ndescription: {description}\n"
         "subagent: false\ntools:\n"
         "  - view_file\n  - list_dir\n  - grep_search\n  - write_to_file\n"
         "  - replace_file_content\n  - run_command\n  - command_status\n---\n\n"
-        f"# Grist assembly\n\n{context}\n", encoding="utf-8",
+        f"{context}\n", encoding="utf-8",
     )
 
 
 def arguments(launch, *, prompt=None, max_turns=None):
     agent = launch["agent"]
     context = Path(launch["context"])
-    assembly = launch.get("step") == "5"
+    step = launch.get("step")
+    production_agent = step in WORKSPACE_AGENTS
     project_dir = launch.get("project_dir")
     project_args = ["--add-dir", project_dir] if project_dir else []
     if agent == "agy":
-        if assembly:
-            args = ["--agent", ASSEMBLY_AGENT, *project_args]
-            if prompt is None:
-                return args
-            workspaces = [str(Path(launch["cwd"]).resolve()), *([project_dir] if project_dir else [])]
-            settings = {"trustedWorkspaces": workspaces, "toolPermission": "always-proceed"}
-            return [*args, "--settings", json.dumps(settings), "--print", prompt, "--output-format", "json"]
+        if production_agent:
+            args = ["--agent", WORKSPACE_AGENTS[step][0], *project_args]
+        else:
+            task = f"Read the task brief at {context} before working on this task."
+            if prompt is not None:
+                return ["--print", f"{task}\n\n{prompt}", "--output-format", "json"]
+            args = ["--prompt-interactive", task + "\nThen wait for my instructions.", *project_args]
+        settings = {"trustedWorkspaces": list(dict.fromkeys([str(Path(launch["cwd"]).resolve()), *project_args[1:]]))}
+        if prompt is None:
+            return [*args, "--mode", "auto", "--settings", json.dumps(settings)]
+        settings["toolPermission"] = "always-proceed"
+        return [*args, "--settings", json.dumps(settings), "--print", prompt, "--output-format", "json"]
+    if agent == "codex":
         task = f"Read the task brief at {context} before working on this task."
         if prompt is None:
-            return ["--prompt-interactive", task + "\nThen wait for my instructions."]
-        return ["--print", f"{task}\n\n{prompt}", "--output-format", "json"]
+            # A positional prompt starts a turn immediately. Keep the brief on disk
+            # and give Codex its path as a session instruction instead.
+            instructions = f"On the first user request, read the Grist task brief at \"{context}\" before acting."
+            cwd = json.dumps(str(Path(launch["cwd"]).resolve()), ensure_ascii=False)
+            return ["-c", f"developer_instructions={json.dumps(instructions, ensure_ascii=False)}",
+                    "--approve-for-me", "-c", f'projects.{cwd}.trust_level="trusted"', *project_args]
+        # An unattended session works inside the edit or design workspace and the project folder,
+        # with edits and renders approved through the workspace-write sandbox.
+        headless_args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write",
+                         "--approve-for-me", *project_args]
+        return [*headless_args, f"{task}\n\n{prompt}"]
     if agent == "codebuddy":
-        brief = f'Use the Read tool to read the Grist task brief at "{context}" before acting on this task.'
-        args = ["--append-system-prompt", brief, *project_args]
-        if prompt is None:
-            return args
-        args.extend(["--print", prompt, "--output-format", "json", "--max-turns", str(max_turns)])
-        # Headless CodeBuddy cannot prompt for tool approval.
-        args.extend(["--permission-mode", "acceptEdits", "--allowedTools", "Read", "Glob", "Grep",
-                     "Bash(python *)", "Bash(python3 *)", "Bash(ffmpeg *)", "Bash(ffprobe *)"])
-        return args
-    args = ["--append-system-prompt-file", str(context)]
+        if production_agent:
+            args = ["--system-prompt-file", str(context), *project_args]
+        else:
+            brief = f'Use the Read tool to read the Grist task brief at "{context}" before acting on this task.'
+            args = ["--append-system-prompt", brief, *project_args]
+    else:
+        args = ["--append-system-prompt-file", str(context)]
     if prompt is None:
-        return args
+        if agent == "codebuddy":
+            directories = list(dict.fromkeys([str(Path(launch["cwd"]).resolve()), *project_args[1:]]))
+            return [*args, "--permission-mode", "auto", "--settings", json.dumps({"trustedDirectories": directories})]
+        return [*args, "--permission-mode", "auto"]
+
     args = ["--print", prompt, *args, "--output-format", "json", "--max-turns", str(max_turns)]
-    if assembly:
-        # Print mode has no trust dialog. Approve the tools required by the render contract for this run.
-        args.extend(["--permission-mode", "acceptEdits", "--allowedTools",
-                     "Bash(python *),Bash(python3 *),Bash(ffmpeg *),Bash(ffprobe *)", *project_args])
+    if production_agent or agent == "codebuddy":
+        # Pre-approve edits and the render commands for this run without changing user settings.
+        allowed = ["Bash(python *)", "Bash(python3 *)"]
+        if step != "6":
+            allowed.extend(["Bash(ffmpeg *)", "Bash(ffprobe *)"])
+        if agent == "codebuddy":
+            if production_agent:
+                # The approval rules name CLI tools; a user's REPL mode exposes different tools.
+                args.extend(["--tool-mode", "cli"])
+            args.extend(["--permission-mode", "acceptEdits", "--allowedTools", "Read", "Glob", "Grep", *allowed])
+        else:
+            args.extend(["--permission-mode", "acceptEdits", "--allowedTools", ",".join(allowed), *project_args])
     return args
 
 
@@ -119,6 +148,19 @@ def codebuddy_result(payload):
         if isinstance(result, dict) and result.get("type") == "result":
             return result
     return None
+
+
+def codex_result(text):
+    """The last turn.completed event of Codex exec JSONL; warning items do not mean a failed run."""
+    final = None
+    for line in text.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "turn.completed":
+            final = event
+    return final
 
 
 def check(agent):
@@ -152,6 +194,12 @@ def check(agent):
                     session = None
                 if result.returncode == 0 and session and session.get("is_error") is False:
                     status["logged_in"] = True
+            elif agent == "codex":
+                # Without a terminal, the login report is written to stderr.
+                result = run(["login", "status"], 15)
+                report = (result.stdout + "\n" + result.stderr).lower()
+                if result.returncode == 0 and "logged in" in report and "not logged in" not in report:
+                    status["logged_in"] = True
             else:
                 # The model catalog requires an account. It reports sign-out without opening a chat.
                 result = run(["models"], 20)
@@ -170,7 +218,14 @@ def check(agent):
 if __name__ == "__main__":
     # Native PTY startup uses this same adapter as the background runner.
     try:
-        launch = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+        manifest = Path(sys.argv[1])
+        launch = json.loads(manifest.read_text(encoding="utf-8"))
+        # The native host checked the context against the registered project's .studio/agent directory.
+        project = manifest.parents[3]
+        if not Path(launch["cwd"]).resolve(strict=True).is_relative_to(project) or (
+            launch.get("project_dir") and Path(launch["project_dir"]).resolve(strict=True) != project
+        ):
+            raise ValueError("The agent workspace must be inside the project.")
         program, env = discover(launch["agent"])
         print(json.dumps({"program": program, "path": env["PATH"], "args": arguments(launch)}))
     except (OSError, ValueError, KeyError) as error:

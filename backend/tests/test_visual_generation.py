@@ -30,7 +30,9 @@ class VisualGenerationTests(unittest.TestCase):
                 with lock: active -= 1
                 if launch['index'] == 4: raise ValueError('Motion 4 failed')
                 return launch['index']
-            def prepare(studio, project, body): return {'index':body['indices'][0]}
+            def prepare(studio, project, body, *, state):
+                self.assertEqual(state["settings"], request["settings"])
+                return {"index": body["indices"][0]}
             params = {'image_server':'test', 'image_model':'test', 'llm_server_step4':'test', 'llm_model_step4':'test', 'llm_base_url_step4':'test'}
             calls = []
             def call(fn, values):

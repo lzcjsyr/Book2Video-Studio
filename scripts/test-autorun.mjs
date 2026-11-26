@@ -13,7 +13,15 @@ test("CodeBuddy Code is selectable as the project default or a step override", (
   assert.equal(selectedAgent({ agents: { default: "codebuddy" } }, "4"), "codebuddy");
   assert.equal(selectedAgent({ step5: { agent_cli: "codebuddy" } }, "5"), "codebuddy");
   assert.equal(selectedAgent({ agents: { default: "codebuddy" }, step6: { agent_cli: "agy" } }, "6"), "agy");
-  assert.equal(selectedAgent({ agents: { default: "toString" } }, "5"), "claude");
+  assert.equal(selectedAgent({ agents: { default: "toString" } }, "5"), "agy");
+});
+
+test("Codex CLI is selectable as the project default or a step override", () => {
+  assert.equal(agentNames.codex, "Codex CLI");
+  assert.equal(selectedAgent({}, "4"), "agy");
+  assert.equal(selectedAgent({ agents: { default: "codex" } }, "4"), "codex");
+  assert.equal(selectedAgent({ step5: { agent_cli: "codex" } }, "5"), "codex");
+  assert.equal(selectedAgent({ agents: { default: "codex" }, step6: { agent_cli: "agy" } }, "6"), "agy");
 });
 
 test("each step's plan reads as what the next run will make", () => {

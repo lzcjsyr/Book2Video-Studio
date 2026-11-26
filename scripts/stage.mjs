@@ -360,7 +360,13 @@ function stageEngine() {
     // Background music is licensed and kept out of git: ship whatever is in engine/music.
     fs.mkdirSync(path.join(target, "music"));
     const music = path.join(engineSource, "music");
-    if (fs.existsSync(music)) copyTree(music, path.join(target, "music"), (parts) => junk(parts) || parts.at(-1) === ".gitkeep");
+    if (fs.existsSync(music)) {
+      copyTree(music, path.join(target, "music"), (parts) => junk(parts) || parts.at(-1) === ".gitkeep");
+      // Clear read-only attributes on copied tracks so Tauri can overwrite target/debug/engine/music on Windows.
+      for (const entry of fs.readdirSync(path.join(target, "music"), { withFileTypes: true })) {
+        if (entry.isFile()) fs.chmodSync(path.join(target, "music", entry.name), 0o666);
+      }
+    }
     if (!fs.readdirSync(path.join(target, "music")).length) console.log("No bundled background music: engine/music is empty.");
     fs.copyFileSync(path.join(engineSource, "config.example.yaml"), path.join(target, "config.example.yaml"));
   });

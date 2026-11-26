@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 
-from local_agents import NAMES, arguments, codebuddy_result, discover
+from local_agents import NAMES, arguments, codebuddy_result, codex_result, discover
 
 # How many turns each session may take and how long it may run (seconds).
 SESSIONS = {"5": (200, 3 * 3600), "6": (100, 3600)}
@@ -23,6 +23,10 @@ def _signal_group(process, sig):
         os.killpg(process.pid, sig)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # macOS may refuse signals to a remaining helper after the CLI itself has exited.
+        if process.poll() is None:
+            raise
 
 
 def stop_sessions(*processes):
@@ -79,7 +83,7 @@ def session_limits(request):
 
 
 def first_message():
-    """What a session without a terminal is told first: agent_rules.md's "automatic" section."""
+    """Kickoff message for standalone motion generation."""
     from core.infra.ai.task_context import agent_rules
     return agent_rules("automatic")
 
@@ -110,14 +114,18 @@ def run_agent(program, env, launch, prompt, max_turns, timeout, logs: Path):
             finally:
                 _running.pop(process.pid, None)
     # Check the result as well as the exit code: max-turns and tool failures can exit with zero.
+    text = report.read_text(encoding="utf-8")
     try:
-        session = json.loads(report.read_text(encoding="utf-8"))
+        session = json.loads(text)
     except ValueError:
         session = None
     if agent == "codebuddy":
         session = codebuddy_result(session)
         if session and session.get("is_error") is not False:
             session = None
+    elif agent == "codex":
+        # Codex writes JSONL events; the run finished only when a turn completed.
+        session = codex_result(text)
     if code or not isinstance(session, dict) or (session.get("status") != "SUCCESS" if agent == "agy" else session.get("is_error")):
         raise ValueError(f"{name} did not finish. See {report}")
     return session
@@ -131,7 +139,7 @@ def run_session(request):
     name = NAMES[launch["agent"]]
     program, env = discover(launch["agent"])
     print(f"{name} is editing the video…" if step == "5" else f"{name} is designing the covers…", flush=True)
-    run_agent(program, env, launch, first_message(), turns, timeout, Path(launch["context"]).parent)
+    run_agent(program, env, launch, "请根据要求开始工作。", turns, timeout, Path(launch["context"]).parent)
     if step == "5":
         import editing
         if not editing.detail(project, launch["assembly_edit"])["delivered"]:

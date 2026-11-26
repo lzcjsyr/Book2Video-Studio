@@ -225,13 +225,12 @@ def build_export_command(
     background_path: str | os.PathLike[str],
     output_path: str | os.PathLike[str],
     layout: ThreeByFourLayout,
-    video_codec: str,
     quality_level: int,
     hardware: bool = False,
     blurred_background: bool = False,
 ) -> list[str]:
     """Build the post-processing command. The main picture is never scaled."""
-    codec_args = _encoder_args(video_codec, quality_level, hardware=hardware)
+    codec_args = _encoder_args(quality_level, hardware=hardware)
     if blurred_background:
         # Only the background copy is scaled; the main picture keeps its native pixels.
         radius = _blur_radius(layout)
@@ -292,7 +291,6 @@ def export_three_by_four_video(
     *,
     font_path: str | os.PathLike[str] | None = None,
     font_ttc_index: int = 0,
-    video_codec: str = "h264",
     quality_level: int = 86,
     panel: PanelOptions | Mapping[str, Any] | None = None,
 ) -> Path:
@@ -335,7 +333,6 @@ def export_three_by_four_video(
             background_path=background_path,
             output_path=temporary_output,
             layout=layout,
-            video_codec=video_codec,
             quality_level=quality_level,
             hardware=True,
             blurred_background=blurred,
@@ -356,7 +353,6 @@ def export_three_by_four_video(
                     background_path=background_path,
                     output_path=temporary_output,
                     layout=layout,
-                    video_codec=video_codec,
                     quality_level=quality_level,
                     hardware=False,
                     blurred_background=blurred,
@@ -815,22 +811,10 @@ def _load_font(font_path: Path | None, size: int, font_ttc_index: int):
     return ImageFont.load_default(size=size)
 
 
-def _encoder_args(video_codec: str, quality_level: int, *, hardware: bool) -> list[str]:
+def _encoder_args(quality_level: int, *, hardware: bool) -> list[str]:
     quality = max(0, min(100, int(quality_level)))
-    is_hevc = str(video_codec or "h264").strip().lower() == "hevc"
     if hardware:
-        args = [
-            "-c:v",
-            "hevc_videotoolbox" if is_hevc else "h264_videotoolbox",
-            "-q:v",
-            str(quality),
-        ]
-        if is_hevc:
-            args.extend(["-tag:v", "hvc1"])
-        return args
-    if is_hevc:
-        crf = max(0, min(32, round(32 - quality * 0.2)))
-        return ["-c:v", "libx265", "-preset", "fast", "-crf", str(crf), "-tag:v", "hvc1"]
+        return ["-c:v", "h264_videotoolbox", "-q:v", str(quality)]
     crf = max(0, min(30, round(30 - quality * 0.2)))
     return ["-c:v", "libx264", "-preset", "fast", "-crf", str(crf)]
 

@@ -92,7 +92,9 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
         })
         .map_err(|e| e.to_string())?;
     let installation = crate::installation(&app)?;
-    let command = session_command(&installation, &manifest, &trusted)?;
+    // Claude remembers trust per project. Its task brief still names the edit or design directory.
+    let cwd = if trusted.agent == "claude" { &project_root } else { Path::new(&trusted.cwd) };
+    let command = session_command(&installation, &manifest, cwd)?;
     let child = pair.slave.spawn_command(command).map_err(|e| {
         format!("Cannot launch {}: {e}. Check it in Settings → Local Agents.", trusted.agent)
     })?;
@@ -194,7 +196,7 @@ struct AgentCommand {
 fn session_command(
     installation: &crate::Installation,
     manifest: &Path,
-    launch: &Launch,
+    cwd: &Path,
 ) -> Result<CommandBuilder, String> {
     let resolved = installation
         .command(&installation.python)
@@ -209,7 +211,7 @@ fn session_command(
         serde_json::from_slice(&resolved.stdout).map_err(|e| e.to_string())?;
     let mut command = CommandBuilder::new(agent.program);
     command.args(&agent.args);
-    command.cwd(&launch.cwd);
+    command.cwd(cwd);
     command.env("TERM", "xterm-256color");
     for (name, value) in installation.environment() {
         command.env(name, value);
@@ -288,7 +290,9 @@ mod tests {
         // The data folder of the service that prepared the launch (its library holds the prompts).
         let data = std::env::var("STUDIO_TEST_DATA").map(PathBuf::from).unwrap_or_else(|_| build.join("dev-data"));
         let installation = crate::Installation::new(&build, data.clone(), data.join("projects")).unwrap();
-        let command = session_command(&installation, Path::new(&path), &launch).unwrap();
+        let manifest = Path::new(&path);
+        let cwd = if launch.agent == "claude" { manifest.ancestors().nth(4).unwrap() } else { Path::new(&launch.cwd) };
+        let command = session_command(&installation, manifest, cwd).unwrap();
         let pair = native_pty_system()
             .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
             .unwrap();

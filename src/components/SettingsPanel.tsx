@@ -8,6 +8,7 @@ import { libraryChoices, librarySettings } from "../library";
 import { imageModelChoices, imageModelFits, imageModelFor, imageServiceChoices, languageModelChoices } from "../keys";
 import ModelSelect from "./ModelSelect";
 import VoicePicker from "./VoicePicker";
+import { VoiceFields } from "./StepControls";
 import { VoiceSource } from "./VoiceSource";
 import LocalAgentsPanel from "./LocalAgentsPanel";
 import { agentNames } from "../agents";
@@ -15,6 +16,7 @@ import { agentNames } from "../agents";
 export default function SettingsPanel({
   detail,
   bootstrap,
+  sharedPreferences,
   onSave,
   onClose,
   onLibraryChanged,
@@ -25,6 +27,7 @@ export default function SettingsPanel({
 }: {
   detail: Detail | null;
   bootstrap: Bootstrap | null;
+  sharedPreferences: Settings;
   onSave: (settings: Settings) => void;
   onClose: () => void;
   onLibraryChanged: () => Promise<void>;
@@ -37,13 +40,13 @@ export default function SettingsPanel({
   const { t, locale, setLocale } = useI18n();
   const [settings, setSettings] = useState<Settings>(() => {
     const m = structuredClone(bootstrap?.defaults || {});
-    Object.entries(detail?.state.settings || {}).forEach(
+    Object.entries(detail?.state.settings ?? sharedPreferences).forEach(
       ([k, v]) => (m[k] = { ...m[k], ...v }),
     );
     return m;
   });
   const [tab, setTab] = useState<"production" | "keys" | "agents" | "library">(
-    initialTab ?? (detail && bootstrap ? "production" : "keys"),
+    initialTab ?? (bootstrap ? "production" : "keys"),
   );
   const [libraryTarget, setLibraryTarget] = useState({ group: "writing_skills", id: "" });
   const [libraryDirty, setLibraryDirty] = useState(false);
@@ -143,7 +146,7 @@ export default function SettingsPanel({
   );
   const agentOptions = Object.entries(agentNames).map(([id, label]) => ({ id, label }));
   const stepAgent = (section: string, label: string) =>
-    field(section, "agent_cli", label, [{ id: "", label: "Use project default" }, ...agentOptions]);
+    field(section, "agent_cli", label, [{ id: "", label: "Use default agent" }, ...agentOptions]);
   return (
     <div className="modal-backdrop">
       <section
@@ -204,7 +207,7 @@ export default function SettingsPanel({
             role="tab"
             aria-selected={tab === "production"}
             aria-controls={`${uid}-production-settings-panel`}
-            disabled={!detail || !bootstrap}
+            disabled={!bootstrap}
             onClick={() => leaveLibrary(() => setTab("production"))}
           >
             {t("Production")}
@@ -230,8 +233,8 @@ export default function SettingsPanel({
         {tab === "library" && <div id={`${uid}-library-settings-panel`} role="tabpanel" aria-labelledby={`${uid}-library-settings-tab`}>
           <LibraryPanel embedded initialGroup={libraryTarget.group} initialId={libraryTarget.id}
             onDirtyChange={setLibraryDirty} onChanged={onLibraryChanged}
-            onClose={() => leaveLibrary(() => setTab(detail ? "production" : "keys"))}
-            onUse={detail ? (group, id) => {
+            onClose={() => leaveLibrary(() => setTab("production"))}
+            onUse={bootstrap ? (group, id) => {
               const [section, key] = librarySettings[group];
               set(section, key, id); setTab("production"); setLibraryNotice("");
             } : undefined} />
@@ -244,21 +247,18 @@ export default function SettingsPanel({
             aria-labelledby={`${uid}-api-keys-tab`}
           >
             {/* The keys this project needs follow the provider choices in this unsaved draft. */}
-            <ApiKeysPanel settings={detail ? settings : null} onStatus={onKeyStatus} />
+            <ApiKeysPanel settings={bootstrap ? settings : null} onStatus={onKeyStatus} />
           </div>
         )}
         {tab === "agents" && (
           <div id={`${uid}-local-agents-panel`} className="modal-content" role="tabpanel" aria-labelledby={`${uid}-local-agents-tab`}>
             <LocalAgentsPanel />
-            {detail && <>
-              <h3>{t("Project Agents")}</h3>
-              <div className="form-grid">
-                {field("agents", "default", "Project default", agentOptions)}
-              </div>
-            </>}
+            {bootstrap && <div className="form-grid">
+              {field("agents", "default", "Default agent", agentOptions)}
+            </div>}
           </div>
         )}
-        {tab === "production" && detail && bootstrap && (
+        {tab === "production" && bootstrap && (
           <>
             <div
               id={`${uid}-production-settings-panel`}
@@ -273,6 +273,10 @@ export default function SettingsPanel({
                 onChange={(provider) => set("step3", "tts_provider", provider)}>
                 <VoicePicker value={String(settings.step3?.voice ?? "S_MKj17k802")} voices={bootstrap.voices ?? []}
                   onChange={(voice) => set("step3", "voice", voice)} />
+                <VoiceFields settings={settings.step3 || {}} disabled={false} onChange={async (patch) => {
+                  setSettings((draft) => ({ ...draft, step3: { ...draft.step3, ...patch } }));
+                  return true;
+                }} />
               </VoiceSource>
               <label className="checkbox">
                 <input type="checkbox" checked={settings.step3?.trim_silence !== false}
@@ -334,8 +338,6 @@ export default function SettingsPanel({
               <p className="small-muted settings-note">{t("Music, export size, subtitles, narration speed and the 3:4 copy are set on the Assembly page.")}</p>
               <div className="form-grid">
                 {stepAgent("step5", "Editing agent")}
-                {field("step5", "video_codec", t("Codec"), ["h264", "hevc"], false,
-                  "H.264 plays everywhere; HEVC makes smaller files.")}
               </div>
               {step(6, "Covers")}
               <div className="form-grid">
@@ -352,21 +354,30 @@ export default function SettingsPanel({
             </div>
           </>
         )}
-        {(tab === "keys" || (tab === "agents" && !detail)) && (
+        {(tab === "keys" || (tab === "agents" && !bootstrap)) && (
           <div className="modal-actions">
             <button className="button" onClick={onClose}>
               {t("Done")}
             </button>
           </div>
         )}
-        {(tab === "production" || tab === "agents") && detail && bootstrap && (
+        {(tab === "production" || tab === "agents") && bootstrap && (
           <div className="modal-actions">
             <button className="button" onClick={onClose}>
               {t("Cancel")}
             </button>
             <button
               className="button primary"
-              onClick={() => onSave(settings)}
+              onClick={() => {
+                const original: Settings = JSON.parse(savedSettings.current);
+                const patch: Settings = {};
+                for (const [section, values] of Object.entries(settings)) {
+                  const changed = Object.entries(values).filter(([key, value]) =>
+                    JSON.stringify(value) !== JSON.stringify(original[section]?.[key]));
+                  if (changed.length) patch[section] = Object.fromEntries(changed);
+                }
+                onSave(patch);
+              }}
             >
               {t("Save settings")}
             </button>

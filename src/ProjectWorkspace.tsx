@@ -233,7 +233,12 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   // Saved API keys (names only) and the Settings tab to open, for key reminders.
   const [keyStatus, setKeyStatus] = useState<KeyStatus | null>(null);
   const [settingsTab, setSettingsTab] = useState<"production" | "keys" | undefined>();
-  function openSettings(tab?: "production" | "keys") {
+  const [sharedPreferences, setSharedPreferences] = useState<Settings>({});
+  async function openSettings(tab?: "production" | "keys") {
+    if (!detail) {
+      try { setSharedPreferences(await api<Settings>("/settings")); }
+      catch (error) { notice(String(error)); return; }
+    }
     setSettingsTab(tab);
     setModal("settings");
   }
@@ -805,6 +810,14 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     });
     return saved;
   }
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      const voices = (event as CustomEvent<Bootstrap["voices"]>).detail;
+      setBootstrap((current) => current && { ...current, voices });
+    };
+    window.addEventListener("grist-voices-changed", refresh);
+    return () => window.removeEventListener("grist-voices-changed", refresh);
+  }, []);
   function voiceReferenceChanged(updated: Detail) {
     if (projectRef.current === updated.id) setDetail(updated);
   }
@@ -2204,6 +2217,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
         <SettingsPanel
           detail={detail}
           bootstrap={bootstrap}
+          sharedPreferences={sharedPreferences}
           initialTab={settingsTab}
           onKeyStatus={setKeyStatus}
           onDirtyChange={setModalDirty}
@@ -2212,14 +2226,13 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
           onClose={() => setModal(null)}
           onSave={(settings: Settings) =>
             action(async () => {
-              if (!detail) return;
-              const d = await api<Detail>(
-                projectRoute(detail.id) + "/settings",
-                { settings },
-              );
-              setDetail(d);
+              if (detail) {
+                setDetail(await api<Detail>(projectRoute(detail.id) + "/settings", { settings }));
+              } else {
+                setSharedPreferences(await api<Settings>("/settings", { settings }));
+              }
               setModal(null);
-              notice("Project settings saved.");
+              notice("Production settings saved across projects.");
             })
           }
         />
@@ -2234,10 +2247,9 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
               setModal(null); notice("Writing setup saved."); return;
             }
             const [section, key] = librarySettings[group];
-            const settings = structuredClone(detail.state.settings);
-            settings[section] = { ...(bootstrap?.defaults[section] || {}), ...(settings[section] || {}), [key]: id };
+            const settings = { [section]: { [key]: id } };
             setDetail(await api<Detail>(projectRoute(detail.id) + "/settings", { settings }));
-            setModal(null); notice("Project settings saved.");
+            setModal(null); notice("Production settings saved across projects.");
           });
         } : undefined} />}
       {detail && step === "4" && picker && (

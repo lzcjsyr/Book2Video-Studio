@@ -72,6 +72,7 @@ print(json.dumps(report))
         return [sys.executable,str(work/'run.py')]
 
     def test_the_agent_gets_the_materials_and_contract_without_a_preset_runner(self):
+        self.settings(agent_cli="claude")
         launch,work=self.prepare();found=editing.read(work/'materials.json');prompt=Path(launch['context']).read_text()
         segment=found['segments'][0]
         self.assertEqual((segment['index'],segment['text'],segment['visual_kind']),(1,'第一段。','image'))
@@ -87,7 +88,7 @@ print(json.dumps(report))
         self.assertEqual(launch['cwd'], str(work))
         self.assertEqual(launch['agent'], 'claude')
         self.assertNotIn('first_message', launch)
-        self.assertIn('只在用户要求时才开始剪辑', prompt)
+        self.assertIn('只在用户明确要求时才开始工作', prompt)
         self.assertEqual(launch['assembly_edit']['delivered_before'],None)
 
     def test_opening_and_closing_a_revision_keeps_the_published_edit(self):
@@ -249,7 +250,7 @@ print(json.dumps(report))
         (revised/'run.py').write_text('# revised runner\n')
         self.assertEqual((first/'run.py').read_text(),'# agent-owned runner\n')
         prompt=Path(launch['context']).read_text()
-        self.assertNotIn('first_message', launch);self.assertIn('修改上一次的合成',prompt);self.assertIn('按用户在对话里提出的要求修改',prompt)
+        self.assertNotIn('first_message', launch);self.assertIn('修改上一次的合成',prompt);self.assertIn('只改 BGM 或配乐音量且已有分片时',prompt)
         # Materials are refreshed for the revision; the copy does not change the earlier folder.
         (revised/'my_design.html').write_text('<p>changed</p>');self.assertEqual((first/'my_design.html').read_text(),'<p>mine</p>')
 
@@ -344,11 +345,33 @@ print(json.dumps(report))
         self.assertTrue((work / 'build/render_000.log').is_file())
         self.assertTrue((work / 'build/render_001.log').is_file())
 
+        self.assertFalse(report['reused_video'])
+
+        def stream_hash(selector):
+            return subprocess.check_output([
+                shutil.which('ffmpeg') or 'ffmpeg', '-nostdin', '-v', 'error', '-i', str(delivery),
+                '-map', selector, '-c', 'copy', '-f', 'hash', '-',
+            ])
+
+        # The revision copies the previous work, including its verification record.
+        revised_work = work.with_name('audio-only-revision')
+        shutil.copytree(work, revised_work)
+        original_video, original_audio = stream_hash('0:v:0'), stream_hash('0:a:0')
+        ffmpeg('-f', 'lavfi', '-i', 'sine=frequency=880:duration=2', '-ac', '1', '-ar', '48000',
+               revised_work / 'build/audio.wav')
+        audio_only = compose(revised_work, delivery=delivery)
+        self.assertTrue(audio_only['reused_video'])
+        self.assertEqual(stream_hash('0:v:0'), original_video)
+        self.assertNotEqual(stream_hash('0:a:0'), original_audio)
+        work = revised_work
+
         # Updating subtitles only needs compose; rendered clip stays untouched.
         clip_mtime = (work / 'build/clip_000.mp4').stat().st_mtime_ns
         (work / 'build/captions.ass').write_text(ass.replace('第二句', '改后第二句'), encoding='utf-8')
         recomposed = compose(work, delivery=delivery)
         self.assertTrue(recomposed['verified'])
+        self.assertFalse(recomposed['reused_video'])
+        self.assertNotEqual(stream_hash('0:v:0'), original_video)
         self.assertEqual((work / 'build/clip_000.mp4').stat().st_mtime_ns, clip_mtime)
 
         # Without subtitles, compose uses video stream copy.

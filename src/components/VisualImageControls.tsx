@@ -48,7 +48,7 @@ export default function VisualImageControls({ settings, library, disabled, onCha
         </div>;
       })}
     </div>
-    <p className="small-muted">{t("Saved automatically. Applies to new images across this project.")}</p>
+    <p className="small-muted">{t("Saved automatically for new images across projects.")}</p>
     {stylePickerOpen && <ImageStylePicker styles={libraryChoices(library, "image_styles")}
       selected={String(settings.image_style_preset ?? "")} disabled={disabled} onClose={closeStylePicker}
       onSelect={async (id) => {
