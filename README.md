@@ -58,7 +58,7 @@ More detail on every screen and rule: [docs/DETAILS.md](docs/DETAILS.md).
 
 > **Everything the build needs is in this repository.** The production engine lives in [engine/](engine/) (`core`, `prompts`, `skills`, `config.example.yaml`), including Grist's own prompts and skills. Background music is licensed and kept out of git: put `.mp3`/`.wav` files in `engine/music/` to bundle them; without them the app ships with no built-in tracks and users add their own.
 
-Requirements: macOS on Apple silicon, Node.js 22+, Rust (stable), and an internet connection for the first build.
+Requirements: Windows x64 or macOS on Apple silicon, Node.js 22+, Rust (stable) for the desktop app, and an internet connection for the first build.
 
 ```sh
 npm install
@@ -92,7 +92,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 ## Before public distribution
 
-- **Platforms:** only macOS on Apple silicon is packaged. Intel Macs and Windows need their entries in `PLATFORMS` in `scripts/stage.mjs`; the host code is platform-neutral but untested there.
+- **Platforms:** `npm run stage` supports Windows x64 and macOS on Apple silicon, so `npm run dev` and `npm run desktop` can start there. The `.dmg` installer is still built on Apple silicon. Intel Macs need their entry in `PLATFORMS` in `scripts/stage.mjs`.
 - **Signing:** sign every bundled executable (Python extensions, Node.js, Chrome, FFmpeg) with a Developer ID and hardened runtime, then notarize. Unsigned builds are a new app to macOS after every rebuild, so the folder-access question returns.
 - **Licenses:** [runtime/THIRD_PARTY_NOTICES.md](runtime/THIRD_PARTY_NOTICES.md) lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source; Puppeteer is Apache-2.0 and Three.js is MIT. This repository does not yet contain a license for its own code.
 
@@ -160,7 +160,7 @@ See [GUI_DESIGN_REVIEW.md](GUI_DESIGN_REVIEW.md) and [IMPLEMENTATION_REVIEW.md](
 
 > **构建所需的一切都在本仓库中。** 制作引擎位于 [engine/](engine/)（`core`、`prompts`、`skills`、`config.example.yaml`），包括万物成片自己的提示词和技能。背景音乐有版权，不纳入 git：把 `.mp3`/`.wav` 放进 `engine/music/` 即可打包；没有时应用不带内置曲目，用户可自行添加。
 
-环境要求：Apple 芯片的 macOS、Node.js 22+、Rust（stable），首次构建需要联网。
+环境要求：Windows x64 或 Apple 芯片的 macOS、Node.js 22+、桌面版还需要 Rust（stable），首次构建需要联网。
 
 ```sh
 npm install
@@ -194,8 +194,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## 公开分发前须知
 
-- **平台：** 目前只打包 Apple 芯片的 macOS。Intel Mac 和 Windows 需要在 `scripts/stage.mjs` 的 `PLATFORMS` 中添加对应条目；宿主代码与平台无关，但尚未在这些平台上测试。
-- **签名：** 需要用 Developer ID 和 Hardened Runtime 对所有内置可执行文件（Python 扩展、Node.js、Chrome、FFmpeg、Agent）签名并公证。未签名的构建每次重新编译后在 macOS 眼中都是新应用，文件夹访问权限的询问会再次出现。
+- **平台：** `npm run stage` 支持 Windows x64 和 Apple 芯片的 macOS，因此这两处都可以先组装再运行 `npm run dev` 或 `npm run desktop`。`.dmg` 安装包仍需在 Apple 芯片的 Mac 上构建。Intel Mac 需要在 `scripts/stage.mjs` 的 `PLATFORMS` 中添加对应条目。
+- **签名：** 需要用 Developer ID 和 Hardened Runtime 对所有内置可执行文件（Python 扩展、Node.js、Chrome、FFmpeg）签名并公证。未签名的构建每次重新编译后在 macOS 眼中都是新应用，文件夹访问权限的询问会再次出现。
 - **许可证：** [runtime/THIRD_PARTY_NOTICES.md](runtime/THIRD_PARTY_NOTICES.md) 列出了内置组件。FFmpeg（GPL-3.0）和 PyMuPDF（AGPL-3.0）要求提供其源代码；Puppeteer 采用 Apache-2.0 许可证，Three.js 采用 MIT 许可证。本仓库目前还没有为自身代码添加许可证。
 
 ### Covers: Image API or Agent + HTML / Three.js
@@ -239,6 +239,8 @@ Windows 指南包含 NVIDIA NVENC、Intel QSV、AMD AMF 的驱动检查和短片
 “设置 → 制作设置”中，语音合成模型可选择 `seed-tts-2.0-standard`（标准版）或 `seed-tts-2.0-expressive`（表现力增强版）。默认音色为 `S_MKj17k802`。填写音色 ID 和便于辨认的名称，点击“保存音色”，即可在本机所有项目中复用；再次保存相同 ID 会更新名称。音色库保存在应用资料目录的 `voices.json`，应用重启后仍可使用。选择音色后，点击“保存设置”才应用到当前项目。
 
 火山引擎生图预设为 `doubao-seedream-5-0-pro-260628`、`doubao-seedream-5-0-260128`、`doubao-seedream-5-0-flash-260915`；Google API 与 ADC 均提供 `gemini-nano-banana-2.1` 和 `gemini-3.1-flash-image`。分段配图和 API 封面共用这些选项，均可选“自定义”输入其他模型 ID，已有自定义配置不会被列表覆盖。
+
+`google_adc` 使用本机的 Google Cloud 登录（ADC）。先运行 `gcloud auth application-default login`，必要时用 `gcloud auth application-default set-quota-project PROJECT_ID` 指定配额项目，再用 `python scripts/verify_google_adc.py` 一次确认凭据、项目、区域和模型都可用；加 `--no-generate` 只验证不出图。默认区域为 `global`（可用 `GOOGLE_CLOUD_LOCATION` 覆盖），多数新模型在 `us-central1` 已不可用。每次成功出图会按模型与 1K/2K/4K 档位记一次单价，进程内累计结果由 `core.infra.ai.image_cost.cost_summary()` 给出。
 
 ### Step 4 browser motion clips
 

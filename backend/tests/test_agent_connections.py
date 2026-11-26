@@ -74,7 +74,7 @@ class AgentConnectionTests(unittest.TestCase):
         self.assertIsNone(codex_result(""))
 
     def test_codex_reads_the_task_brief_then_waits_or_runs_headless(self):
-        context = "/project with spaces/context.md"
+        context = str(Path("/project with spaces/context.md"))
         manual = {"agent": "codex", "context": context, "cwd": str(Path(context).parent)}
         manual_args = arguments(manual)
         self.assertIn("--approve-for-me", manual_args)
@@ -97,7 +97,7 @@ class AgentConnectionTests(unittest.TestCase):
         self.assertIn(str(project), production_args)
 
     def test_manual_adapters_use_auto_mode_and_the_task_brief(self):
-        context = "/project with spaces/context.md"
+        context = str(Path(tempfile.gettempdir()).resolve() / "project with spaces/context.md")
         agy = {"agent": "agy", "context": context, "cwd": str(Path(context).parent)}
         self.assertEqual(arguments(agy)[0], "--prompt-interactive")
         self.assertIn(context, arguments(agy)[1])

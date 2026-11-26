@@ -20,12 +20,17 @@ class HeadlessTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.cli = self.root / 'claude'
+        self.cli = self.root / ('claude.cmd' if os.name == 'nt' else 'claude')
         self.launch = {'cwd': str(self.root), 'agent': 'claude', 'context': str(self.root / 'context.md')}
 
     def script(self, code):
-        self.cli.write_text(f'#!{sys.executable}\n' + code)
-        self.cli.chmod(0o755)
+        if os.name == 'nt':
+            helper = self.root / 'fake_cli.py'
+            helper.write_text(code, encoding='utf-8')
+            self.cli.write_text(f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\n', encoding='utf-8')
+        else:
+            self.cli.write_text(f'#!{sys.executable}\n' + code, encoding='utf-8')
+            self.cli.chmod(0o755)
 
     def run_session(self, prompt='test', timeout=5, logs=None):
         return headless.run_agent(str(self.cli), os.environ.copy(), self.launch, prompt, 10, timeout, logs or self.root)

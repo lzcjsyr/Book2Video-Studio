@@ -25,7 +25,7 @@ def check_image_model(server, model):
 def read_script(project):
     for name in ["script.json", "raw.json"]:
         if (project / "text" / name).is_file():
-            return json.loads((project / "text" / name).read_text())
+            return json.loads((project / "text" / name).read_text(encoding="utf-8"))
     return {}
 
 
@@ -87,7 +87,7 @@ def run(request):
     os.chdir(project)
     import yaml
     from core.config import apply_yaml_config, get_generation_params, config
-    merged = yaml.safe_load((engine / "config.example.yaml").read_text())
+    merged = yaml.safe_load((engine / "config.example.yaml").read_text(encoding="utf-8"))
     from server import engine_settings
     for section, fields in engine_settings(request.get("settings", {})).items():
         merged.setdefault(section, {}).update(fields)
@@ -198,7 +198,7 @@ def run(request):
             check_image_model(values["cover_image_server"], params["cover_image_model"])
     if step == "3":
         # A voice left empty in Settings means the default voice.
-        default_voice = (yaml.safe_load((engine / "config.example.yaml").read_text()).get("step3") or {}).get("voice", "")
+        default_voice = (yaml.safe_load((engine / "config.example.yaml").read_text(encoding="utf-8")).get("step3") or {}).get("voice", "")
         values.update(tts_server=config.SUPPORTED_TTS_SERVERS[0], voice=params.get("voice") or default_voice)
     if step in {"3", "5"}:
         values["mute_cut_min_silence_ms"] = params.get("mute_cut_min_silence_ms", 200)

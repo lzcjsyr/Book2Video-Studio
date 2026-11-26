@@ -47,7 +47,14 @@ def discover(agent):
     extra_path = {"claude": ".claude/local", "agy": ".gemini/bin"}.get(agent)
     if extra_path:
         paths.append(str(Path.home() / extra_path))
-    if os.name != "nt":
+    if os.name == "nt":
+        if appdata := env.get("APPDATA"):
+            paths.append(str(Path(appdata) / "npm"))
+        if local_appdata := env.get("LOCALAPPDATA"):
+            paths.append(str(Path(local_appdata) / "Programs"))
+            if agent == "agy":
+                paths.append(str(Path(local_appdata) / "agy" / "bin"))
+    else:
         paths.extend(("/opt/homebrew/bin", "/usr/local/bin"))
     env["PATH"] = os.pathsep.join(dict.fromkeys(path for path in paths if Path(path).is_absolute()))
     program = shutil.which(agent, path=env["PATH"])
@@ -167,7 +174,7 @@ def check(agent):
         with tempfile.TemporaryDirectory(prefix="grist-agent-check-") as cwd:
             def run(args, timeout):
                 return subprocess.run([program, *args], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                      capture_output=True, text=True, errors="replace", timeout=timeout,
+                                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                                       creationflags=NO_WINDOW)
             version = run(["--version"], 10)
             if version.returncode == 0 and version.stdout.strip():
@@ -211,7 +218,10 @@ def check(agent):
 if __name__ == "__main__":
     # Native PTY startup uses this same adapter as the background runner.
     try:
-        manifest = Path(sys.argv[1])
+        raw_manifest = sys.argv[1]
+        if os.name == "nt" and raw_manifest.startswith("\\\\?\\"):
+            raw_manifest = raw_manifest[4:]
+        manifest = Path(raw_manifest).resolve(strict=True)
         launch = json.loads(manifest.read_text(encoding="utf-8"))
         # The native host checked the context against the registered project's .studio/agent directory.
         project = manifest.parents[3]

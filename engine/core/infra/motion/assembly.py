@@ -17,7 +17,7 @@ from .artifacts import stamp
 from .capabilities import inspect_machine
 from .encoding import encode, select_encoder
 from .renderer import _tool, capture, render_clip
-from .runtime import parse_size, subprocess_env
+from .runtime import parse_size, prepare_assets, subprocess_env
 
 ENGINE_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_WORKERS = 4
@@ -335,6 +335,8 @@ def render_clips(
 
     raw_workers = workers if workers is not None else manifest.get('workers', DEFAULT_WORKERS)
     pool_size = max(1, min(MAX_WORKERS, int(raw_workers or DEFAULT_WORKERS), len(chosen)))
+    if any(clips[idx].get('html') for idx in chosen):
+        prepare_assets(work)
 
     results: dict[int, Path] = {}
     if pool_size == 1:

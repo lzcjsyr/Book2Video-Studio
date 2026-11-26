@@ -1,6 +1,8 @@
 """Check the Google Cloud login (ADC) the way an image job would use it, without generating anything.
 
 Run as its own process: `google_check.py '{"engine": ..., "models": [...]}'` prints one JSON result line.
+The request may name a `progress` file: the step being worked on is written there before it starts, so a
+check the caller has to kill still says what it was doing instead of only that Google was slow.
 """
 from __future__ import annotations
 import json
@@ -11,7 +13,12 @@ from pathlib import Path
 LOGIN = "Run `gcloud auth application-default login` in Terminal, then check again."
 
 
-def check(engine: Path, models: list[str]) -> dict:
+def announce(progress: Path | None, step: str) -> None:
+    if progress is not None:
+        progress.write_text(step, encoding="utf-8")
+
+
+def check(engine: Path, models: list[str], progress: Path | None = None) -> dict:
     sys.path.insert(0, str(engine))
     import google.auth
     from google.auth.exceptions import DefaultCredentialsError, RefreshError
@@ -19,6 +26,7 @@ def check(engine: Path, models: list[str]) -> dict:
     from core.infra.ai.llm_client import _resolve_google_adc_project
     from core.shared import http_status
 
+    announce(progress, "refresh")
     try:
         credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
         credentials.refresh(Request())
@@ -33,7 +41,9 @@ def check(engine: Path, models: list[str]) -> dict:
     location = os.getenv("GOOGLE_CLOUD_LOCATION") or "global"
     result = {"ok": True, "project": project, "location": location, "models": []}
 
+    announce(progress, "models")
     from google import genai
+
     client = genai.Client(vertexai=True, project=project, location=location)
     for model in models:
         try:
@@ -56,8 +66,11 @@ def check(engine: Path, models: list[str]) -> dict:
 
 if __name__ == "__main__":
     request = json.loads(sys.argv[1])
+    progress = Path(request["progress"]) if request.get("progress") else None
+    # Written before the libraries load, so a stall says whether the process even started.
+    announce(progress, "start")
     try:
-        outcome = check(Path(request["engine"]), request["models"])
+        outcome = check(Path(request["engine"]), request["models"], progress)
     except Exception as exc:
         outcome = {"ok": False, "message": f"The check could not run: {exc}"}
     print(json.dumps(outcome, ensure_ascii=False), flush=True)

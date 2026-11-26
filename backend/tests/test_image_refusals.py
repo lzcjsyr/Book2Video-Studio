@@ -1,10 +1,11 @@
 """An image service that refuses a prompt: the reason is reported, the prompt reworded, and nothing is retried in vain."""
+from contextlib import nullcontext
 from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ENGINE = Path(__file__).resolve().parents[2] / 'build/engine'
 sys.path.insert(0, str(ENGINE))
@@ -57,6 +58,24 @@ class GoogleRefusalTests(unittest.TestCase):
 
 
 class SegmentImageTests(unittest.TestCase):
+    def test_segment_does_not_restart_googles_rate_limit_retries(self):
+        from google.genai.errors import ClientError
+
+        for provider in ('google', 'google_adc'):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as folder:
+                limited = ClientError(429, {'error': {'code': 429, 'message': 'Resource exhausted',
+                                                     'status': 'RESOURCE_EXHAUSTED'}})
+                generate_content = Mock(side_effect=limited)
+                client = types.SimpleNamespace(models=types.SimpleNamespace(generate_content=generate_content))
+                with patch('google.genai.Client', return_value=client), \
+                        patch.object(llm_client, '_resolve_google_adc_project', return_value='test-project'), \
+                        patch.object(llm_client.config, 'GOOGLE_CLOUD_API_KEY', 'fixture-key'), \
+                        patch('core.shared.time.sleep'), patch.object(image_client, 'provider_slot', return_value=nullcontext()):
+                    result = image_client._generate_single_image((2, 'prompt', 'model', '1280x720', folder, provider, {}))
+                self.assertFalse(result['success'])
+                self.assertIn('429', result['error'])
+                self.assertEqual(generate_content.call_count, 6)
+
     def generate(self, request, safety=None, rewrite=None):
         with tempfile.TemporaryDirectory() as folder, patch.object(image_client, '_request_image_result', side_effect=request), \
                 patch.object(image_client, '_desensitize_image_prompt', return_value=rewrite), patch('core.infra.ai.image_client.time.sleep'):

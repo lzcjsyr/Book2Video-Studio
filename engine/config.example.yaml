@@ -101,8 +101,9 @@ step4:
   image_style_preset: style01
   # 静态生图提示词模板，定义在 prompts/step4_image_templates.yaml：
   # - keywords：图+关键词（以图示为主、中文关键词为辅）
-  # - pure_images：无文字的电影感叙事画面（默认）
-  image_prompt_template: pure_images
+  # - pure_images：无文字的电影感叙事画面
+  # - story_scene：剧情分镜（人物一致，默认）
+  image_prompt_template: story_scene
   # 图像生成并发。Google API key / ADC 的请求上限固定为 1。
   max_concurrent_image_generation: 1
   # Seedream（doubao）最多并发 5 个请求；可调低。上限跨项目、封面和画面任务共享。

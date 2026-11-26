@@ -18,7 +18,7 @@ from core.prompts import (
     IMAGE_PROMPT_SAFETY_TEMPLATE,
     get_step4_image_description_prompt_template,
 )
-from core.shared import logger, ensure_directory_exists, ContentBlocked, is_retryable
+from core.shared import logger, ensure_directory_exists, ContentBlocked, http_status, is_retryable
 from core.infra.ai.image_providers import IMAGE_PROVIDERS
 from core.infra.ai.image_concurrency import provider_slot
 from core.infra.ai.llm_client import text_to_text
@@ -224,7 +224,7 @@ def _generate_single_image(args) -> Dict[str, Any]:
 
     error_msg = ""
     attempt = 0
-    # 服务商调用自身已重试限流与超时（Google 6 次），这里只再补两轮。
+    # 保留对暂时性错误的分段重试，但 Google 限流由客户端统一退避。
     max_attempts = 3
     while attempt < max_attempts:
         try:
@@ -239,6 +239,9 @@ def _generate_single_image(args) -> Dict[str, Any]:
 
         except Exception as exc:  # 捕获所有异常，包含 APIError
             error_msg = str(exc)
+            if (image_server or "").strip().lower() in {"google", "google_adc"} and http_status(exc) == 429:
+                # Google 已用完本轮退避重试，继续处理下一段，稍后可补生成缺失图片。
+                break
             lower_error = error_msg.lower()
             is_sensitive_error = (
                 isinstance(exc, ContentBlocked)

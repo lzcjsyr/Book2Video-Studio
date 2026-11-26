@@ -92,7 +92,7 @@ class AgentTemplateTests(unittest.TestCase):
         work=Path(assembly['cwd'])
         # Studio fills every variable: the materials, the person's choices, delivery and the GPU guide are all in this one prompt.
         for field in PROMPTS['step5_editing_agent.md'][2]:self.assertNotIn('{'+field+'}',prompt)
-        for text in ['## 用户的选择','320×180','## 交付','## GPU 与画面接口',str(work),str(work/'materials.json'),'content-led/SKILL.md']:self.assertIn(text,prompt)
+        for text in ['## 用户的选择','320×180','## 交付','## GPU 与画面接口',str(work),str(work/'materials.json'),str(Path('content-led/SKILL.md'))]:self.assertIn(text,prompt)
         for gone in ['EDITING.md','plan.json','studio-payload.json']:self.assertFalse((work/gone).exists())
         # A template that loses one of its settings is refused rather than silently dropping it.
         with self.assertRaisesRegex(ValueError,'required template variables'):
@@ -178,7 +178,7 @@ class AgentTemplateTests(unittest.TestCase):
             payload=json.loads((work/'studio-payload.json').read_text())
             self.assertEqual(payload['segmentIndex'],index)
             self.assertEqual(payload['durationSeconds'],float(index))
-            self.assertIn(str(work/'studio-payload.json'),prompt)
+            self.assertIn(f'{work}/studio-payload.json',prompt)
         self.assertNotEqual(json.loads((folders[1]/'studio-payload.json').read_text())['content'],json.loads((folders[2]/'studio-payload.json').read_text())['content'])
 
     def test_missing_sections_and_variables_are_rejected_without_saving(self):

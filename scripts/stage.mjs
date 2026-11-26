@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const build = path.join(root, "build");
@@ -21,11 +21,24 @@ const PYTHON = { version: "3.13.15", release: "20260924" };
 const CHROME = "152.0.7977.30";
 const NODE = "22.23.3";
 const FFMPEG = { version: "9.0.2", build: "1789931890_9.0.2" };
+const PY = PYTHON.version.split(".").slice(0, 2).join(".");
+const win = process.platform === "win32";
+// Windows has no Martin Riedl build. Gyan's essentials zip is the same FFmpeg
+// release, GPL-3.0, and publishes a checksum on the GitHub release asset.
 const PLATFORMS = {
   "darwin-arm64": {
     python: `cpython-${PYTHON.version}+${PYTHON.release}-aarch64-apple-darwin-install_only_stripped.tar.gz`,
-    node: `node-v${NODE}-darwin-arm64`,
-    ffmpeg: `https://ffmpeg.martin-riedl.de/download/macos/arm64/${FFMPEG.build}`,
+    node: `node-v${NODE}-darwin-arm64.tar.gz`,
+    ffmpeg: { kind: "martin", base: `https://ffmpeg.martin-riedl.de/download/macos/arm64/${FFMPEG.build}` },
+  },
+  "win32-x64": {
+    python: `cpython-${PYTHON.version}+${PYTHON.release}-x86_64-pc-windows-msvc-install_only_stripped.tar.gz`,
+    node: `node-v${NODE}-win-x64.zip`,
+    ffmpeg: {
+      kind: "gyan",
+      url: "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip",
+      sha256: "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba",
+    },
   },
 };
 const platform = PLATFORMS[`${process.platform}-${process.arch}`];
@@ -33,11 +46,51 @@ if (!platform) {
   console.error(`Packaging is not set up for ${process.platform}-${process.arch} yet.`);
   process.exit(1);
 }
-const pythonBin = `python/bin/python${PYTHON.version.split(".").slice(0, 2).join(".")}`;
-const sitePackages = `python/lib/python${PYTHON.version.split(".").slice(0, 2).join(".")}/site-packages`;
+// install_only layout differs: Unix keeps the interpreter under python/bin and
+// stdlib under python/lib/pythonX.Y. Windows keeps python.exe beside Lib/.
+const layout = win
+  ? {
+      pythonBin: "python/python.exe",
+      sitePackages: "python/Lib/site-packages",
+      pythonLib: "python/Lib",
+      pythonBinDir: "python",
+      nodeBin: "node/node.exe",
+      nodeBinDir: "node",
+      npmCli: "node/node_modules/npm/bin/npm-cli.js",
+      ffmpeg: "bin/ffmpeg.exe",
+      ffprobe: "bin/ffprobe.exe",
+      path: ["python", "python/Scripts", "node", "bin"],
+    }
+  : {
+      pythonBin: `python/bin/python${PY}`,
+      sitePackages: `python/lib/python${PY}/site-packages`,
+      pythonLib: "python/lib",
+      pythonBinDir: "python/bin",
+      nodeBin: "node/bin/node",
+      nodeBinDir: "node/bin",
+      npmCli: "node/lib/node_modules/npm/bin/npm-cli.js",
+      ffmpeg: "bin/ffmpeg",
+      ffprobe: "bin/ffprobe",
+      path: ["bin", "node/bin"],
+    };
 
 function run(command, args, options = {}) {
   execFileSync(command, args, { stdio: "inherit", ...options });
+}
+// Node.js and FFmpeg publish zip archives. Windows' own bsdtar reads them, but the
+// `tar` a Git Bash or MSYS shell puts first on PATH is GNU tar, which cannot: use
+// the one in System32, and PowerShell where a Windows older than 10 1803 has none.
+const systemTar = win ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : null;
+const tarCommand = systemTar && fs.existsSync(systemTar) ? systemTar : "tar";
+function extract(archive, target) {
+  const zip = archive.toLowerCase().endsWith(".zip");
+  if (zip && win && !fs.existsSync(systemTar)) {
+    const quote = (value) => `'${value.replace(/'/g, "''")}'`;
+    run("powershell", ["-NoProfile", "-NonInteractive", "-Command",
+      `Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(target)} -Force`]);
+    return;
+  }
+  run(tarCommand, [zip ? "-xf" : "-xzf", archive, "-C", target]);
 }
 function sha256(file) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -56,6 +109,9 @@ async function download(url, expected) {
     if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
     fs.mkdirSync(downloads, { recursive: true });
     fs.writeFileSync(file + ".part", Buffer.from(await response.arrayBuffer()));
+    // Windows refuses to rename onto an existing file, so a cached copy that failed
+    // its checksum is removed first instead of blocking every later run.
+    fs.rmSync(file, { force: true });
     fs.renameSync(file + ".part", file);
   }
   const actual = sha256(file);
@@ -91,7 +147,8 @@ function flattenSymlinks(dir) {
       const stat = fs.statSync(target);
       fs.unlinkSync(full);
       const relative = path.relative(path.dirname(full), target);
-      if (stat.isDirectory()) {
+      // A shell wrapper cannot be spawned by CreateProcess. Copy the target.
+      if (win || stat.isDirectory()) {
         fs.cpSync(target, full, { recursive: true, dereference: true });
       } else if (target.endsWith(".js")) {
         fs.writeFileSync(full, `#!/bin/sh\nexec "$(dirname "$0")/node" "$(dirname "$0")/${relative}" "$@"\n`, { mode: 0o755 });
@@ -105,6 +162,16 @@ function flattenSymlinks(dir) {
       flattenSymlinks(full);
     }
   }
+}
+function findFile(dir, name) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = findFile(full, name);
+      if (found) return found;
+    } else if (entry.name.toLowerCase() === name.toLowerCase()) return full;
+  }
+  return null;
 }
 
 async function stageRuntime() {
@@ -131,12 +198,12 @@ async function stageRuntime() {
   // Python: a relocatable CPython build with the engine's locked packages.
   const pbs = `https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON.release}`;
   const pythonArchive = await download(`${pbs}/${platform.python}`, checksumFrom(await fetchText(`${pbs}/SHA256SUMS`), platform.python));
-  run("tar", ["-xzf", pythonArchive, "-C", work]);
-  const python = path.join(work, pythonBin);
+  extract(pythonArchive, work);
+  const python = path.join(work, layout.pythonBin);
   run(python, ["-m", "pip", "install", "--disable-pip-version-check", "--no-warn-script-location", "--no-compile",
     "-r", path.join(lockDir, "requirements.lock")], { env: cleanEnv() });
   // Never loaded by the app: package test suites, IDLE and turtle demos, and pip's Windows launchers.
-  const pythonLib = path.join(work, path.dirname(sitePackages));
+  const pythonLib = path.join(work, layout.pythonLib);
   const removeTests = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -145,28 +212,43 @@ async function stageRuntime() {
       else removeTests(full);
     }
   };
-  removeTests(path.join(work, sitePackages));
+  removeTests(path.join(work, layout.sitePackages));
   for (const extra of ["idlelib", "turtledemo"]) fs.rmSync(path.join(pythonLib, extra), { recursive: true, force: true });
-  for (const name of fs.readdirSync(path.join(work, "python/bin"))) {
-    if (name.startsWith("idle3")) fs.rmSync(path.join(work, "python/bin", name));
+  const pythonBinDir = path.join(work, layout.pythonBinDir);
+  if (fs.existsSync(pythonBinDir)) {
+    for (const name of fs.readdirSync(pythonBinDir)) {
+      if (name.startsWith("idle3")) fs.rmSync(path.join(pythonBinDir, name));
+    }
   }
-  const distlib = path.join(work, sitePackages, "pip/_vendor/distlib");
+  const distlib = path.join(work, layout.sitePackages, "pip/_vendor/distlib");
   for (const name of fs.readdirSync(distlib)) {
     if (name.endsWith(".exe")) fs.rmSync(path.join(distlib, name));
   }
-  run(python,["-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash", path.join(work, "python/lib")], { env: cleanEnv() });
+  // The Windows archive ships timestamp-invalidated bytecode beside its stdlib.
+  // Drop it: unchecked-hash .pyc must not be mixed with it, and replacing a file
+  // Windows still holds open fails the whole build with a permission error.
+  const dropBytecode = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.name === "__pycache__") fs.rmSync(full, { recursive: true, force: true });
+      else dropBytecode(full);
+    }
+  };
+  dropBytecode(pythonLib);
+  run(python,["-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash", path.join(work, layout.pythonLib)], { env: cleanEnv() });
 
   // Node.js with npm runs the shared browser renderer and agent tools.
-  const nodeArchive = await download(`https://nodejs.org/dist/v${NODE}/${platform.node}.tar.gz`,
-    checksumFrom(await fetchText(`https://nodejs.org/dist/v${NODE}/SHASUMS256.txt`), `${platform.node}.tar.gz`));
-  run("tar", ["-xzf", nodeArchive, "-C", work]);
-  fs.renameSync(path.join(work, platform.node), path.join(work, "node"));
-  for (const extra of ["include", "share", "lib/node_modules/corepack", "bin/corepack", "CHANGELOG.md", "README.md"]) {
+  const nodeArchive = await download(`https://nodejs.org/dist/v${NODE}/${platform.node}`,
+    checksumFrom(await fetchText(`https://nodejs.org/dist/v${NODE}/SHASUMS256.txt`), platform.node));
+  extract(nodeArchive, work);
+  fs.renameSync(path.join(work, platform.node.replace(/\.tar\.gz$|\.zip$/, "")), path.join(work, "node"));
+  for (const extra of ["include", "share", "lib/node_modules/corepack", "node_modules/corepack", "bin/corepack", "corepack", "corepack.cmd", "CHANGELOG.md", "README.md"]) {
     fs.rmSync(path.join(work, "node", extra), { recursive: true, force: true });
   }
-  const node = path.join(work, "node/bin/node");
-  const npm = path.join(work, "node/lib/node_modules/npm/bin/npm-cli.js");
-  const nodeEnv = cleanEnv({ PATH: [path.join(work, "node/bin"), process.env.PATH].join(path.delimiter) });
+  const node = path.join(work, layout.nodeBin);
+  const npm = path.join(work, layout.npmCli);
+  const nodeEnv = cleanEnv({ PATH: [path.join(work, layout.nodeBinDir), process.env.PATH].join(path.delimiter) });
 
   // Pinned browser automation, animation libraries and browser, independent of video frameworks.
   const motion = path.join(work, "motion");
@@ -174,42 +256,68 @@ async function stageRuntime() {
   for (const file of ["package.json", "package-lock.json"]) fs.copyFileSync(path.join(lockDir, "motion", file),path.join(motion,file));
   run(node,[npm,"ci","--omit=dev","--no-audit","--no-fund"],{cwd:motion,env:nodeEnv});
   const chromeVersion = CHROME;
+  const chromeDir = path.join(work, "chrome");
+  const previousChrome = path.join(target, "chrome");
+  if (fs.existsSync(previousChrome)) {
+    // Reuse an already-staged Chrome of the same buildId instead of re-downloading ~100 MB.
+    copyTree(previousChrome, chromeDir);
+  }
+  console.log(`Preparing Chrome Headless Shell ${chromeVersion}...`);
   // v2 exposes an ESM build under exports; v3 is ESM-only at main.
   const browsersDir = path.join(motion, "node_modules/@puppeteer/browsers");
   const browsersPkg = JSON.parse(fs.readFileSync(path.join(browsersDir, "package.json"), "utf8"));
   const browsers = path.join(browsersDir, browsersPkg.exports?.["."]?.import ?? browsersPkg.main);
   const chrome = execFileSync(node, ["--input-type=module", "-e", `
-    const { install, detectBrowserPlatform, Browser } = await import(${JSON.stringify(browsers)});
-    const result = await install({ cacheDir: ${JSON.stringify(path.join(work, "chrome"))},
+    const { install, detectBrowserPlatform, Browser } = await import(${JSON.stringify(pathToFileURL(browsers).href)});
+    const result = await install({ cacheDir: ${JSON.stringify(chromeDir)},
       browser: Browser.CHROMEHEADLESSSHELL, buildId: ${JSON.stringify(chromeVersion)}, platform: detectBrowserPlatform() });
     process.stdout.write(result.executablePath);`], { env: nodeEnv }).toString().trim();
 
   // FFmpeg and FFprobe: static builds used by the engine and rendering tools.
-  for (const tool of ["ffmpeg", "ffprobe"]) {
-    const sums = await fetchText(`${platform.ffmpeg}/${tool}.zip.sha256`);
-    const archive = await download(`${platform.ffmpeg}/${tool}.zip`, sums.trim().split(/\s+/)[0]);
-    run("unzip", ["-o", "-q", archive, "-d", path.join(work, "bin")]);
-    fs.chmodSync(path.join(work, "bin", tool), 0o755);
+  if (platform.ffmpeg.kind === "martin") {
+    for (const tool of ["ffmpeg", "ffprobe"]) {
+      const sums = await fetchText(`${platform.ffmpeg.base}/${tool}.zip.sha256`);
+      const archive = await download(`${platform.ffmpeg.base}/${tool}.zip`, sums.trim().split(/\s+/)[0]);
+      run("unzip", ["-o", "-q", archive, "-d", path.join(work, "bin")]);
+      fs.chmodSync(path.join(work, "bin", tool), 0o755);
+    }
+  } else {
+    const archive = await download(platform.ffmpeg.url, platform.ffmpeg.sha256);
+    const extracted = path.join(work, "_ffmpeg");
+    fs.mkdirSync(extracted);
+    extract(archive, extracted);
+    for (const tool of ["ffmpeg.exe", "ffprobe.exe"]) {
+      const found = findFile(extracted, tool);
+      if (!found) throw new Error(`FFmpeg archive has no ${tool}`);
+      fs.copyFileSync(found, path.join(work, "bin", tool));
+    }
+    fs.rmSync(extracted, { recursive: true, force: true });
   }
 
-
-  // Skills and local Agents run `python`; macOS has no such command and its
-  // python3 is a stub that asks to install developer tools. Point both at the bundled one.
-  for (const name of ["python", "python3"]) {
-    fs.writeFileSync(path.join(work, "bin", name),
-      `#!/bin/sh\nhere="$(cd "$(dirname "$0")/.." && pwd)"\nexec "$here/${pythonBin}" "$@"\n`, { mode: 0o755 });
+  // Skills and local Agents run `python`. macOS has no such command and its
+  // python3 is a stub that asks to install developer tools, so both names point at
+  // the bundled interpreter. On Windows the interpreter already sits on PATH as
+  // python.exe; python3.exe is a copy beside the same DLLs.
+  if (win) {
+    const alias = path.join(work, "python", "python3.exe");
+    if (!fs.existsSync(alias)) fs.copyFileSync(python, alias);
+  } else {
+    for (const name of ["python", "python3"]) {
+      fs.writeFileSync(path.join(work, "bin", name),
+        `#!/bin/sh\nhere="$(cd "$(dirname "$0")/.." && pwd)"\nexec "$here/${layout.pythonBin}" "$@"\n`, { mode: 0o755 });
+    }
   }
 
   flattenSymlinks(work);
   const relative = (p) => path.relative(work, p).split(path.sep).join("/");
   const manifest = {
-    python: pythonBin,
-    node: "node/bin/node",
+    python: layout.pythonBin,
+    node: layout.nodeBin,
     motion_modules: "motion/node_modules",
     chrome: relative(chrome),
-    ffmpeg: "bin/ffmpeg",
-    ffprobe: "bin/ffprobe",
-    path: ["bin", "node/bin"],
+    ffmpeg: layout.ffmpeg,
+    ffprobe: layout.ffprobe,
+    path: layout.path,
   };
   for (const [name, file] of Object.entries(manifest)) {
     if (name !== "path" && !fs.existsSync(path.join(work, file))) throw new Error(`Missing ${name}: ${file}`);
@@ -252,7 +360,13 @@ function stageEngine() {
     // Background music is licensed and kept out of git: ship whatever is in engine/music.
     fs.mkdirSync(path.join(target, "music"));
     const music = path.join(engineSource, "music");
-    if (fs.existsSync(music)) copyTree(music, path.join(target, "music"), (parts) => junk(parts) || parts.at(-1) === ".gitkeep");
+    if (fs.existsSync(music)) {
+      copyTree(music, path.join(target, "music"), (parts) => junk(parts) || parts.at(-1) === ".gitkeep");
+      // Clear read-only attributes on copied tracks so Tauri can overwrite target/debug/engine/music on Windows.
+      for (const entry of fs.readdirSync(path.join(target, "music"), { withFileTypes: true })) {
+        if (entry.isFile()) fs.chmodSync(path.join(target, "music", entry.name), 0o666);
+      }
+    }
     if (!fs.readdirSync(path.join(target, "music")).length) console.log("No bundled background music: engine/music is empty.");
     fs.copyFileSync(path.join(engineSource, "config.example.yaml"), path.join(target, "config.example.yaml"));
   });
@@ -272,7 +386,11 @@ function smokeTest() {
   const runtime = path.join(build, "runtime");
   const manifest = JSON.parse(fs.readFileSync(path.join(runtime, "manifest.json"), "utf8"));
   const tool = (name) => path.join(runtime, manifest[name]);
-  const env = cleanEnv({ PATH: manifest.path.map((p) => path.join(runtime, p)).join(path.delimiter) + path.delimiter + "/usr/bin:/bin" });
+  const runtimePath = manifest.path.map((p) => path.join(runtime, p)).join(path.delimiter);
+  const systemPath = win
+    ? path.delimiter + path.join(process.env.SystemRoot || "C:\\Windows", "System32")
+    : path.delimiter + "/usr/bin:/bin";
+  const env = cleanEnv({ PATH: runtimePath + systemPath });
   for (const folder of ["engine", "backend"]) {
     run(tool("python"), ["-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash", path.join(build, folder)], { env });
   }
@@ -280,13 +398,22 @@ function smokeTest() {
     path.join(build, "engine")], { env });
   run(tool("python"), [path.join(root, "scripts/check_engine_contract.py"), path.join(build, "engine"), path.join(build, "backend")], { env });
   // The agent's shell finds the bundled Python by name, and it can read every input format.
-  console.log("Agent shell:", execFileSync("sh", ["-c",
-    'command -v python | grep -qF "$RUNTIME/bin/python" && python -c "import fitz, pdfplumber, ebooklib, mobi, docx, yaml; print(\'python on PATH with extractors: ok\')"'],
-  { env: { ...env, RUNTIME: runtime } }).toString().trim());
+  if (win) {
+    const found = execFileSync("where.exe", ["python"], { env, encoding: "utf8" }).split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+    const bundled = path.join(runtime, layout.pythonBin);
+    if (!found || path.normalize(found).toLowerCase() !== path.normalize(bundled).toLowerCase())
+      throw new Error(`python on PATH is ${found || "missing"}, expected ${bundled}`);
+    console.log("Agent shell:", execFileSync(found, ["-c", "import fitz, pdfplumber, ebooklib, mobi, docx, yaml; print('python on PATH with extractors: ok')"], { env, encoding: "utf8" }).trim());
+  } else {
+    console.log("Agent shell:", execFileSync("sh", ["-c",
+      'command -v python | grep -qF "$RUNTIME/bin/python" && python -c "import fitz, pdfplumber, ebooklib, mobi, docx, yaml; print(\'python on PATH with extractors: ok\')"'],
+    { env: { ...env, RUNTIME: runtime } }).toString().trim());
+  }
   const version = (name, args) => execFileSync(tool(name), args, { env }).toString().split("\n")[0].trim();
   console.log("Node.js:", version("node", ["--version"]));
   run(tool("node"), ["-e", "const {createRequire}=require('node:module'); const r=createRequire(process.argv[1]+'/package.json'); for(const p of ['puppeteer-core','gsap','three']) r.resolve(p); console.log('Browser libraries: ok')", tool("motion_modules")], {env});
-  console.log("Chrome:", version("chrome", ["--version"]));
+  // Chrome is a GUI program on Windows: it starts and exits without printing a version.
+  console.log("Chrome:", version("chrome", ["--version"]) || "installed (reports no version on Windows)");
   console.log("FFmpeg:", version("ffmpeg", ["-version"]));
   console.log("FFprobe:", version("ffprobe", ["-version"]));
 }

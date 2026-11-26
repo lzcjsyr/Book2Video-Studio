@@ -129,7 +129,7 @@ print(json.dumps(report))
         (work / 'run.py').write_text('# draft changes\n', encoding='utf-8')
         result = self.studio.finish_agent(self.id, {})
         self.assertIn('without delivering', result['warning'])
-        self.assertEqual(result['assembly_edit']['folder'], str(work.relative_to(self.p)))
+        self.assertEqual(result['assembly_edit']['folder'], work.relative_to(self.p).as_posix())
         self.assertEqual(editing.stamp(video), stamp)
 
     def test_agy_loads_the_assembly_template_as_a_workspace_agent(self):
@@ -250,7 +250,7 @@ print(json.dumps(report))
         (revised/'run.py').write_text('# revised runner\n')
         self.assertEqual((first/'run.py').read_text(),'# agent-owned runner\n')
         prompt=Path(launch['context']).read_text()
-        self.assertNotIn('first_message', launch);self.assertIn('修改上一次的合成',prompt);self.assertIn('按用户在对话里提出的要求修改',prompt)
+        self.assertNotIn('first_message', launch);self.assertIn('修改上一次的合成',prompt);self.assertIn('只改 BGM 或配乐音量且已有分片时',prompt)
         # Materials are refreshed for the revision; the copy does not change the earlier folder.
         (revised/'my_design.html').write_text('<p>changed</p>');self.assertEqual((first/'my_design.html').read_text(),'<p>mine</p>')
 

@@ -206,7 +206,7 @@ def prepare(studio, project, settings, session, revise=False, automatic=False):
     # Remove the app-owned legacy wrapper only in this new session's copy.
     (work / 'studio_render.py').unlink(missing_ok=True)
     delivery = project / DELIVERY
-    edit = {'folder': str(work.relative_to(project)), 'source': signature(found), 'skill': style,
+    edit = {'folder': work.relative_to(project).as_posix(), 'source': signature(found), 'skill': style,
             'delivered_before': stamp(delivery)}
     prompt = studio.library.prompt('step5_editing_agent.md', engine_path=repr(str(studio.engine)),
                                   **template_values(found, skill, work, delivery, revise, automatic))

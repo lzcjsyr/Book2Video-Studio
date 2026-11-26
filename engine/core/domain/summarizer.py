@@ -86,19 +86,19 @@ def generate_description_summary(
     model: str,
     base_url: str,
     content: str,
-    max_chars: int = 100,
+    max_chars: int = 450,
 ) -> Dict[str, Any]:
-    """为描述模式生成配图背景小结"""
+    """为描述模式生成配图背景小结与核心人物视觉设定"""
     try:
-        user_message = f"""请基于以下文案内容生成一段不超过{max_chars}字的简介，概述内容的核心信息，：
+        user_message = f"""请基于以下原文内容，按照系统提示词的要求生成配图背景概要与核心人物视觉设定（总字数不超过{max_chars}字）：
 
 原文内容：
 {content}
 
 要求：
-1. 使用自然、简洁的中文。
-2. 突出主题、背景与主要看点。
-3. 字数不超过{max_chars}字。
+1. 使用自然、准确的中文（真实公众人物保留标准中英文名以便生图模型识别）。
+2. 包含全文核心剧情背景，以及主要出场人物的固定外貌与着装特征，保证后续每张配图人物统一。
+3. 总字数不超过{max_chars}字。
 """
 
         summary = ""

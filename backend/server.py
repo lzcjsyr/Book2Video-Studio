@@ -45,6 +45,15 @@ HIDDEN_FILE = "hidden-projects.json"
 # Default project folders of the app's earlier names, beside today's.
 LEGACY_WORKSPACES = ("Stuff 2 Video", "Book2Video Studio")
 GOOGLE_CHECK_FILE = "google-adc-check.json"
+GOOGLE_CHECK_PROGRESS = "google-adc-step.txt"
+# The step a Google check was on when it ran out of time, said the way the panel shows it. No step at
+# all means the process never reached its first line, so Python itself was still starting.
+GOOGLE_STALLED = {
+    "process": "The check did not start within 90 seconds. Try again, and check whether antivirus is scanning the bundled runtime.",
+    "start": "The check did not get past loading its libraries within 90 seconds. Try again, and check whether antivirus is scanning the bundled runtime.",
+    "refresh": "Google did not answer within 90 seconds while refreshing the login. Check the network and try again.",
+    "models": "Google did not answer within 90 seconds while reaching the models. Check the network and try again.",
+}
 LIBRARY_ENV = "AIGC_VIDEO_LIBRARY_DIR"
 VOICES_FILE = "voices.json"
 DEFAULT_VOICE = {"id": "S_MKj17k802", "name": "默认音色"}
@@ -86,6 +95,20 @@ def atomic_json(path: Path, value):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
+
+
+def child_json(text):
+    """The JSON objects a child process printed, in order; anything else on its output is ignored."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            yield value
 
 
 def segment_of(relative: str) -> int | None:
@@ -206,6 +229,33 @@ def signal_job(process, force=False):
         pass
 
 
+def _pid_alive(pid):
+    """Cross-platform check whether a process ID is still running."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return False
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
 def segmentation_output(values):
     mode = values.get("split_mode", "punctuation")
     return {"split_mode": mode if mode in {"manual", "punctuation"} else "punctuation"}
@@ -267,11 +317,8 @@ class Studio:
                 atomic_json(path, state)
             active = state.get("agent_active")
             if active:
-                try:
-                    os.kill(active.get("owner", -1), 0) if active.get("owner") else (_ for _ in ()).throw(ProcessLookupError())
+                if _pid_alive(active.get("owner")):
                     continue
-                except (ProcessLookupError, PermissionError):
-                    pass
                 state.pop("agent_active", None)
                 for index in active.get("created", []):
                     # A new motion clip the interrupted session never composed goes; its segment's previous visual returns.
@@ -570,7 +617,7 @@ class Studio:
             dest = p / ".studio/history" / revision / relative
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, dest)
-            copied.append(str(relative))
+            copied.append(relative.as_posix())
         state = self.state(p)
         state["events"].insert(0, {"id": revision, "label": label, "time": datetime.now().isoformat(), "files": copied})
         self.persist(p, state)
@@ -616,16 +663,26 @@ class Studio:
 
     def check_google_adc(self, body):
         models = sorted({str(m).strip() for m in body.get("models") or [] if str(m).strip()}) or ["gemini-3.1-flash-image"]
-        request = json.dumps({"engine": str(self.engine), "models": models}, ensure_ascii=False)
+        step_file = self.data / GOOGLE_CHECK_PROGRESS
+        step_file.unlink(missing_ok=True)
+        request = json.dumps({"engine": str(self.engine), "models": models, "progress": str(step_file)}, ensure_ascii=False)
         try:
             # Its own process: Google's libraries stay out of the service, and a stalled network call is bounded.
+            # On Windows, inheriting the native host's shutdown pipe can block Python at startup.
             completed = subprocess.run([sys.executable, str(Path(__file__).with_name("google_check.py")), request],
-                                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
+                                       stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", timeout=90,
                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            lines = completed.stdout.strip().splitlines()
-            result = json.loads(lines[-1]) if lines else {"ok": False, "message": "The check stopped unexpectedly: " + completed.stderr.strip()[-300:]}
+            results = [value for value in child_json(completed.stdout) if "ok" in value]
+            result = results[-1] if results else {"ok": False, "message": "The check stopped unexpectedly: " + completed.stderr.strip()[-300:]}
         except subprocess.TimeoutExpired:
-            result = {"ok": False, "message": "Google did not answer within 90 seconds. Check the network and try again."}
+            # The check records each step in a file before starting it, so a stall says which one it was on.
+            try:
+                step = step_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                step = ""
+            result = {"ok": False, "message": GOOGLE_STALLED.get(step, GOOGLE_STALLED["process"])}
+        step_file.unlink(missing_ok=True)
         result["checked"] = datetime.now().astimezone().isoformat(timespec="seconds")
         atomic_json(self.data / GOOGLE_CHECK_FILE, result)
         return result
@@ -796,7 +853,8 @@ class Studio:
         environment = {**os.environ, LIBRARY_ENV: str(self.library_root)}
         with self.preview_lock:
             result = subprocess.run([sys.executable, "-u", str(Path(__file__).with_name("runner.py")), json.dumps(request, ensure_ascii=False)],
-                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=environment)
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=120, env=environment)
         outcome = next((json.loads(line[len("STUDIO_RESULT:"):]) for line in reversed(result.stdout.splitlines()) if line.startswith("STUDIO_RESULT:")), None)
         if not outcome or not outcome.get("success"):
             raise ValueError((outcome or {}).get("message") or "The 3:4 preview could not be drawn.")
@@ -937,7 +995,7 @@ class Studio:
             selections, _ = self.sync_takes(p, state, script)
             hashes["script"] = state["hashes"]["script"] = fingerprint(p / "text/script.json")
             segments = []
-            relative = lambda f: str(f.relative_to(p)) if f else None
+            relative = lambda f: f.relative_to(p).as_posix() if f else None
             parts = {}
             for index in [0] + [int(s["index"]) for s in script.get("segments", [])]:
                 listed = [takes.describe(p, t) for t in takes.listing(p, index)]
@@ -956,7 +1014,7 @@ class Studio:
             artifact_paths = [f for folder in ["images", "voice"] for f in (p / folder).rglob("*") if f.is_file() and f.suffix.lower() in MEDIA
                               and not f.relative_to(p).as_posix().startswith(takes.ROOT + "/")]
             artifact_paths += [f for f in p.iterdir() if f.is_file() and f.suffix.lower() in MEDIA]
-            assets = {str(f.relative_to(p)): f"{f.stat().st_mtime_ns}:{f.stat().st_size}" for f in artifact_paths}
+            assets = {f.relative_to(p).as_posix(): f"{f.stat().st_mtime_ns}:{f.stat().st_size}" for f in artifact_paths}
             previous = state.get("assets")
             if previous is not None:
                 changes = {k for k in previous.keys() | assets.keys() if previous.get(k) != assets.get(k)}
@@ -968,7 +1026,7 @@ class Studio:
                         self.invalidate(state, stage, indices, project=p)
             state["assets"] = assets
             opening_audio = self.asset(p, "voice", "opening", [".wav"])
-            covers = [str(f.relative_to(p)) for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA]
+            covers = [f.relative_to(p).as_posix() for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA]
             ready = {"1": bool(raw.get("content")), "2": bool(segments), "3": bool(segments) and all(s["audio"] for s in segments), "4": bool(segments) and all(s["visual"] for s in segments), "5": (p / "final_video.mp4").is_file(), "6": bool(covers)}
             if self.opening_on(state):
                 ready["3"] = ready["3"] and bool(opening_audio)
@@ -988,8 +1046,8 @@ class Studio:
                 assembly_edit = editing.detail(p, state["assembly_edit"], edit_source)
             voice_reference = state["voice_reference"]["name"] if local_voice.reference(p, state) else None
             revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design, assembly_edit, voice_reference], sort_keys=True).encode()).hexdigest()
-            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "voice_reference": voice_reference, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio),
-                                                  "clip": str(opening_clip.relative_to(p)) if opening_clip else None}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
+            return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "voice_reference": voice_reference, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": opening_audio.relative_to(p).as_posix() if opening_audio else None, "duration": duration(opening_audio),
+                                                  "clip": opening_clip.relative_to(p).as_posix() if opening_clip else None}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
 
     @staticmethod
     def beside(a, b):
@@ -1646,6 +1704,8 @@ class Studio:
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
             request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
                        "music_dir": str(self.music_root), "local_voice": voice_request}
+            if step == "2":
+                request["claude"] = read_json(self.data / "claude-code.json", {"mode": "api_key"})
             motion_takes = {}
             if step == "4" and body.get("mode") == "segments":
                 for segment in candidates:

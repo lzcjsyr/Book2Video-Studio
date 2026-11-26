@@ -57,7 +57,7 @@ def prepare(project, settings, session, previous=None, copy=("", "")):
     three = modules_dir() / 'three'
     shutil.copytree(three / "build", work / "vendor/three/build", dirs_exist_ok=True)
     shutil.copytree(three / "examples/jsm", work / "vendor/three/examples/jsm", dirs_exist_ok=True)
-    design = {"folder": str(work.relative_to(project)), "entries": entries,
+    design = {"folder": work.relative_to(project).as_posix(), "entries": entries,
               "brief": {"title": copy[0], "subtitle": copy[1], "style": settings.get("step6", {}).get("cover_image_style", "cover01")}}
     (work / "design.json").write_text(json.dumps(design, ensure_ascii=False, indent=2), encoding="utf-8")
     # Agents can inspect snapshots using the same renderer as the final production job. It runs in the agent's
@@ -80,10 +80,10 @@ def detail(project, design, settings=None, copy=None):
     for entry in design["entries"]:
         html = work / entry["html"]
         if html.is_file():
-            files.append(str(html.relative_to(project)))
+            files.append(html.relative_to(project).as_posix())
         preview = work / "previews" / (Path(entry["html"]).stem + ".png")
         if preview.is_file():
-            previews.append(str(preview.relative_to(project)))
+            previews.append(preview.relative_to(project).as_posix())
     current = True
     if settings is not None and copy is not None:
         try:
@@ -205,7 +205,7 @@ def render(project, design, preview=False):
             output = Path(entry["output"])
             if not preview:
                 output = output.replace(project / output.name)
-            outputs.append(str(output.relative_to(project)))
+            outputs.append(output.relative_to(project).as_posix())
         print(result.stdout, end="", flush=True)
         return {"success": True, "covers": outputs}
     finally:

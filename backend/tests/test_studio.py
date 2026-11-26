@@ -405,7 +405,7 @@ class ProjectTests(unittest.TestCase):
         with patch('server.subprocess.Popen'), patch('server.threading.Thread'):
             running=self.studio.run_job(self.p.name,{'step':'3'})
         queued=self.studio.queue_image(self.p.name,{'index':1})
-        with patch('server.os.killpg'), patch('server.threading.Timer'):self.studio.cancel_job(running['id'])
+        with patch('server.signal_job'), patch('server.threading.Timer'):self.studio.cancel_job(running['id'])
         self.assertIsNone(self.studio.queued(self.p.name))
         self.assertNotIn(queued['id'],self.studio.jobs)
     @unittest.skipIf(os.name=='nt','POSIX process groups')
@@ -964,7 +964,7 @@ class PipelineTests(unittest.TestCase):
         if hasattr(self,'temp'):self.temp.cleanup()
     def run_worker(self,step,settings):
         request={'engine':str(ENGINE),'project':str(self.p),'step':step,'settings':settings}
-        result=subprocess.run([sys.executable,'-u',str(DESKTOP/'backend/runner.py'),json.dumps(request,ensure_ascii=False)],capture_output=True,text=True,timeout=90)
+        result=subprocess.run([sys.executable,'-u',str(DESKTOP/'backend/runner.py'),json.dumps(request,ensure_ascii=False)],stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=90)
         self.assertEqual(result.returncode,0,result.stdout[-4000:]+result.stderr[-2000:])
         return result
     def test_worker_punctuation_splits_both_languages_and_ignores_target(self):
@@ -1042,7 +1042,7 @@ class PipelineTests(unittest.TestCase):
         step5={'video_size':'320x180','video_output_fps':12,'video_codec':'hevc','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0}
         request=lambda settings, **extra: {'engine':str(ENGINE),'project':str(self.p),'step':'5','settings':settings,**extra}
         def worker(body):
-            result=subprocess.run([sys.executable,'-u',str(DESKTOP/'backend/runner.py'),json.dumps(body,ensure_ascii=False)],capture_output=True,text=True,timeout=120)
+            result=subprocess.run([sys.executable,'-u',str(DESKTOP/'backend/runner.py'),json.dumps(body,ensure_ascii=False)],stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=120)
             self.assertEqual(result.returncode,0,result.stdout[-4000:]+result.stderr[-2000:])
         # The layout preview works before anything is assembled, from a segment's image.
         worker(request({'global':{'opening_quote':False},'step5':step5},mode='preview',output='.studio/preview_3x4.png'))
@@ -1206,6 +1206,7 @@ class GoogleLoginCheckTests(unittest.TestCase):
         with patch('server.subprocess.run',return_value=subprocess.CompletedProcess([],0,output+'\n','')) as run:
             result=self.studio.check_google_adc({'models':['gemini-3.1-flash-image','gemini-3.1-flash-image',' ']})
         self.assertEqual(json.loads(run.call_args.args[0][-1])['models'],['gemini-3.1-flash-image'])
+        self.assertEqual(run.call_args.kwargs['stdin'],subprocess.DEVNULL)
         self.assertTrue(result['ok']);self.assertIn('T',result['checked'])
         self.assertEqual(self.open().google_adc_status(),result)
     def test_a_stalled_check_is_reported(self):
@@ -1583,6 +1584,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.studio.open_existing({'path':str(self.p)})['id'],self.p.name)
         for path in ['',str(place),'relative/folder']:
             with self.subTest(path=path),self.assertRaises(ValueError):self.studio.open_existing({'path':path})
+    @unittest.skipIf(os.name=='nt','POSIX chmod(0) permission semantics')
     def test_unreadable_project_does_not_stop_the_service(self):
         # For example, a linked project on the Desktop when folder access was not granted.
         place=self.elsewhere();created=self.studio.create({'name':'Private','location':str(place)})

@@ -91,8 +91,8 @@ def prepare(studio, project, body, *, state=None):
         from core.infra.motion.skill_loader import STEP4_MAX_REFERENCE_READS, STEP4_MOTION_RECIPES, STEP4_OPTIONAL_REFERENCES
         from core.prompts import _read_step4_style_section, _read_step4_palette
         from server import duration
-        script = json.loads((project / "text/script.json").read_text())
-        summary = json.loads((project / "text/mini_summary.json").read_text())
+        script = json.loads((project / "text/script.json").read_text(encoding="utf-8"))
+        summary = json.loads((project / "text/mini_summary.json").read_text(encoding="utf-8"))
         indices = body.get("indices") or [s["index"] for s in script["segments"]]
         chosen = [s for s in script["segments"] if s["index"] in indices]
         if not chosen:
@@ -170,5 +170,5 @@ def prepare(studio, project, body, *, state=None):
     if agent == "agy" and step in {"5", "6"}:
         prepare_workspace_agent(step, cwd, prompt)
     # Keep the prompt in a file for history; no API credentials are written here.
-    (context_dir / "launch.json").write_text(json.dumps(launch, ensure_ascii=False, indent=2))
+    (context_dir / "launch.json").write_text(json.dumps(launch, ensure_ascii=False, indent=2), encoding="utf-8")
     return launch

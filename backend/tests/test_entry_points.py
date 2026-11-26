@@ -27,7 +27,7 @@ class EntryPointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as project:
             request = {'engine': str(ENGINE), 'project': project, 'step': '6', 'mode': 'cover_render',
                        'cover_design': {'folder': '.studio/cover-designs/unsaved', 'entries': [{'html': 'cover.html', 'width': 64, 'height': 64}]}}
-            result = subprocess.run([sys.executable, '-u', str(BACKEND / 'runner.py'), json.dumps(request)], env=PACKAGED, capture_output=True, text=True, timeout=60)
+            result = subprocess.run([sys.executable, '-u', str(BACKEND / 'runner.py'), json.dumps(request)], env=PACKAGED, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
         outcome = json.loads(next(line for line in result.stdout.splitlines() if line.startswith('STUDIO_RESULT:'))[len('STUDIO_RESULT:'):])
         self.assertEqual(outcome['message'], 'Save every cover HTML design with Agent before rendering.')
 

@@ -6,7 +6,8 @@ from pathlib import Path
 
 def subprocess_env():
     env = os.environ.copy()
-    env['PATH'] = os.pathsep.join([env.get('PATH', ''), '/opt/homebrew/bin', '/usr/local/bin'])
+    if os.name != 'nt':
+        env['PATH'] = os.pathsep.join([env.get('PATH', ''), '/opt/homebrew/bin', '/usr/local/bin'])
     return env
 
 
@@ -39,15 +40,31 @@ def browser_path():
     raise RuntimeError('Chrome is unavailable. Set AIGC_BROWSER_PATH to a Chrome/Chromium executable.')
 
 
+def _copy_if_needed(src, dst):
+    """Copy a vendored asset only when missing or changed, avoiding concurrent Windows file locks."""
+    src_path, dst_path = Path(src), Path(dst)
+    try:
+        if dst_path.is_file() and dst_path.stat().st_size == src_path.stat().st_size:
+            return dst
+    except OSError:
+        pass
+    try:
+        return shutil.copy2(src, dst)
+    except PermissionError:
+        if dst_path.is_file():
+            return dst
+        raise
+
+
 def prepare_assets(work):
     """Install shared local JS without touching an editing plan's payload."""
     work = Path(work).resolve()
     work.mkdir(parents=True, exist_ok=True)
     modules = modules_dir()
-    shutil.copytree(modules / 'three/build', work / 'vendor/three/build', dirs_exist_ok=True)
-    shutil.copytree(modules / 'three/examples/jsm', work / 'vendor/three/examples/jsm', dirs_exist_ok=True)
+    shutil.copytree(modules / 'three/build', work / 'vendor/three/build', dirs_exist_ok=True, copy_function=_copy_if_needed)
+    shutil.copytree(modules / 'three/examples/jsm', work / 'vendor/three/examples/jsm', dirs_exist_ok=True, copy_function=_copy_if_needed)
     (work / 'vendor').mkdir(exist_ok=True)
-    shutil.copy2(modules / 'gsap/dist/gsap.min.js', work / 'vendor/gsap.min.js')
+    _copy_if_needed(modules / 'gsap/dist/gsap.min.js', work / 'vendor/gsap.min.js')
 
 
 def prepare(work, payload):

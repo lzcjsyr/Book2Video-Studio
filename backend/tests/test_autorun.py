@@ -343,24 +343,31 @@ class AutoRunTests(unittest.TestCase):
     def test_a_background_session_runs_claude_code_in_print_mode(self):
         project = Path(self.tmp.name) / 'session'
         (project / '.studio/agent/one').mkdir(parents=True)
-        claude = Path(self.tmp.name) / 'claude'
-        claude.write_text(f'#!{sys.executable}\nimport json, sys, pathlib\n'
-                          f'pathlib.Path({str(project)!r}, "argv.json").write_text(json.dumps(sys.argv[1:]))\n'
-                          f'pathlib.Path({str(project)!r}, "final_video.mp4").write_bytes(b"delivered")\n'
-                          'print(json.dumps({"is_error": False, "result": "done"}))\n')
-        claude.chmod(0o755)
+        claude = Path(self.tmp.name) / ('claude.cmd' if os.name == 'nt' else 'claude')
+        helper = Path(self.tmp.name) / 'fake_claude.py'
+        def write_cli(code):
+            if os.name == 'nt':
+                helper.write_text(code, encoding='utf-8')
+                claude.write_text(f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\n', encoding='utf-8')
+            else:
+                claude.write_text(f'#!{sys.executable}\n' + code, encoding='utf-8')
+                claude.chmod(0o755)
+        write_cli(f'import json, sys, pathlib\n'
+                  f'pathlib.Path({str(project)!r}, "argv.json").write_text(json.dumps(sys.argv[1:]), encoding="utf-8")\n'
+                  f'pathlib.Path({str(project)!r}, "final_video.mp4").write_bytes(b"delivered")\n'
+                  'print(json.dumps({"is_error": False, "result": "done"}))\n')
         launch = {'step': '5', 'cwd': str(project), 'context': str(project / '.studio/agent/one/context.md'), 'agent': 'claude',
                   'assembly_edit': {'folder': '.studio/edits/one', 'delivered_before': None}}
         with patch.object(headless, 'discover', return_value=(str(claude), {})):
             result = headless.run_session({'step': '5', 'project': str(project), 'launch': launch})
         self.assertTrue(result['success'])
-        argv = json.loads((project / 'argv.json').read_text())
+        argv = json.loads((project / 'argv.json').read_text(encoding='utf-8'))
         self.assertEqual(argv[:2], ['--print', '请根据要求开始工作。'])
         self.assertEqual(argv[2:6], ['--append-system-prompt-file', launch['context'], '--output-format', 'json'])
         self.assertEqual(argv[argv.index('--permission-mode') + 1], 'acceptEdits')
         self.assertIn('Bash(python *)', argv[argv.index('--allowedTools') + 1])
         (project / 'final_video.mp4').unlink()
-        claude.write_text(f'#!{sys.executable}\nprint("{{\\"is_error\\": false}}")\n')
+        write_cli('print("{\\"is_error\\": false}")\n')
         with patch.object(headless, 'discover', return_value=(str(claude), {})), self.assertRaisesRegex(ValueError, 'without delivering'):
             headless.run_session({'step': '5', 'project': str(project), 'launch': launch})
 
