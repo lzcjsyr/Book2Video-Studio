@@ -183,8 +183,11 @@ def engine_settings(settings):
             for section, values in settings.items() if section != "agents"}
 
 
-def clear_retired_model_overrides(settings):
-    """Fall back to the bundled provider and model for older projects."""
+def clear_retired_settings(settings):
+    """Discard options that older projects may still have saved."""
+    step5 = settings.get("step5")
+    if isinstance(step5, dict):
+        step5.pop("video_codec", None)
     for section in ("step4_summary", "step4"):
         fields = settings.get(section)
         if isinstance(fields, dict) and str(fields.get("llm_server", "")).strip().lower() in {"kimi", "openrouter"}:
@@ -413,14 +416,16 @@ class Studio:
             settings["step2"] = segmentation_output(settings["step2"])
         for key in ("llm_server", "llm_model"):
             settings.get("step1", {}).pop(key, None)
-        clear_retired_model_overrides(settings)
+        clear_retired_settings(settings)
         shared = self.shared_settings()
         if shared and not state.get("agent_active") and not self.running(self.project_id(p)):
             self.apply_settings(state, shared)
         return state
 
     def shared_settings(self):
-        return read_json(self.data / "production-settings.json", {})
+        settings = read_json(self.data / "production-settings.json", {})
+        clear_retired_settings(settings)
+        return settings
 
     def remember_settings(self, patch, *, legacy=None):
         if not isinstance(patch, dict) or any(section not in SETTINGS_SECTIONS or not isinstance(fields, dict)
@@ -442,10 +447,12 @@ class Studio:
             values = {k: v for k, v in fields.items() if k not in local_fields.get(section, ())}
             if values:
                 shared.setdefault(section, {}).update(values)
-        clear_retired_model_overrides(shared)
+        clear_retired_settings(shared)
         atomic_json(self.data / "production-settings.json", shared)
 
     def apply_settings(self, state, patch):
+        if "video_codec" in patch.get("step5", {}):
+            patch = {**patch, "step5": {k: v for k, v in patch["step5"].items() if k != "video_codec"}}
         old = state.setdefault("settings", {})
         if all(all(k in old.get(section, {}) and old[section][k] == v for k, v in fields.items())
                for section, fields in patch.items()):
@@ -480,7 +487,7 @@ class Studio:
         return settings
 
     def persist(self, p: Path, state):
-        clear_retired_model_overrides(state.get("settings", {}))
+        clear_retired_settings(state.get("settings", {}))
         atomic_json(p / ".studio/state.json", state)
 
     def invalidate(self, state, stage, indices=None, project=None):

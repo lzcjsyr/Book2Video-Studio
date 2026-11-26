@@ -205,7 +205,6 @@ class VideoComposer:
             script_data,
             font_path=panel_font,
             font_ttc_index=panel_ttc_index,
-            video_codec=getattr(config, "VIDEO_CODEC", "h264"),
             quality_level=int(getattr(config, "THREE_BY_FOUR_QUALITY_LEVEL", 86) or 86),
             panel=three_by_four_panel_options(),
         )
@@ -1186,7 +1185,6 @@ class VideoComposer:
             final_video,
             output_path,
             fps=fps,
-            video_codec=getattr(config, "VIDEO_CODEC", "h264"),
             bitrate_mode=getattr(config, "VIDEO_BITRATE_MODE", "auto"),
             quality_level=int(getattr(config, "VIDEO_QUALITY_LEVEL", 65)),
             fade_in_seconds=float(getattr(config, "OPENING_FADEIN_SECONDS", 0.0)),

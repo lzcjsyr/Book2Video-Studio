@@ -1002,6 +1002,13 @@ class PipelineTests(unittest.TestCase):
         for field in ['video_titles', 'cover_titles', 'cover_subtitles', 'golden_quotes']:
             self.assertCountEqual(script[field], value[field])
             self.assertEqual(raw[field], script[field])
+    def assert_h264(self, path):
+        codec = subprocess.check_output([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", str(path)
+        ], text=True).strip()
+        self.assertEqual(codec, "h264")
+
     def test_real_offline_assembly_produces_both_deliverables(self):
         from PIL import Image
         from moviepy import VideoFileClip
@@ -1018,9 +1025,10 @@ class PipelineTests(unittest.TestCase):
         (self.p/opening.RECORD).write_text(json.dumps({'signature':opening.signature(self.p,motion)}))
         for enabled in [True, False]:
             with self.subTest(opening=enabled):
-                self.run_worker('5',{'global':{'opening_quote':enabled},'step5':{'video_size':'320x180','video_output_fps':12,'video_codec':'h264','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0},'three_by_four':{'enabled':True}})
+                self.run_worker('5',{'global':{'opening_quote':enabled},'step5':{'video_size':'320x180','video_output_fps':12,'video_codec':'hevc','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0},'three_by_four':{'enabled':True}})
                 for name in ['final_video.mp4','final_video_3x4.mp4']:
                     target=self.p/name;self.assertGreater(target.stat().st_size,1000);self.assertAlmostEqual(duration(target),3.0 if enabled else 2.0,delta=.5)
+                    self.assert_h264(target)
                 with VideoFileClip(str(self.p/'final_video.mp4')) as video:
                     red, green, blue = video.get_frame(.2)[20,20]
                     self.assertEqual(bool(red > blue), enabled)
@@ -1031,7 +1039,7 @@ class PipelineTests(unittest.TestCase):
         atomic_json(self.p/'text/script.json',{**copy.deepcopy(SCRIPT),'cover_titles':['封面'],'golden_quotes':['开场金句']})
         for i in [1,2]:
             Image.new('RGB',(320,180),(30*i,80,100)).save(self.p/f'images/segment_{i}.png');recording(self.p/f'voice/voice_{i}.wav')
-        step5={'video_size':'320x180','video_output_fps':12,'video_codec':'h264','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0}
+        step5={'video_size':'320x180','video_output_fps':12,'video_codec':'hevc','enable_subtitles':False,'bgm_filename':None,'narration_speed_factor':1.0,'image_zoom_in_ratio':1.0,'ending_fade_seconds':0.0}
         request=lambda settings, **extra: {'engine':str(ENGINE),'project':str(self.p),'step':'5','settings':settings,**extra}
         def worker(body):
             result=subprocess.run([sys.executable,'-u',str(DESKTOP/'backend/runner.py'),json.dumps(body,ensure_ascii=False)],capture_output=True,text=True,timeout=120)
@@ -1046,6 +1054,7 @@ class PipelineTests(unittest.TestCase):
         worker(request({'global':{'opening_quote':False},'step5':step5,'three_by_four':{'theme':'blur','top_share':0.3}},mode='three_by_four'))
         self.assertEqual((self.p/'final_video.mp4').read_bytes(),master)
         self.assertAlmostEqual(duration(self.p/'final_video_3x4.mp4'),2.0,delta=.5)
+        self.assert_h264(self.p/'final_video_3x4.mp4')
 
 
 class AgentContextTests(unittest.TestCase):

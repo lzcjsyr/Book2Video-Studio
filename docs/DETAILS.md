@@ -145,7 +145,7 @@ The opt-in native credential-store test uses a disposable random account and rem
 - **Signing:** sign every bundled executable and library (Python extensions, Node.js, Chrome, FFmpeg) with a Developer ID and hardened runtime, then notarize. Node.js and Chrome need the JIT entitlement.
 - **Licenses:** `runtime/THIRD_PARTY_NOTICES.md` lists the bundled components. FFmpeg (GPL-3.0) and PyMuPDF (AGPL-3.0) require offering their source.
 
-HEVC playback varies by system; H.264 is the compatibility choice in project settings.
+Step 5 exports H.264 video for both the landscape master and the optional 3:4 copy.
 
 Step 5 supports standard assembly and optional Agent editing, where the agent designs and delivers the whole video from the materials with GPU-accelerated rendering. Narration segments keep their order.
 

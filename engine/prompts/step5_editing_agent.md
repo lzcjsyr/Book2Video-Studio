@@ -66,6 +66,10 @@ size = json.loads((work / "materials.json").read_text(encoding="utf-8"))["video"
 - 能力检测：`inspect_machine(work, size, fps=F)`；如需强制切换，在导入引擎前设置 `AIGC_BROWSER_MODE=auto|hardware|software` 或 `AIGC_VIDEO_ENCODER=auto|software`。
 - 页面契约：提供 `window.clip = {width, height, durationSeconds, ready, renderAt(t)}`，尺寸匹配 `size`，`ready` 等待字体和素材就绪，`renderAt(t)` 可确定地前后跳转。`vendor/` 提供本地 GSAP/Three.js。静态图推拉平移用 CSS transform；若用 ffmpeg `zoompan`，先放大到成片尺寸至少 8 倍避免抖动。
 
+## 只改背景音乐
+
+用户只要求换 BGM 或调整配乐音量，且已有分片时，沿用前一版口播、音效、时间轴、场景和字幕。按原成片时长重新混音并替换 `build/audio.wav`，直接调用 `compose(work, delivery=...)` 完成交付，跳过样片和 `render_clips`。匹配到已验证的成片缓存时，合成会直接复用已烧录字幕的视频流。若用户同时要求画面跟着新音乐重剪，按正常流程重渲受影响的分片。
+
 ## 制作流程与分片原则
 
 1. **先样片再全片**：先检查字幕断行，做 20–30 秒样片并查看真实抽帧，确认构图、字号、章节进度条、运动和转场没问题，再渲全片。画面层用浏览器；字幕、金句、章节和进度条可用 ASS 叠加。

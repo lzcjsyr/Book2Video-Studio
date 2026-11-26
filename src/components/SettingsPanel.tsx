@@ -338,8 +338,6 @@ export default function SettingsPanel({
               <p className="small-muted settings-note">{t("Music, export size, subtitles, narration speed and the 3:4 copy are set on the Assembly page.")}</p>
               <div className="form-grid">
                 {stepAgent("step5", "Editing agent")}
-                {field("step5", "video_codec", t("Codec"), ["h264", "hevc"], false,
-                  "H.264 plays everywhere; HEVC makes smaller files.")}
               </div>
               {step(6, "Covers")}
               <div className="form-grid">

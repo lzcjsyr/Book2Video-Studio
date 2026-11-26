@@ -66,7 +66,6 @@ LLM_MODEL_STEP4: str = ""
 
 VIDEO_SIZE: str = ""
 VIDEO_OUTPUT_FPS: int = 0
-VIDEO_CODEC: str = ""
 VIDEO_BITRATE_MODE: str = ""
 VIDEO_QUALITY_LEVEL: int = 0
 THREE_BY_FOUR_QUALITY_LEVEL: int = 86
@@ -184,7 +183,6 @@ _YAML_SCHEMA: Dict[str, Dict[str, str]] = {
     "step5": {
         "video_size": "VIDEO_SIZE",
         "video_output_fps": "VIDEO_OUTPUT_FPS",
-        "video_codec": "VIDEO_CODEC",
         "video_bitrate_mode": "VIDEO_BITRATE_MODE",
         "video_quality_level": "VIDEO_QUALITY_LEVEL",
         "three_by_four_quality_level": "THREE_BY_FOUR_QUALITY_LEVEL",
@@ -327,6 +325,8 @@ def _load_yaml_overrides(config_path: str | os.PathLike[str]) -> Dict[str, objec
         data["step4"] = values
     overrides: Dict[str, object] = {}
     for section, values in data.items():
+        if section == "VIDEO_CODEC":  # Older configs may still specify HEVC.
+            continue
         if isinstance(section, str) and section.isupper():
             if section not in _KNOWN_CONFIG_CONSTANTS:
                 raise ValueError(f"未知配置项: {section}")
@@ -338,6 +338,8 @@ def _load_yaml_overrides(config_path: str | os.PathLike[str]) -> Dict[str, objec
             raise ValueError(f"配置分组 {section} 必须是对象")
         allowed = _YAML_SCHEMA[section]
         for key, value in values.items():
+            if section == "step5" and key == "video_codec":
+                continue
             if key not in allowed:
                 raise ValueError(f"未知配置项: {section}.{key}")
             constant_name = allowed[key]

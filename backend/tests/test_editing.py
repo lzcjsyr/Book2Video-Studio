@@ -345,11 +345,33 @@ print(json.dumps(report))
         self.assertTrue((work / 'build/render_000.log').is_file())
         self.assertTrue((work / 'build/render_001.log').is_file())
 
+        self.assertFalse(report['reused_video'])
+
+        def stream_hash(selector):
+            return subprocess.check_output([
+                shutil.which('ffmpeg') or 'ffmpeg', '-nostdin', '-v', 'error', '-i', str(delivery),
+                '-map', selector, '-c', 'copy', '-f', 'hash', '-',
+            ])
+
+        # The revision copies the previous work, including its verification record.
+        revised_work = work.with_name('audio-only-revision')
+        shutil.copytree(work, revised_work)
+        original_video, original_audio = stream_hash('0:v:0'), stream_hash('0:a:0')
+        ffmpeg('-f', 'lavfi', '-i', 'sine=frequency=880:duration=2', '-ac', '1', '-ar', '48000',
+               revised_work / 'build/audio.wav')
+        audio_only = compose(revised_work, delivery=delivery)
+        self.assertTrue(audio_only['reused_video'])
+        self.assertEqual(stream_hash('0:v:0'), original_video)
+        self.assertNotEqual(stream_hash('0:a:0'), original_audio)
+        work = revised_work
+
         # Updating subtitles only needs compose; rendered clip stays untouched.
         clip_mtime = (work / 'build/clip_000.mp4').stat().st_mtime_ns
         (work / 'build/captions.ass').write_text(ass.replace('第二句', '改后第二句'), encoding='utf-8')
         recomposed = compose(work, delivery=delivery)
         self.assertTrue(recomposed['verified'])
+        self.assertFalse(recomposed['reused_video'])
+        self.assertNotEqual(stream_hash('0:v:0'), original_video)
         self.assertEqual((work / 'build/clip_000.mp4').stat().st_mtime_ns, clip_mtime)
 
         # Without subtitles, compose uses video stream copy.

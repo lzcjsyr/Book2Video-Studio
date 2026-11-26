@@ -129,8 +129,6 @@ step5:
   # 最终导出尺寸，可与 image_size 不同。
   video_size: 1280x720
   video_output_fps: 30
-  # 编码：h264 兼容性更好；hevc 体积更小，适合 macOS/M 系列。
-  video_codec: hevc
   # 码率模式：auto / quality。
   video_bitrate_mode: quality
   # quality 模式下生效，建议 60-75。

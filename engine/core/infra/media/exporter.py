@@ -9,7 +9,6 @@ def export_video(
     output_path: str,
     *,
     fps: int = 15,
-    video_codec: str = "h264",
     bitrate_mode: str = "auto",
     quality_level: int = 65,
     fade_in_seconds: float = 0.0,
@@ -32,7 +31,6 @@ def export_video(
             str(temporary_output),
             str(temporary_audio),
             fps=fps,
-            video_codec=video_codec,
             bitrate_mode=bitrate_mode,
             quality_level=quality_level,
             fade_in_seconds=fade_in_seconds,
@@ -52,7 +50,6 @@ def _write_video(
     temp_audiofile: str,
     *,
     fps: int,
-    video_codec: str,
     bitrate_mode: str,
     quality_level: int,
     fade_in_seconds: float,
@@ -66,14 +63,7 @@ def _write_video(
         bitrate_param = None
         ffmpeg_extra_params = []
 
-        video_codec = (video_codec or "h264").lower()
         bitrate_mode = (bitrate_mode or "auto").lower()
-
-        if video_codec == "hevc":
-            codec_name = "hevc_videotoolbox"
-            ffmpeg_extra_params.extend(["-tag:v", "hvc1"])
-        else:
-            codec_name = "h264_videotoolbox"
 
         audio_bitrate = "256k"
 
@@ -84,8 +74,7 @@ def _write_video(
         width = int(getattr(final_video, "w", 0) or 0)
         height = int(getattr(final_video, "h", 0) or 0)
 
-        if video_codec != "hevc":
-            ffmpeg_extra_params.extend(_h264_profile_level_params(width, height))
+        ffmpeg_extra_params.extend(_h264_profile_level_params(width, height))
 
         if bitrate_mode == "quality":
             ffmpeg_extra_params.extend(["-q:v", str(quality_level)])
