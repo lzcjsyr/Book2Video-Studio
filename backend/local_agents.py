@@ -218,7 +218,10 @@ def check(agent):
 if __name__ == "__main__":
     # Native PTY startup uses this same adapter as the background runner.
     try:
-        manifest = Path(sys.argv[1])
+        raw_manifest = sys.argv[1]
+        if os.name == "nt" and raw_manifest.startswith("\\\\?\\"):
+            raw_manifest = raw_manifest[4:]
+        manifest = Path(raw_manifest).resolve(strict=True)
         launch = json.loads(manifest.read_text(encoding="utf-8"))
         # The native host checked the context against the registered project's .studio/agent directory.
         project = manifest.parents[3]

@@ -93,8 +93,10 @@ fn start(app: tauri::AppHandle, launch: Launch, cols: u16, rows: u16) -> Result<
         .map_err(|e| e.to_string())?;
     let installation = crate::installation(&app)?;
     // Claude remembers trust per project. Its task brief still names the edit or design directory.
-    let cwd = if trusted.agent == "claude" { &project_root } else { Path::new(&trusted.cwd) };
-    let command = session_command(&installation, &manifest, cwd)?;
+    let project_cwd = strip_verbatim(&project_root);
+    let manifest_path = strip_verbatim(&manifest);
+    let cwd = if trusted.agent == "claude" { project_cwd.as_path() } else { Path::new(&trusted.cwd) };
+    let command = session_command(&installation, &manifest_path, cwd)?;
     let child = pair.slave.spawn_command(command).map_err(|e| {
         format!("Cannot launch {}: {e}. Check it in Settings → Local Agents.", trusted.agent)
     })?;
@@ -186,6 +188,20 @@ pub fn terminal_stop(state: tauri::State<Terminals>, id: String) -> Result<(), S
     }
     Ok(())
 }
+/// Strip Windows `\\?\` verbatim prefixes from canonicalized paths before passing them to child CLIs.
+fn strip_verbatim(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(text) = path.to_str() {
+        if let Some(stripped) = text.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{stripped}"));
+        }
+        if let Some(stripped) = text.strip_prefix(r"\\?\") {
+            return PathBuf::from(stripped);
+        }
+    }
+    path.to_path_buf()
+}
+
 #[derive(Deserialize)]
 struct AgentCommand {
     program: PathBuf,
