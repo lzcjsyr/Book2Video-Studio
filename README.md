@@ -265,3 +265,25 @@ Every Agent session receives a task brief and a source snapshot in `task.json`. 
 Writing, motion, assembly and cover design have separate boundaries. Deterministic segmentation, TTS and image API jobs retain their existing workflows. Direct writing waits for a topic; **No skill** remains supported. Segmentation cannot rewrite its source. Motion changes only the selected take folders; assembly publishes through its provided tool; cover agents preview HTML and let Grist publish final PNGs when the session ends.
 
 Only the relevant skill folders are supplied to interactive sessions. Automatic motion batches give each segment its own session, payload, logs and take folder; interactive sessions covering several segments share technical/style instructions once. Cover context points to the manuscript instead of duplicating it. Reference reads, review agents and rerenders are driven by a specific need; finished artifacts and large logs are kept in files. `context_chars` records actual prompt length in interactive launch metadata. These changes apply to new sessions; restart development's Python service after backend edits.
+
+### 命令行与 Agent
+
+Grist App 自带 CLI。把 App 放在固定位置后，在 macOS 的 Grist 菜单选择 **Install Command-Line Tool…**，或手动安装命令入口：
+
+```bash
+/Applications/Grist.app/Contents/MacOS/grist cli install
+grist guide
+grist schema
+```
+
+入口默认写入 `~/.local/bin/grist`。如果终端或 Agent 的 `PATH` 未包含该目录，可以直接使用绝对路径。无需打开桌面窗口，命令会连接或按需启动同一个本地制作服务。升级前请退出旧版桌面 App，并在服务空闲时用 `grist service stop` 停止新版服务。后台任务在关闭窗口后继续，交互式终端会话随窗口结束。
+
+```bash
+grist project create "一杯茶的时间"
+grist writing import "一杯茶的时间" --file raw.json
+grist production plan "一杯茶的时间"
+grist production run "一杯茶的时间" --wait
+grist assets list "一杯茶的时间"
+```
+
+项目创建后使用返回的 ID。用 `grist config PROJECT --set settings.json` 保存项目设置，用 `grist step run PROJECT visuals --segments 1,3 --params visual.json --wait` 做单次覆盖。风格、模型和 Agent 选项可通过 `grist schema STEP` 和 `grist library` 查询。完整工作流、文稿格式、任务取消和退出码见 [CLI 使用手册](backend/cli-guide.md)，也可运行 `grist guide`。如需隔离自动化环境，设置绝对路径 `GRIST_DATA_DIR` 和 `GRIST_WORKSPACE`，桌面与 CLI 只有在使用同一个数据目录时才会共享服务。

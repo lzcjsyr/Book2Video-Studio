@@ -1,14 +1,18 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 let origin = "",
-  token = "";
+  token = "",
+  hostPid = 0;
 export async function connect() {
   if (isTauri()) {
-    const data = await invoke<{ port: number; token: string }>("bootstrap");
+    const data = await invoke<{ port: number; token: string; host_pid: number }>("bootstrap");
     origin = `http://127.0.0.1:${data.port}`;
     token = data.token;
+    hostPid = data.host_pid;
   }
 }
 export async function api<T>(path: string, body?: unknown): Promise<T> {
+  if (path.endsWith("/agent") && hostPid && body && typeof body === "object" && !(body instanceof Blob))
+    body = { ...body, host_pid: hostPid };
   const file = body instanceof Blob ? body : undefined;
   const response = await fetch(`${origin}/api${path}`, {
     method: body === undefined ? "GET" : "POST",

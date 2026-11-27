@@ -1,4 +1,4 @@
-"""Local project service. The Tauri host owns the process and its random bearer token."""
+"""Authenticated local project service shared by the desktop and CLI."""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 import wave
+from contextlib import nullcontext
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,6 +31,8 @@ import opening
 import exports
 import autorun
 import local_voice
+import service
+import production_cli as cli
 from local_agents import NAMES, check as check_agent
 
 STAGES = ["1", "2", "3", "4", "5", "6"]
@@ -39,7 +42,7 @@ ENGINE_SECTIONS = {"step2": "step1_5", "step4_summary": "step2"}
 DESKTOP_SECTIONS = {engine: desktop for desktop, engine in ENGINE_SECTIONS.items()}
 SETTINGS_SECTIONS = {"agents", "global", "step1", "step2", "step3", "step4", "step4_summary", "step5", "three_by_four", "step6", "subtitles", "motion_opening"}
 # Which service or model makes the next output. Changing one leaves finished work current.
-PROVIDER_SETTINGS = {"agent_cli", "llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill", "agent_music_mix"}
+PROVIDER_SETTINGS = {"agent_cli", "agent_model", "llm_server", "llm_model", "image_server", "image_model", "cover_image_server", "cover_image_model", "tts_model", "cover_method", "assembly_method", "agent_skill", "agent_music_mix"}
 LINKS_FILE = "projects.json"
 HIDDEN_FILE = "hidden-projects.json"
 # Default project folders of the app's earlier names, beside today's.
@@ -179,7 +182,7 @@ DURATION_CACHE = {}
 
 def engine_settings(settings):
     """Project settings as the engine's configuration accepts them (its section names, no desktop-only keys)."""
-    return {ENGINE_SECTIONS.get(section, section): {k: v for k, v in values.items() if k != "agent_cli" and k not in DESKTOP_SETTINGS.get(section, ())}
+    return {ENGINE_SECTIONS.get(section, section): {k: v for k, v in values.items() if k not in {"agent_cli", "agent_model"} and k not in DESKTOP_SETTINGS.get(section, ())}
             for section, values in settings.items() if section != "agents"}
 
 
@@ -204,6 +207,25 @@ def signal_job(process, force=False):
         os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
     except ProcessLookupError:
         pass
+
+
+def windows_process_alive(pid):
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ctypes.get_last_error() != 87  # ERROR_INVALID_PARAMETER: no such process
+    try:
+        code = wintypes.DWORD()
+        return not kernel.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def segmentation_output(values):
@@ -245,13 +267,14 @@ class Studio:
         self.lock = threading.RLock()
         self.preview_lock = threading.Lock()
         self.jobs = {}
+        self.stopping = False
         # Automatic production runs (autorun.py), at most one listed per project.
         self.autoruns = {}
         # Received from the native host; never included in project data or API responses.
         self.credentials = {}
         if adopt_legacy:
             self.adopt_legacy_workspaces()
-        # A terminal lease belongs to this service instance; recover after an app crash.
+        # Recover exports and abandoned terminal leases from a prior session.
         for path in (root / ".studio/state.json" for root in self.roots()):
             recovery_error = False
             try:
@@ -265,43 +288,51 @@ class Studio:
             if recovery_error:
                 state.setdefault("stale", {})["5"] = {"reason": "Export recovery needs review. Previous backups are retained.", "segments": []}
                 atomic_json(path, state)
-            active = state.get("agent_active")
-            if active:
-                try:
-                    os.kill(active.get("owner", -1), 0) if active.get("owner") else (_ for _ in ()).throw(ProcessLookupError())
-                    continue
-                except (ProcessLookupError, PermissionError):
-                    pass
-                state.pop("agent_active", None)
-                for index in active.get("created", []):
-                    # A new motion clip the interrupted session never composed goes; its segment's previous visual returns.
-                    work = takes.folder(path.parents[1], index) / active["takes"][str(index)]
-                    if not (work / "index.html").is_file():
-                        shutil.rmtree(work, ignore_errors=True)
-                        previous_take = active.get("previous", {}).get(str(index))
-                        state.setdefault("takes", {})[str(index)] = previous_take
-                        if not previous_take:
-                            state["takes"].pop(str(index))
-                stale = state.setdefault("stale", {})
-                # Assembly's Agent delivers the video itself; an interrupted session that delivered it is done.
-                if active["step"] == "5" and "assembly_edit" in active:
-                    self.finish_assembly_session(path.parents[1], state, active)
-                    atomic_json(path, state)
-                    continue
-                edit = editing.detail(path.parents[1], state.get("assembly_edit")) if active["step"] == "5" else None
-                if edit and edit["delivered"]:
-                    stale.pop("5", None)
-                    state.setdefault("reviewed", {}).pop("5", None)
-                    if (path.parents[1] / "final_video_3x4.mp4").is_file():
-                        state["three_by_four_stale"] = True
-                    atomic_json(path, state)
-                    continue
-                previous, indices = stale.get(active["step"]), active.get("indices") or []
-                # Segments that were already outdated stay outdated (an empty list means all of them).
-                if not (previous and not previous["segments"]):
-                    stale[active["step"]] = {"reason": "Previous agent session was interrupted. Review its outputs.",
-                                             "segments": sorted(set(previous["segments"]) | set(indices)) if previous and indices else indices}
-                atomic_json(path, state)
+            self.recover_agent(path.parents[1], state)
+
+    def recover_agent(self, project, state):
+        """Release an interrupted terminal lease while the shared service stays alive."""
+        active = state.get("agent_active")
+        if not active:
+            return
+        owner = active.get("owner")
+        if type(owner) is int and owner > 0:
+            try:
+                if os.name == "nt":
+                    # os.kill(pid, 0) is destructive on Windows.
+                    if windows_process_alive(owner):
+                        return
+                else:
+                    os.kill(owner, 0)
+                    return
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return
+        state.pop("agent_active", None)
+        for index in active.get("created", []):
+            work = takes.folder(project, index) / active["takes"][str(index)]
+            if not (work / "index.html").is_file():
+                shutil.rmtree(work, ignore_errors=True)
+                previous_take = active.get("previous", {}).get(str(index))
+                if previous_take:
+                    state.setdefault("takes", {})[str(index)] = previous_take
+                else:
+                    state.setdefault("takes", {}).pop(str(index), None)
+        stale = state.setdefault("stale", {})
+        if active["step"] == "5" and "assembly_edit" in active:
+            self.finish_assembly_session(project, state, active)
+        elif active["step"] == "5" and (edit := editing.detail(project, state.get("assembly_edit"))) and edit["delivered"]:
+            stale.pop("5", None)
+            state.setdefault("reviewed", {}).pop("5", None)
+            if (project / "final_video_3x4.mp4").is_file():
+                state["three_by_four_stale"] = True
+        else:
+            previous, indices = stale.get(active["step"]), active.get("indices") or []
+            if not (previous and not previous["segments"]):
+                stale[active["step"]] = {"reason": "Previous agent session was interrupted. Review its outputs.",
+                                         "segments": sorted(set(previous["segments"]) | set(indices)) if previous and indices else indices}
+        self.persist(project, state)
 
     @property
     def links_path(self) -> Path:
@@ -411,15 +442,17 @@ class Studio:
 
     def state(self, p: Path):
         state = read_json(p / ".studio/state.json", {"stale": {}, "reviewed": {}, "settings": {}, "source": "", "events": []})
+        if (state.get("agent_active") or {}).get("owner"):
+            self.recover_agent(p, state)
         settings = state.get("settings", {})
         if "step2" in settings:
             settings["step2"] = segmentation_output(settings["step2"])
         for key in ("llm_server", "llm_model"):
             settings.get("step1", {}).pop(key, None)
         clear_retired_settings(settings)
-        shared = self.shared_settings()
-        if shared and not state.get("agent_active") and not self.running(self.project_id(p)):
-            self.apply_settings(state, shared)
+        preferences = cli.merge(self.shared_settings(), state.get("project_overrides", {}))
+        if preferences and not state.get("agent_active") and not self.running(self.project_id(p)):
+            self.apply_settings(state, preferences)
         return state
 
     def shared_settings(self):
@@ -450,6 +483,14 @@ class Studio:
         clear_retired_settings(shared)
         atomic_json(self.data / "production-settings.json", shared)
 
+    @staticmethod
+    def update_pinned_settings(state, patch):
+        """A desktop edit can change an existing project override."""
+        pinned = state.get("project_overrides", {})
+        for section, fields in patch.items():
+            if section in pinned:
+                pinned[section].update({key: value for key, value in fields.items() if key in pinned[section]})
+
     def apply_settings(self, state, patch):
         if "video_codec" in patch.get("step5", {}):
             patch = {**patch, "step5": {k: v for k, v in patch["step5"].items() if k != "video_codec"}}
@@ -457,7 +498,7 @@ class Studio:
         if all(all(k in old.get(section, {}) and old[section][k] == v for k, v in fields.items())
                for section, fields in patch.items()):
             return
-        effective = self.effective(state)
+        effective = self.effective(state, include_run=False)
         stages = {"global": "3", "step2": "2", "step3": "3", "step4": "4",
                   "step5": "5", "subtitles": "5", "step6": "6", "motion_opening": "5"}
         for section, fields in patch.items():
@@ -479,12 +520,9 @@ class Studio:
             elif section == "step4_summary":
                 state["summary_stale"] = True
 
-    def effective(self, state):
-        """The settings a job uses: the defaults, then the project's saved choices."""
-        settings = self.defaults()
-        for section, fields in state.get("settings", {}).items():
-            settings.setdefault(section, {}).update(fields)
-        return settings
+    def effective(self, state, *, include_run=True):
+        """Engine defaults, the project's current settings, then any one-run patch."""
+        return cli.merge(self.defaults(), state.get("settings", {}), cli.overrides() if include_run else {})
 
     def persist(self, p: Path, state):
         clear_retired_settings(state.get("settings", {}))
@@ -595,6 +633,9 @@ class Studio:
         sections = {DESKTOP_SECTIONS.get(k, k): v for k, v in data.items() if isinstance(v, dict)}
         if "step3" in sections:
             sections["step3"].setdefault("tts_provider", "bytedance")
+        if "step4" in sections:
+            # Match the desktop's existing motion worker limit unless a project sets one.
+            sections["step4"]["motion_concurrency"] = 3
         if "step5" in sections:
             sections["step5"].setdefault("assembly_method", "agent")
             sections["step5"].setdefault("agent_skill", "content-led")
@@ -1005,10 +1046,10 @@ class Studio:
     def busy(self, project_id, step=None, own=False):
         return self.running(project_id, step, own) or bool(self.state(self.project(project_id)).get("agent_active"))
 
-    def save(self, project_id, body):
+    def save(self, project_id, body, *, own=False):
         p = self.project(project_id)
         with self.lock:
-            if self.busy(project_id):
+            if self.busy(project_id, own=own):
                 raise Conflict("Stop the running job or agent before editing its outputs.")
             kind = body["kind"]
             path = p / "text" / TEXT_FILES[kind]
@@ -1211,7 +1252,7 @@ class Studio:
         return self.detail(project_id)
 
     def writing_options(self, state):
-        settings = {**self.defaults().get("step1", {}), **state.get("settings", {}).get("step1", {})}
+        settings = self.effective(state).get("step1", {})
         source = state.get("source", "")
         return {"mode": settings.get("writing_mode", "source" if source else "direct"), "source": source,
                 "agent_skill": str(settings.get("agent_skill", "book-seller"))}
@@ -1231,7 +1272,9 @@ class Studio:
             if previous != enabled:
                 state.setdefault("settings", {}).setdefault("global", {})["opening_quote"] = enabled
                 self.update_opening(state, enabled)
-                self.remember_settings({"global": {"opening_quote": enabled}})
+                patch = {"global": {"opening_quote": enabled}}
+                self.update_pinned_settings(state, patch)
+                self.remember_settings(patch)
                 self.persist(p, state)
         return self.detail(project_id)
 
@@ -1270,18 +1313,22 @@ class Studio:
             if set(options) != set(previous) or options.get("mode") not in {"source", "direct"} or any(not isinstance(v, str) for v in options.values()):
                 raise ValueError("Invalid writing setup.")
             if options != previous:
-                state.setdefault("settings", {}).setdefault("step1", {}).update({
-                    "writing_mode": options["mode"], "agent_skill": options["agent_skill"]})
-                self.remember_settings({"step1": {"agent_skill": options["agent_skill"]}})
+                patch = {"writing_mode": options["mode"], "agent_skill": options["agent_skill"]}
+                state.setdefault("settings", {}).setdefault("step1", {}).update(patch)
+                self.update_pinned_settings(state, {"step1": patch})
+                if options["agent_skill"] != previous["agent_skill"]:
+                    self.remember_settings({"step1": {"agent_skill": options["agent_skill"]}})
                 state["source"] = options["source"]
                 # Setup applies to the next writing session. Preserve the current
                 # manuscript and its review state until it is actually rewritten.
                 self.persist(p, state)
         return self.detail(project_id)
 
-    def create(self, body):
+    def create(self, body, *, cli_project=False):
         settings = body.get("settings", {})
         source_value = body.get("source") or ""
+        if cli_project:
+            settings = cli.validate_settings(self, settings, cli.merge(self.defaults(), self.shared_settings()))
         mode = settings.get("step1", {}).get("writing_mode", "source" if source_value else "direct")
         if mode not in {"source", "direct"}:
             raise ValueError("Invalid writing setup.")
@@ -1304,10 +1351,9 @@ class Studio:
             (p / folder).mkdir()
         self.show(p)
         state = {"stale": {}, "reviewed": {}, "events": []}
-        inherited = self.shared_settings()
-        for section, fields in settings.items():
-            inherited.setdefault(section, {}).update(fields)
-        settings = inherited
+        if cli_project:
+            state["project_overrides"] = settings
+        settings = cli.merge(self.shared_settings(), settings)
         settings = {**settings, "step1": {**settings.get("step1", {}), "writing_mode": mode}}
         state.update(name=title, source=source, settings=settings)
         self.persist(p, state)
@@ -1364,10 +1410,15 @@ class Studio:
     def prepare_agent(self, project_id, body):
         p = self.project(project_id)
         with self.lock:
+            if self.stopping:
+                raise Conflict("The Grist service is stopping. Retry once it exits.")
             if self.busy(project_id):
                 raise Conflict("This project already has an active job or agent.")
             if body["step"] == "4" and self.needs_summary(p, self.state(p)):
                 raise Conflict("Generate the content summary before revising motion.")
+            owner = body.get("host_pid", os.getpid())
+            if type(owner) is not int or owner <= 0:
+                raise ValueError("Invalid terminal host process.")
             from context import prepare
             state = self.state(p)
             # Visuals: each segment's session works on one motion clip — the one asked for, the
@@ -1407,7 +1458,7 @@ class Studio:
                 self.select(p, state, index, work.name)
             if folders:
                 self.sync_takes(p, state)
-            state["agent_active"] = {"step": body["step"], "indices": body.get("indices", []), "launch": launch["id"], "owner": os.getpid(), "raw_before": fingerprint(p / "text/raw.json"),
+            state["agent_active"] = {"step": body["step"], "indices": body.get("indices", []), "launch": launch["id"], "owner": owner, "raw_before": fingerprint(p / "text/raw.json"),
                                      "takes": {str(i): w.name for i, w in folders.items()}, "created": created, "previous": previous}
             if body["step"] == "5":
                 edit = launch["assembly_edit"]
@@ -1514,17 +1565,29 @@ class Studio:
         state["reviewed"].pop("6", None)
         return warning
 
-    def run_job(self, project_id, body, own=False):
+    def run_job(self, project_id, body, own=False, *, headless=False):
         p = self.project(project_id)
         with self.lock:
             step = str(body["step"])
             # Default visual generation follows each segment's saved type and runs in the job process.
             if step == "4" and body.get("mode") is None:
                 body = {**body, "mode": "segments", "batch": body.get("batch") or ("selected" if body.get("indices") is not None else "all")}
+            if self.stopping:
+                raise Conflict("The Grist service is stopping. Retry once it exits.")
             if self.busy(project_id, step, own):
                 raise Conflict("Finish the active project job or agent first.")
-            if step not in STAGES or step == "1":
-                raise ValueError("Step 1 runs interactively through Activate Agent.")
+            if step not in STAGES or step == "1" and not ((own or headless) and body.get("mode") == "agent"):
+                raise ValueError("Choose a valid step and execution mode.")
+            if step == "3" and not self.detail(project_id)["ready"]["2"]:
+                raise Conflict("Generate segments before recording voice.")
+            if step == "3" and (indices := body.get("indices")) is not None:
+                available = {segment["index"] for segment in self.detail(project_id)["segments"]}
+                if not isinstance(indices, list) or any(type(i) is not int or i not in available for i in indices):
+                    raise ValueError("Choose segment numbers that exist in this project.")
+                if not indices and not body.get("opening"):
+                    raise ValueError("Choose at least one segment or enable the opening.")
+                body = {**body, "indices": sorted(set(indices))}
+
             voice_request = None
             if step == "3" and self.uses_local_voice(self.state(p)):
                 detail = self.detail(project_id)
@@ -1624,7 +1687,7 @@ class Studio:
             job_id = uuid.uuid4().hex
             direction_only = body.get("mode") == "summary"
             summary = step == "4" and body.get("mode") != "render" and (direction_only or self.needs_summary(p, self.state(p)))
-            dirs = {"2": ["text"], "3": ["voice"], "4": [] if direction_only else ["images"], "5": [], "6": []}[step]
+            dirs = {"1": ["text"], "2": ["text"], "3": ["voice"], "4": [] if direction_only else ["images"], "5": [], "6": []}[step]
             # Takes are only ever added (a revised clip is snapshotted by its session), so jobs leave them out.
             paths = [f for d in dirs for f in (p / d).rglob("*") if not f.relative_to(p).as_posix().startswith(takes.ROOT + "/")]
             if step in {"3", "4"}:
@@ -1642,9 +1705,13 @@ class Studio:
             launch = None
             if body.get("mode") == "agent":
                 from context import prepare
-                launch = prepare(self, p, {"step": step, "headless": True, "revise": bool(body.get("revise"))})
+                instructions = body.get("instructions", "").strip()
+                if step == "1" and self.writing_options(self.state(p))["mode"] == "direct" and not instructions:
+                    raise ValueError("Supply a topic and writing instructions for direct Agent writing.")
+                launch = prepare(self, p, {"step": step, "headless": True, "revise": bool(body.get("revise")),
+                                            "instructions": instructions})
             self.snapshot(p, paths, "Before generating the content summary" if direction_only else "Before rebuilding the 3:4 copy" if body.get("mode") == "three_by_four" else f"Before generating step {step}")
-            request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": self.state(p).get("settings", {}),
+            request = {**body, "summary": summary, "project": str(p), "engine": str(self.engine), "settings": cli.merge(self.state(p).get("settings", {}), cli.overrides()),
                        "music_dir": str(self.music_root), "local_voice": voice_request}
             motion_takes = {}
             if step == "4" and body.get("mode") == "segments":
@@ -1660,9 +1727,10 @@ class Studio:
                 # The session is the project's latest edit or design, as one made in the terminal would be.
                 if step == "5":
                     state["assembly_edit"] = launch["assembly_edit"]
-                else:
+                elif step == "6":
                     state["cover_design"] = launch["cover_design"]
-                self.persist(p, state)
+                if step != "1":
+                    self.persist(p, state)
                 request["launch"] = launch
             if step == "4" and body.get("mode") == "render":
                 # Each segment renders its selected motion clip, or the one clip asked for.
@@ -1675,6 +1743,12 @@ class Studio:
                 request["folders"] = {str(i): str(w) for i in chosen if (w := self.motion_folder(p, state, i, one))}
             job = {"id": job_id, "project": project_id, "step": step, "status": "running", "log": [], "started": time.time(), "result": None, "scope": body.get("indices"), "mode": body.get("mode"), "opening": body.get("opening", False),
                    "summary": summary, "summary_before": fingerprint(p / "text/mini_summary.json")}
+            job["_overrides"] = cli.overrides()
+            if step == "1":
+                job["_manuscript"] = launch["manuscript"]
+                job["_raw_before"] = fingerprint(p / "text/raw.json")
+            if headless or cli.overrides() or step == "1":
+                job["configuration"] = cli.public_config(self, self.state(p))
             if step == "2":
                 # New segments outdate recordings and visuals only where their text changed.
                 job["_script_before"] = read_json(p / "text/script.json", {})
@@ -1723,7 +1797,8 @@ class Studio:
             process.stdout.close()
             with self.lock:
                 try:
-                    self.job_ended(job, code)
+                    with cli.using(job.get("_overrides", {})):
+                        self.job_ended(job, code)
                 finally:
                     # Images queued behind this job start as soon as it ends.
                     self.start_queued(job["project"])
@@ -1737,6 +1812,22 @@ class Studio:
             job.pop("_secrets", None)
             job["status"] = "cancelled" if job["status"] == "cancelling" else "succeeded" if code == 0 and (job.get("result") or {}).get("success") else "failed"
             job["ended"] = time.time()
+            if job["step"] == "1":
+                if job["status"] == "succeeded":
+                    try:
+                        source = Path(job["_manuscript"])
+                        raw = read_json(source, {})
+                        if raw_problem(raw) and (fallback := stray_raw(source.parent.parent)):
+                            raw = read_json(fallback, {})
+                        if problem := raw_problem(raw):
+                            raise ValueError(f"Agent did not deliver a valid manuscript: {problem}")
+                        self.save(job["project"], {"kind": "raw", "value": raw,
+                                                   "expected_hash": job["_raw_before"]}, own=True)
+                        job["result"]["artifact"] = "text/raw.json"
+                    except (Conflict, OSError, ValueError, KeyError) as exc:
+                        job["status"] = "failed"
+                        job["result"] = {"success": False, "message": str(exc)}
+                return
             # Pipeline-owned rewrites (including the DOCX bridge) have already
             # been accounted for by this job, rather than being external edits.
             state["hashes"] = {k: fingerprint(p / "text" / filename) for k, filename in TEXT_FILES.items()}
@@ -1979,8 +2070,20 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 <= length <= 8_000_000:
                 raise ValueError("Request too large.")
             body = json.loads(self.rfile.read(length)) if length else {}
+            if parts == ["api", "service"] and method == "GET":
+                return self.json({"pid": os.getpid(), "protocol": service.PROTOCOL})
+            if parts == ["api", "service", "stop"] and method == "POST" and getattr(self.server, "shared", False):
+                with studio.lock:
+                    if (any(j["status"] in {"running", "cancelling", "queued"} for j in studio.jobs.values())
+                            or any(r["status"] in autorun.ACTIVE for r in studio.autoruns.values())
+                            or any(studio.state(p).get("agent_active") for p in studio.roots())):
+                        raise Conflict("Finish or cancel active work before stopping the service.")
+                    studio.stopping = True
+                self.json({"stopping": True})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
             if parts == ["api", "credentials"] and method == "POST":
-                if os.environ.get("STUDIO_NATIVE_HOST") != "1":
+                if not getattr(self.server, "shared", False) and os.environ.get("STUDIO_NATIVE_HOST") != "1":
                     raise ValueError("API keys are managed by the desktop app.")
                 studio.set_credentials(body)
                 return self.json({"applied": True})
@@ -1995,6 +2098,11 @@ class Handler(BaseHTTPRequestHandler):
                     if method == "POST":
                         studio.remember_settings(body["settings"])
                     return self.json(studio.shared_settings())
+            if parts == ["api", "schema"] and method == "GET":
+                step = query.get("step", [None])[0]
+                if step is not None and step not in cli.STEPS:
+                    raise ValueError("Unknown production step.")
+                return self.json(cli.schema(studio, step))
             if parts == ["api", "bootstrap"]:
                 return self.json(studio.bootstrap())
             if parts == ["api", "voices", "delete"] and method == "POST":
@@ -2025,7 +2133,10 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "music", "import"] and method == "POST":
                 return self.json(studio.import_music(body))
             if parts == ["api", "projects"]:
-                return self.json(studio.projects() if method == "GET" else studio.create(body))
+                with studio.lock:
+                    if method == "GET":
+                        return self.json(studio.projects())
+                    return self.json(studio.create(body, cli_project=query.get("cli") == ["1"]))
             if parts == ["api", "projects", "open"] and method == "POST":
                 return self.json(studio.open_existing(body))
             if parts == ["api", "projects", "remove"] and method == "POST":
@@ -2035,20 +2146,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"path": str(studio.project(query["project"][0]))})
             if parts == ["api", "jobs"]:
                 return self.json([studio.public_job(j) for j in studio.jobs.values()])
+            if len(parts) == 3 and parts[:2] == ["api", "jobs"] and method == "GET":
+                with studio.lock:
+                    return self.json(studio.public_job(studio.jobs[parts[2]]))
             if len(parts) == 4 and parts[1] == "jobs" and parts[3] == "cancel" and method == "POST":
                 return self.json(studio.cancel_job(parts[2]))
             if parts == ["api", "autoruns"]:
                 return self.json([autorun.public(r) for r in studio.autoruns.values()])
+            if len(parts) == 3 and parts[:2] == ["api", "autoruns"] and method == "GET":
+                with studio.lock:
+                    return self.json(autorun.public(studio.autoruns[parts[2]]))
             if len(parts) == 4 and parts[1] == "autoruns" and parts[3] == "stop" and method == "POST":
                 return self.json(autorun.stop(studio, parts[2]))
             if len(parts) >= 3 and parts[1] == "projects":
                 project_id = parts[2]
                 if len(parts) == 3 and method == "GET":
-                    return self.json(studio.detail(project_id))
+                    detail = studio.detail(project_id)
+                    if query.get("cli") == ["1"]:
+                        detail["configuration"] = cli.public_config(studio, detail["state"])
+                    return self.json(detail)
+                if len(parts) == 4 and parts[3] == "config" and method == "GET":
+                    with studio.lock:
+                        return self.json(cli.public_config(studio, studio.state(studio.project(project_id))))
                 if len(parts) == 4 and method == "POST":
                     action = parts[3]
                     if action == "save":
                         return self.json(studio.save(project_id, body))
+                    if action == "config":
+                        return self.json(cli.save_config(studio, project_id, body))
+                    if action == "step":
+                        return self.json(cli.start_action(studio, project_id, body))
                     if action == "job":
                         return self.json(studio.run_job(project_id, body))
                     if action == "autorun":
@@ -2074,6 +2201,21 @@ class Handler(BaseHTTPRequestHandler):
                     p = studio.project(project_id)
                     if action == "writing":
                         return self.json(studio.save_writing(project_id, body))
+                    if action == "writing-source":
+                        with studio.lock:
+                            if studio.busy(project_id):
+                                raise Conflict("Finish active work before changing the source.")
+                            mode, source = body["mode"], body["source"]
+                            if mode not in {"direct", "source"} or not isinstance(source, str):
+                                raise ValueError("Choose a valid writing mode.")
+                            if mode == "source" and (not source or not Path(source).exists()):
+                                raise ValueError("Source document or folder does not exist.")
+                            state = studio.state(p)
+                            state["source"] = source
+                            state["settings"].setdefault("step1", {})["writing_mode"] = mode
+                            studio.update_pinned_settings(state, {"step1": {"writing_mode": mode}})
+                            studio.persist(p, state)
+                            return self.json(studio.writing_options(state))
                     if action == "opening":
                         return self.json(studio.set_opening(project_id, body))
                     if action == "settings":
@@ -2083,7 +2225,11 @@ class Handler(BaseHTTPRequestHandler):
                                 raise Conflict("Stop production before changing its settings.")
                             state = studio.state(p)
                             patch = body["settings"]
-                            studio.remember_settings(patch, legacy=state.get("settings"))
+                            pinned = state.get("project_overrides", {})
+                            legacy = {section: {k: v for k, v in fields.items() if k not in pinned.get(section, {})}
+                                      for section, fields in state.get("settings", {}).items()}
+                            studio.remember_settings(patch, legacy=legacy)
+                            studio.update_pinned_settings(state, patch)
                             studio.apply_settings(state, patch)
                             if "source" in body:
                                 state["source"] = body["source"]
@@ -2187,29 +2333,40 @@ def main():
     parser.add_argument("--data", required=True, help="User data: editable library and project registry")
     parser.add_argument("--workspace", required=True, help="Default folder for new projects")
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--shared", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     # The native host clears inherited Python paths. Shared rendering modules
     # must resolve from this installation, regardless of the process cwd.
     engine = Path(args.engine).resolve()
     sys.path.insert(0, str(engine))
-    studio = Studio(engine, Path(args.data), Path(args.workspace))
+    data = Path(args.data).resolve()
+    with service.service_lock(data) if args.shared else nullcontext(True) as acquired:
+        if acquired:
+            serve(engine, data, args)
+
+
+def serve(engine, data, args):
+    studio = Studio(engine, data, Path(args.workspace))
+    if args.shared:
+        studio.set_credentials(json.loads(sys.stdin.readline()))
     token = os.environ.get("STUDIO_TOKEN") or secrets.token_hex(32)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    server.studio, server.token = studio, token
+    server.studio, server.token, server.shared = studio, token, args.shared
     print(json.dumps({"port": server.server_port}), flush=True)
     def stop(*_):
         threading.Thread(target=server.shutdown, daemon=True).start()
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     # The native host closes stdin when it exits, allowing child jobs to stop cleanly.
-    if not sys.stdin.isatty():
+    if not args.shared and not sys.stdin.isatty():
         def watch_host():
             line = sys.stdin.readline()
             if line.strip() == "shutdown" or not line and os.environ.get("STUDIO_NATIVE_HOST"):
                 stop()
         threading.Thread(target=watch_host, daemon=True).start()
     try:
-        server.serve_forever()
+        with service.publish_endpoint(data, server.server_port, token) if args.shared else nullcontext():
+            server.serve_forever()
     finally:
         # Within the native host's wait (7 seconds) for the service to end.
         studio.stop_all()

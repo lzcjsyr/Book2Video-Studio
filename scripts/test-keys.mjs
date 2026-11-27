@@ -49,7 +49,7 @@ test("Google ADC needs no image key", () => {
 });
 test("switching image service keeps a fitting model and replaces another service's model", () => {
   assert.equal(imageModelFor("google_adc", "doubao-seedream-4-0-250828"), "gemini-3.1-flash-image");
-  assert.equal(imageModelFor("doubao", "gemini-3.1-flash-image"), "doubao-seedream-5-0-pro-260628");
+  assert.equal(imageModelFor("doubao", "gemini-3.1-flash-image"), "doubao-seedream-5-5-261028");
   assert.equal(imageModelFor("google", "gemini-3-pro-image"), "gemini-3-pro-image");
   assert.equal(imageModelFits("google_adc", "doubao-seedream-4-0-250828"), false);
 });

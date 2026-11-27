@@ -92,7 +92,7 @@ step4:
   image_server: google_adc
   # 常用模型示例：
   # - gemini-3.1-flash-image
-  # - doubao-seedream-5-0-260128
+  # - doubao-seedream-5-5-261028
   # - doubao-seedream-4-0-250828
   image_model: gemini-3.1-flash-image
   # 图像生成尺寸。建议与目标视频比例一致，例如 2560x1440 / 1920x1080 / 1080x1920。

@@ -99,10 +99,13 @@ def arguments(launch, *, prompt=None, max_turns=None):
             cwd = json.dumps(str(Path(launch["cwd"]).resolve()), ensure_ascii=False)
             return ["-c", f"developer_instructions={json.dumps(instructions, ensure_ascii=False)}",
                     "--approve-for-me", "-c", f'projects.{cwd}.trust_level="trusted"', *project_args]
-        # An unattended session works inside the edit or design workspace and the project folder,
-        # with edits and renders approved through the workspace-write sandbox.
-        headless_args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write",
-                         "--approve-for-me", *project_args]
+        # Use the explicit workspace-write profile. New Codex versions reject it with auto approval.
+        headless_args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write", *project_args]
+        if model := launch.get("agent_model"):
+            headless_args.extend(["--model", model])
+        if launch.get("deferred_render"):
+            prompt += (" Grist renders after this session. Save the specified source files and exit. "
+                       "Do not launch browsers or run preview, rendering, or capability commands.")
         return [*headless_args, f"{task}\n\n{prompt}"]
     if agent == "codebuddy":
         if production_agent:

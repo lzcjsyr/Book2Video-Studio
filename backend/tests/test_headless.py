@@ -54,6 +54,10 @@ class HeadlessTests(unittest.TestCase):
         ]) + "\n"
         self.script(f'print({finished!r})')
         self.assertEqual(self.run_session(), {"type": "turn.completed", "usage": {}})
+        self.launch["deferred_render"] = True
+        self.script(f'import os\nassert os.environ["GRIST_DEFER_RENDER"] == "1"\nprint({finished!r})')
+        self.assertEqual(self.run_session()["type"], "turn.completed")
+        self.assertNotIn("GRIST_DEFER_RENDER", os.environ)
         self.script('print("interrupted before any turn completed")\n')
         with self.assertRaisesRegex(ValueError, "Codex CLI did not finish"):
             self.run_session()

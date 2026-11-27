@@ -250,7 +250,7 @@ print(json.dumps(report))
         (revised/'run.py').write_text('# revised runner\n')
         self.assertEqual((first/'run.py').read_text(),'# agent-owned runner\n')
         prompt=Path(launch['context']).read_text()
-        self.assertNotIn('first_message', launch);self.assertIn('修改上一次的合成',prompt);self.assertIn('按用户在对话里提出的要求修改',prompt)
+        self.assertNotIn('first_message', launch);self.assertIn('修改上一次的合成',prompt);self.assertIn('只在用户明确要求时才开始工作',prompt)
         # Materials are refreshed for the revision; the copy does not change the earlier folder.
         (revised/'my_design.html').write_text('<p>changed</p>');self.assertEqual((first/'my_design.html').read_text(),'<p>mine</p>')
 

@@ -261,7 +261,7 @@ function stageEngine() {
 function stageBackend() {
   stageFolder("backend", (target) => {
     for (const file of fs.readdirSync(path.join(root, "backend"))) {
-      if (file.endsWith(".py")) fs.copyFileSync(path.join(root, "backend", file), path.join(target, file));
+      if (file.endsWith(".py") || file === "cli-guide.md") fs.copyFileSync(path.join(root, "backend", file), path.join(target, file));
     }
     copyTree(path.join(root, "backend", "voxcpm2"), path.join(target, "voxcpm2"), junk);
   });

@@ -180,6 +180,7 @@ export default function App() {
       const name = (key: string, fallback?: string) => status[key]?.title || fallback || t("New project");
       const edited = tabs.filter(tab => status[tab.key]?.unsaved || status[tab.key]?.manual);
       const running = closing.tab ? [] : tabs.filter(tab => status[tab.key]?.running);
+      const interactive = running.filter(tab => status[tab.key]?.interactiveAgent);
       return <div className="modal-backdrop" onKeyDown={event => { if (event.key === "Escape" && !saving) setClosing(null); }}>
         <section className="modal closing-question" role="alertdialog" aria-modal="true" aria-labelledby="closing-title" aria-describedby="closing-body">
           <div className="modal-heading"><h2 id="closing-title">{edited.length
@@ -194,7 +195,8 @@ export default function App() {
                     ...(status[tab.key]?.manual ? [t("{editor} (save it in its window)", { editor: t(status[tab.key]!.manual!) })] : [])].join(" · ")}</span></li>)}
               </ul>
             </>}
-            {running.length > 0 && <p className="closing-running">{t("Closing Grist stops the running work in: {names}.", { names: running.map(tab => name(tab.key, tab.title)).join(", ") })}</p>}
+            {running.length > 0 && <p className="closing-running">{t("Background jobs continue after Grist closes.")}</p>}
+            {interactive.length > 0 && <p className="closing-running">{t("Closing Grist ends the interactive Agent sessions in: {names}.", { names: interactive.map(tab => name(tab.key, tab.title)).join(", ") })}</p>}
           </div>
           <div className="modal-actions">
             {edited.length > 0 && <button className="button closing-discard" disabled={saving} onClick={discardAndClose}>{t("Don't save")}</button>}

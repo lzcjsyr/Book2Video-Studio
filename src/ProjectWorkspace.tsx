@@ -276,7 +276,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
   const manualItem = modalDirty ? (modal === "settings" ? "Settings" : "Skills & templates") : "";
   useEffect(() => {
     onStatus(tab.key, { projectId: detail?.id, title: projectTitle, dirty: hasDraft,
-      running: Boolean(runningJobs.length || activeAgent || autoRunning), closeReason, unsaved: unsavedItems, manual: manualItem });
+      running: Boolean(runningJobs.length || activeAgent || autoRunning), interactiveAgent: Boolean(activeAgent), closeReason, unsaved: unsavedItems, manual: manualItem });
   }, [tab.key, detail?.id, projectTitle, hasDraft, runningJobs.length, activeAgent, autoRunning, closeReason, unsavedItems, manualItem, onStatus]);
   useEffect(() => {
     if (!active) {
@@ -384,7 +384,12 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
     if (!bootstrap) return;
     const timer = setInterval(async () => {
       try {
-        const [list, runs] = await Promise.all([api<Job[]>("/jobs"), api<AutoRun[]>("/autoruns")]);
+        const [list, runs, projects] = await Promise.all([
+          api<Job[]>("/jobs"),
+          api<AutoRun[]>("/autoruns"),
+          active ? api<Project[]>("/projects") : Promise.resolve(null),
+        ]);
+        if (projects) setProjects(projects);
         setJobs(list);
         setAutoruns(runs);
         const runJobs = new Set(runs.flatMap((r) => r.steps.flatMap((s) => s.jobs)));
@@ -407,7 +412,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
           await load(r.project);
           const at = r.steps.find((s) => ["failed", "stopped"].includes(s.status));
           const name = stages.find((s) => s.id === at?.step)?.name || "";
-          notice(r.status === "succeeded" ? "Auto production finished. The video and covers are ready to review."
+          notice(r.status === "succeeded" ? "Production finished. Check the outputs of the completed steps."
             : r.status === "stopped" ? "Auto production stopped. Finished steps keep their outputs."
             : at?.message ? `Auto production stopped at ${name}: ${at.message}` : `Auto production stopped at ${name}.`);
         }
@@ -424,7 +429,7 @@ export default function ProjectWorkspace({ tab, active, onStatus, onSaver, onOpe
       }
     }, 4000);
     return () => clearInterval(timer);
-  }, [bootstrap]);
+  }, [bootstrap, active]);
   /** Run a change with the busy state; failures become a notice. True when it completed. */
   async function action(fn: () => Promise<void>) {
     setBusy(true);

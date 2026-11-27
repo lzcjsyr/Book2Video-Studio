@@ -1,4 +1,4 @@
-"""Automatic production: after Writing, Segments through Covers run one after another in the background.
+"""Automatic production: run the selected steps in order in the background.
 
 Each step runs the same jobs its page would, with the project's saved settings. What a step needs is
 decided when it starts, from the state the steps before it left: with the "missing" scope only missing
@@ -12,10 +12,13 @@ import threading
 import time
 import uuid
 
+import production_cli as cli
+
 STEPS = ["2", "3", "4", "5", "6"]
 ACTIVE = {"running", "stopping"}
 # Why a step that ran still is not ready for the steps after it.
 INCOMPLETE = {
+    "1": "Agent writing finished without a valid manuscript.",
     "2": "Segmentation finished without segments.",
     "3": "Some recordings are still missing. Open Voice to see which.",
     "4": "Some visuals are still missing. Open Visuals to see which.",
@@ -23,7 +26,7 @@ INCOMPLETE = {
     "6": "No cover was made.",
 }
 # A step is planned with the steps before it that change its inputs.
-INPUTS = {"3": {"2"}, "4": {"2"}, "5": {"2", "3", "4"}}
+INPUTS = {"2": {"1"}, "3": {"2"}, "4": {"2"}, "5": {"2", "3", "4"}, "6": {"1"}}
 
 
 def active(studio, project_id) -> bool:
@@ -41,18 +44,30 @@ def options_from(body):
     refresh, covers = body.get("refresh_summary", False), body.get("covers", True)
     if type(refresh) is not bool or type(covers) is not bool:
         raise ValueError("Invalid automatic production options.")
-    return {"scope": scope, "refresh_summary": refresh, "covers": covers}
+    chosen = body.get("steps", STEPS)
+    if not isinstance(chosen, list) or not chosen or any(not isinstance(s, str) or s not in cli.STEPS for s in chosen):
+        raise ValueError("Choose at least one production step.")
+    instructions = body.get("instructions", "")
+    revise = body.get("revise", False)
+    if not isinstance(instructions, str) or type(revise) is not bool:
+        raise ValueError("Invalid automatic writing or revision options.")
+    return {"scope": scope, "refresh_summary": refresh, "covers": covers,
+            "steps": sorted(set(chosen)), "instructions": instructions, "revise": revise}
 
 
-def blocked(studio, detail):
+def blocked(studio, detail, options):
     """Why automatic production cannot start from this manuscript, or None."""
     from server import first_text
+    if "1" in options["steps"] and next_job(studio, detail["id"], "1", options, set(), detail):
+        if studio.writing_options(detail["state"])["mode"] == "direct" and not options["instructions"].strip():
+            return "Supply a topic and writing instructions for direct Agent writing."
+        return None
     if not detail["ready"]["1"]:
         return "Write and save the manuscript before automatic production."
     if detail["state"]["stale"].get("1"):
         return detail["state"]["stale"]["1"]["reason"]
     opening = studio.opening_on(detail["state"])
-    if opening and not first_text(detail["raw"].get("golden_quotes")):
+    if opening and set(options["steps"]).intersection({"3", "4", "5"}) and not first_text(detail["raw"].get("golden_quotes")):
         return "Choose an opening quote in Writing, or turn the opening off."
     return None
 
@@ -66,6 +81,10 @@ def next_job(studio, project_id, step, options, done, d=None):
     stale = state["stale"].get(step)
     settings = studio.effective(state)
     opening = studio.opening_on(state)
+    if step == "1":
+        if "manuscript" not in done and (everything or not d["ready"]["1"] or stale):
+            return "manuscript", {"step": "1", "mode": "agent", "instructions": options["instructions"]}
+        return None
     if step == "2":
         if "segments" not in done and (everything or not d["ready"]["2"] or stale):
             return "segments", {"step": "2"}
@@ -94,8 +113,9 @@ def next_job(studio, project_id, step, options, done, d=None):
             if settings.get("step5", {}).get("assembly_method") == "agent":
                 body["mode"] = "agent"
                 edit = d.get("assembly_edit")
-                if not everything and edit and edit["current"] and not edit["delivered"] \
-                        and edit.get("skill") == settings.get("step5", {}).get("agent_skill", "content-led"):
+                resumable = (not everything and edit and edit["current"] and not edit["delivered"]
+                             and edit.get("skill") == settings.get("step5", {}).get("agent_skill", "content-led"))
+                if options.get("revise") or resumable:
                     body["revise"] = True
             return "assembly", body
         # Agent delivers only the 16:9 video; Studio draws the 3:4 copy around it.
@@ -110,7 +130,7 @@ def next_job(studio, project_id, step, options, done, d=None):
         # never rendered) is rendered, not designed again. Everything again designs anew.
         saved = bool(design and design["complete"] and design["current"] and not everything)
         if "design" not in done and not saved and needed:
-            return "design", {"step": "6", "mode": "agent"}
+            return "design", {"step": "6", "mode": "agent", "revise": options.get("revise", False)}
         if "covers" not in done and ("design" in done or (saved and needed)):
             return "covers", {"step": "6", "mode": "cover_render"}
         return None
@@ -123,61 +143,81 @@ def plan(studio, project_id, body):
     """What a run with these options would do now, step by step, for the setup page."""
     options = options_from(body)
     with studio.lock:
-        d = studio.detail(project_id)
-        steps, running = [], set()
-        for step in STEPS:
-            if step == "6" and not options["covers"]:
-                steps.append({"step": step, "run": False, "off": True})
-                continue
-            after = sorted(INPUTS.get(step, set()) & running)
-            if after:
-                # Its work depends on what the steps before it make.
-                steps.append({"step": step, "run": True, "after": after})
-                running.add(step)
-                continue
-            jobs, done = [], set()
-            while (found := next_job(studio, project_id, step, options, done, d)) and len(jobs) < 3:
-                done.add(found[0])
-                jobs.append(found)
-            entry = {"step": step, "run": bool(jobs), "jobs": [kind for kind, _ in jobs]}
-            work = dict(jobs)
-            if step in {"3", "4"}:
-                kinds = {s["index"]: s.get("visualizer", "image") for s in d["segments"]}
-                job = work.get("voice") or work.get("visuals")
-                # A new content summary outdates every visual, so all of them follow it.
-                if "summary" in work:
-                    indices, opening = list(kinds), studio.opening_on(d["state"])
-                else:
-                    indices, opening = (job["indices"], job["opening"]) if job else ([], False)
-                entry.update(segments=len(indices), opening=bool(opening))
-                if step == "4":
-                    entry.update(images=sum(kinds[i] != "hf" for i in indices), motion=sum(kinds[i] == "hf" for i in indices),
-                                 summary="rewrite" if "summary" in work else "write" if job and not str(d["summary"].get("summary", "")).strip() else None)
-            steps.append(entry)
-            if jobs:
-                running.add(step)
-        problem = blocked(studio, d)
-        if not problem and "3" in running:
-            problem = studio.voice_problem(d)
-        return {"steps": steps, "blocked": problem, "segments": len(d["segments"])}
+        state = studio.state(studio.project(project_id))
+        patch = cli.validate_settings(studio, body.get("settings", {}), studio.effective(state))
+        with cli.using(patch):
+            return plan_with_settings(studio, project_id, options)
+
+
+def plan_with_settings(studio, project_id, options):
+    d = studio.detail(project_id)
+    steps, running = [], set()
+    for step in options["steps"]:
+        if step == "6" and not options["covers"]:
+            steps.append({"step": step, "run": False, "off": True})
+            continue
+        after = sorted(INPUTS.get(step, set()) & running)
+        if after:
+            # Its work depends on what the steps before it make.
+            steps.append({"step": step, "run": True, "after": after})
+            running.add(step)
+            continue
+        jobs, done = [], set()
+        while (found := next_job(studio, project_id, step, options, done, d)) and len(jobs) < 3:
+            done.add(found[0])
+            jobs.append(found)
+        entry = {"step": step, "run": bool(jobs), "jobs": [kind for kind, _ in jobs]}
+        work = dict(jobs)
+        if step in {"3", "4"}:
+            kinds = {s["index"]: s.get("visualizer", "image") for s in d["segments"]}
+            job = work.get("voice") or work.get("visuals")
+            # A new content summary outdates every visual, so all of them follow it.
+            if "summary" in work:
+                indices, opening = list(kinds), studio.opening_on(d["state"])
+            else:
+                indices, opening = (job["indices"], job["opening"]) if job else ([], False)
+            entry.update(segments=len(indices), opening=bool(opening))
+            if step == "4":
+                entry.update(images=sum(kinds[i] != "hf" for i in indices), motion=sum(kinds[i] == "hf" for i in indices),
+                             summary="rewrite" if "summary" in work else "write" if job and not str(d["summary"].get("summary", "")).strip() else None)
+        steps.append(entry)
+        if jobs:
+            running.add(step)
+    problem = blocked(studio, d, options)
+    if not problem:
+        scheduled = {entry["step"] for entry in steps if not entry.get("off")}
+        inputs = {part for step in scheduled for part in INPUTS.get(step, set()) if part not in scheduled}
+        missing = sorted(part for part in inputs if not d["ready"][part])
+        if missing:
+            problem = "Required outputs are missing. Run these steps first: " + ", ".join(cli.STEPS[part]["name"] for part in missing) + "."
+    if not problem and "3" in running:
+        problem = studio.voice_problem(d)
+    return {"steps": steps, "blocked": problem, "segments": len(d["segments"])}
 
 
 def start(studio, project_id, body):
     from server import Conflict
     options = options_from(body)
     with studio.lock:
-        studio.project(project_id)
-        if studio.busy(project_id):
+        project = studio.project(project_id)
+        if studio.stopping or studio.busy(project_id):
             raise Conflict("Finish the running job or Agent session first.")
-        problem = plan(studio, project_id, options)["blocked"]
+        state = studio.state(project)
+        patch = cli.validate_settings(studio, body.get("settings", {}), studio.effective(state))
+        with cli.using(patch):
+            problem = plan_with_settings(studio, project_id, options)["blocked"]
         if problem:
             raise ValueError(problem)
         # Only the latest run of a project is listed.
         for old in [r["id"] for r in studio.autoruns.values() if r["project"] == project_id]:
             del studio.autoruns[old]
         run = {"id": uuid.uuid4().hex, "project": project_id, "status": "running", "options": options,
-               "steps": [{"step": s, "status": "pending", "jobs": [], "message": "", "note": ""} for s in STEPS if s != "6" or options["covers"]],
+               "steps": [{"step": s, "status": "pending", "jobs": [], "message": "", "note": ""} for s in options["steps"] if s != "6" or options["covers"]],
                "current": None, "job": None, "started": time.time(), "ended": None, "message": ""}
+        run["_overrides"] = patch
+        if patch or "steps" in body:
+            with cli.using(patch):
+                run["configuration"] = cli.public_config(studio, state)
         studio.autoruns[run["id"]] = run
     threading.Thread(target=drive, args=(studio, run), daemon=True).start()
     return public(run)
@@ -207,6 +247,13 @@ def wait(studio, job_id):
 
 
 def drive(studio, run):
+    with cli.using(run.get("_overrides", {})):
+        drive_with_settings(studio, run)
+    # Queued images use their own settings once the run releases the project.
+    studio.start_queued(run["project"])
+
+
+def drive_with_settings(studio, run):
     project, entry = run["project"], None
     try:
         for entry in run["steps"]:
@@ -247,6 +294,3 @@ def drive(studio, run):
     except Exception as exc:
         with studio.lock:
             finish(run, "failed", entry, str(exc))
-    finally:
-        # Images queued while the run held the project start now.
-        studio.start_queued(project)

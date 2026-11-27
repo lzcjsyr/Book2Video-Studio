@@ -7,7 +7,7 @@ from headless import first_message, run_agent
 from local_agents import NAMES, discover, selected
 
 
-MOTION_CONCURRENCY = 3
+MAX_MOTION_CONCURRENCY = 4
 
 
 def generate_motion(launch, program, env, max_turns):
@@ -74,7 +74,8 @@ def run(request, params, steps, call):
             failed.extend(images)
             errors.append(str(exc))
 
-    with ThreadPoolExecutor(max_workers=MOTION_CONCURRENCY) as pool:
+    workers = min(MAX_MOTION_CONCURRENCY, max(1, int(request.get("settings", {}).get("step4", {}).get("motion_concurrency", 3))))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(generate_motion, launch, program, env, max(1, int(params.get("motion_max_turns", 60)))): index
                    for index, launch in launches}
         for future in as_completed(futures):

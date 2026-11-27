@@ -15,6 +15,7 @@ export interface WorkspaceStatus {
   title: string;
   dirty: boolean;
   running: boolean;
+  interactiveAgent?: boolean;
   closeReason: string;
   /** Edits a closing question's Save stores, one per line ("" when none). */
   unsaved?: string;

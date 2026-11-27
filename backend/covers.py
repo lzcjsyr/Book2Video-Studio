@@ -95,91 +95,14 @@ def detail(project, design, settings=None, copy=None):
     return {**design, "files": files, "previews": previews, "complete": len(files) == len(design["entries"]), "current": current, "revisions": revisions}
 
 
-RENDER_JS = r"""
-const { createRequire } = require('node:module');
-const fs = require('node:fs');
-const path = require('node:path');
-const http = require('node:http');
-const spec = JSON.parse(process.argv[1]);
-const puppeteer = createRequire(path.join(spec.modules,'package.json'))('puppeteer-core');
-(async () => {
-  // Serve ES modules on loopback: file:// module imports differ across Chrome platforms.
-  const root = fs.realpathSync(spec.work);
-  const server = http.createServer((req, res) => {
-    try {
-      const file = path.resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://localhost').pathname));
-      if (!file.startsWith(root + path.sep) || !fs.realpathSync(file).startsWith(root + path.sep)) {
-        res.writeHead(403).end(); return;
-      }
-      const types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2'};
-      res.setHeader('Content-Type', types[path.extname(file)] || 'application/octet-stream');
-      fs.createReadStream(file).pipe(res);
-    } catch { res.writeHead(404).end(); }
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  let browser;
-  try {
-    const hardwareArgs = ['--hide-scrollbars', '--enable-gpu-rasterization'];
-    if (process.platform === 'darwin') hardwareArgs.push('--use-gl=angle', '--use-angle=metal');
-    if (process.platform === 'win32') hardwareArgs.push('--use-gl=angle', '--use-angle=d3d11');
-    try {
-      browser = await puppeteer.launch({executablePath: spec.chrome, headless: true, args: hardwareArgs});
-      const probe = await browser.newPage();
-      try {
-        const renderer = await probe.evaluate(() => {
-          const canvas = document.createElement('canvas');
-          const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-          if (!gl) return null;
-          const debug = gl.getExtension('WEBGL_debug_renderer_info');
-          return String(gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
-        });
-        if (!renderer || /swiftshader|llvmpipe|software/i.test(renderer)) {
-          throw new Error('硬件 WebGL 不可用：' + (renderer || '无法创建 WebGL 上下文'));
-        }
-        console.log('封面使用 GPU：' + renderer);
-      } finally { await probe.close(); }
-    } catch (error) {
-      if (browser) await browser.close();
-      browser = undefined;
-      console.warn('封面 GPU 初始化失败，回退软件 WebGL：' + error.message);
-      browser = await puppeteer.launch({executablePath: spec.chrome, headless: true,
-        args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--hide-scrollbars']});
-    }
-    for (const entry of spec.entries) {
-      const page = await browser.newPage();
-      try {
-        const errors = [];
-        page.on('pageerror', error => errors.push(error.message));
-        page.on('requestfailed', request => errors.push('Asset failed: ' + request.url()));
-        page.on('response', response => { if (response.status() >= 400) errors.push('Asset HTTP ' + response.status() + ': ' + response.url()); });
-        await page.setViewport({width: entry.width, height: entry.height, deviceScaleFactor: 1});
-        await page.goto(`http://127.0.0.1:${server.address().port}/${encodeURIComponent(entry.html)}`, {waitUntil: 'networkidle0', timeout: 60000});
-        await page.waitForFunction(() => window.__ready === true, {timeout: 60000});
-        await page.evaluate(async () => {
-          await document.fonts.ready;
-          await Promise.all(Array.from(document.images, img => img.decode()));
-          document.getAnimations().forEach(animation => animation.pause());
-        });
-        if (errors.length) throw new Error(errors.join('\n'));
-        await page.screenshot({path: entry.output, type: 'png', clip: {x: 0, y: 0, width: entry.width, height: entry.height}});
-        console.log('Rendered ' + entry.html);
-      } finally { await page.close(); }
-    }
-  } finally {
-    if (browser) await browser.close();
-    await new Promise(resolve => server.close(resolve));
-  }
-})().catch(error => { console.error(error); process.exitCode = 1; });
-"""
-
-
 def render(project, design, preview=False):
     work = contained(project, design["folder"])
-    from core.infra.motion.runtime import modules_dir, browser_path
-    modules = str(modules_dir())
-    chrome = browser_path()
+    from core.infra.motion import runtime
+    script = Path(runtime.__file__).with_name("cover_capture.cjs")
+    modules = str(runtime.modules_dir())
+    chrome = runtime.browser_path()
     node = shutil.which("node")
-    if not chrome or not node:
+    if not chrome or not node or not script.is_file():
         raise ValueError("The bundled cover renderer is unavailable. Reinstall Grist.")
     info = detail(project, design)
     if not info["complete"]:
@@ -196,8 +119,9 @@ def render(project, design, preview=False):
         output.parent.mkdir(parents=True, exist_ok=True)
         entries.append({**entry, "output": str(output)})
     try:
-        result = subprocess.run([node, "-e", RENDER_JS, json.dumps({"work": str(work), "modules": modules, "chrome": chrome, "entries": entries})],
-                                capture_output=True, text=True, encoding="utf-8", timeout=150 * len(entries) + 30)
+        result = subprocess.run([node, str(script)], input=json.dumps(
+            {"work": str(work), "modules": modules, "chrome": chrome, "entries": entries}),
+            capture_output=True, text=True, encoding="utf-8", timeout=150 * len(entries) + 30)
         if result.returncode:
             raise ValueError("Cover rendering failed: " + (result.stderr or result.stdout)[-3000:])
         outputs = []

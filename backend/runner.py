@@ -83,6 +83,9 @@ def run(request):
     if request["step"] == "6" and request.get("mode") == "cover_render":
         from covers import render
         return render(project, request["cover_design"])
+    if request.get("mode") == "agent":
+        from headless import run_session
+        return run_session(request)
     # The engine may be read-only; anything written relative to the working folder stays in the project.
     os.chdir(project)
     import yaml
@@ -112,10 +115,6 @@ def run(request):
     if step == "4" and request.get("mode") == "segments":
         from visual_generation import run as generate_visuals
         return generate_visuals(request, params, steps, call)
-    if request.get("mode") == "agent":
-        # Assembly or Covers by Agent without a terminal, prepared by the service (automatic production).
-        from headless import run_session
-        return run_session(request)
     if step == "4" and request.get("mode") == "render":
         from core.infra.motion.renderer import render_clip
         script = json.loads((project / "text/script.json").read_text())

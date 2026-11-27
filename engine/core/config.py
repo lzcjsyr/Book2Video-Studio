@@ -425,13 +425,7 @@ class Config:
             "siliconflow": [LLM_MODEL_STEP2],
         },
         "image": {
-            "doubao": [
-                "doubao-seedream-5-0-pro-260628",
-                "doubao-seedream-5-0-260128",
-                "doubao-seedream-5-0-flash-260915",
-                "doubao-seedream-4-0-250828",
-                "doubao-seedream-3-0-t2i-250415",
-            ],
+            "doubao": ["doubao-seedream-5-5-261028"],
             "google": [
                 "gemini-3.1-flash-image",
                 "gemini-3-pro-image",
@@ -471,6 +465,8 @@ class Config:
         except ValueError:
             return False
         if "doubao" in model.lower():
+            if "seedream-5-5" in model.lower():
+                return height > 0 and width * height >= 1280 * 720 and 1 / 16 <= width / height <= 16
             if "seedream-5" in model.lower():
                 return width * height >= cls.SEEDREAM_V5_MIN_PIXELS and width <= 4096 and height <= 4096
             if "seedream-4" in model.lower():

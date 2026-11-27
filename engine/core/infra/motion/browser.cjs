@@ -1,5 +1,6 @@
 // Hardware discovery is shared by exports and the capability command.
 async function launchBrowser(puppeteer, executablePath, requested='auto') {
+  if (process.env.GRIST_DEFER_RENDER === '1') throw Error('Grist renders after this Agent session. Save the source files and exit.');
   if (!['auto','hardware','software'].includes(requested || 'auto')) throw Error('Invalid browser mode');
   let browser, fallbackReason=null;
   const hardware=['--enable-gpu','--enable-webgl','--hide-scrollbars'];

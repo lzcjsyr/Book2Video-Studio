@@ -1,34 +1,14 @@
 // Browser capture only: clip time belongs to the composition, never the wall clock.
 const fs = require('node:fs');
 const path = require('node:path');
-const http = require('node:http');
 const { createRequire } = require('node:module');
 const spec = JSON.parse(fs.readFileSync(0, 'utf8'));
 const puppeteer = createRequire(path.join(spec.modules, 'package.json'))('puppeteer-core');
 
 (async () => {
   const root = fs.realpathSync(spec.work);
-  const types = {'.html':'text/html; charset=utf-8','.js':'text/javascript','.json':'application/json',
-    '.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.woff2':'font/woff2', '.mp4':'video/mp4', '.webm':'video/webm'};
-  const server = http.createServer((req, res) => {
-    if (req.url === '/favicon.ico') { res.writeHead(204).end(); return; }
-    try {
-      const file = fs.realpathSync(path.resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://localhost').pathname)));
-      if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
-      res.setHeader('Content-Type', types[path.extname(file)] || 'application/octet-stream');
-      const size=fs.statSync(file).size;
-      res.setHeader('Accept-Ranges','bytes');
-      const range=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
-      if (range) {
-        const start=Number(range[1]), end=Math.min(size-1,range[2] ? Number(range[2]) : size-1);
-        if (start>end) {res.writeHead(416).end();return;}
-        res.writeHead(206,{'Content-Range':`bytes ${start}-${end}/${size}`,'Content-Length':end-start+1});
-        fs.createReadStream(file,{start,end}).pipe(res);
-      } else {
-        res.setHeader('Content-Length',size);fs.createReadStream(file).pipe(res);
-      }
-    } catch { res.writeHead(404).end(); }
-  });
+  const {openAssets} = require('./browser_assets.cjs');
+  let assets;
   let browser;
   const errors = [];
   const report = {success:false, width:spec.width, height:spec.height, fps:spec.fps, frames:0, errors};
@@ -39,21 +19,15 @@ const puppeteer = createRequire(path.join(spec.modules, 'package.json'))('puppet
   };
   try {
     status('starting');
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const origin = `http://127.0.0.1:${server.address().port}`;
     const {launchBrowser}=require('./browser.cjs');
     const launched=await launchBrowser(puppeteer,spec.browser,spec.browserMode);
     browser=launched.browser;report.browserMode=launched.mode;report.gpu=launched.gpu;report.fallbackReason=launched.fallbackReason;
+    assets = await openAssets(root);
     const page = await browser.newPage();
     await page.setViewport({width:spec.width,height:spec.height,deviceScaleFactor:1});
     page.on('pageerror', err => errors.push(String(err)));
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-    await page.setRequestInterception(true);
-    page.on('request', request => {
-      const url = request.url();
-      if (url.startsWith(origin + '/') || url.startsWith('data:') || url.startsWith('blob:')) request.continue();
-      else { errors.push(`External resource blocked: ${url}`); request.abort(); }
-    });
+    await assets.attach(page, errors);
     page.on('response', response => { if (response.status() >= 400) errors.push(`HTTP ${response.status()}: ${response.url()}`); });
     await page.evaluateOnNewDocument(payload => {
       window.clipPayload = payload;
@@ -79,7 +53,7 @@ const puppeteer = createRequire(path.join(spec.modules, 'package.json'))('puppet
         }
       };
     }, spec.payload);
-    await page.goto(origin + '/' + spec.entry.split('/').map(encodeURIComponent).join('/'), {waitUntil:'networkidle0',timeout:30000});
+    await page.goto(assets.origin + '/' + spec.entry.split('/').map(encodeURIComponent).join('/'), {waitUntil:'networkidle0',timeout:30000});
     await page.waitForFunction(() => window.clip && typeof window.clip.renderAt === 'function', {timeout:10000});
     await page.evaluate(async () => {
       if (!window.clip.ready || typeof window.clip.ready.then !== 'function') throw Error('clip.ready must be a Promise');
@@ -170,7 +144,7 @@ const puppeteer = createRequire(path.join(spec.modules, 'package.json'))('puppet
     process.exitCode=1;
   } finally {
     if (browser) await browser.close();
-    server.close();
+    if (assets) await assets.close();
     fs.writeFileSync(spec.report, JSON.stringify(report,null,2));
     if (errors.length) console.error(errors.join('\n'));
   }

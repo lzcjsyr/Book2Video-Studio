@@ -35,16 +35,24 @@ def prepare(studio, project, body, *, state=None):
         writing_skill = options["agent_skill"]
         skill = Path(library.item("writing_skills", writing_skill)["path"]) if writing_skill else None
         name = "step1_agent.md"
+        original = project / "text/raw.json"
+        cwd = context_dir / "writing" if body.get("headless") else project
+        text_dir = cwd / "text"
+        manuscript = text_dir / "raw.json"
+        text_dir.mkdir(parents=True, exist_ok=True)
         prompt = library.prompt(name, "main",
             source=part(name, "direct") if direct else part(name, "source", input_file=source),
             skill=part(name, "skill", skill_path=skill) if skill else part(name, "no_skill"),
             extra_requirements=body.get("instructions", "").strip() or "无",
-            output_json=project / "text/raw.json", project_dir=project, text_dir=project / "text",
+            output_json=manuscript, project_dir=cwd, text_dir=text_dir,
             opening_quote_state="已启用" if settings.get("global", {}).get("opening_quote", True) else "已禁用")
-        cwd = project
+        if body.get("headless"):
+            prompt += (f"\n\n这是后台写作任务。立即按本次用户要求完成并退出，无需等待下一条消息。"
+                       f"如需修订，先读取现有文稿 `{original}`。将成稿写入 `{manuscript}`。"
+                       "原项目中的稿件和素材只读。")
         scope = "Writing · manuscript"
-        task = dict(inputs=[project/'text/raw.json', *([source] if not direct else []), *([skill] if skill else [])], optional_inputs=[project/'text/raw.json'],
-            writable=[project/'text'], protected=[project/'text/script.json', project/'text/mini_summary.json', project/'images', project/'voice', studio.engine, studio.library_root, *([source] if not direct else [])],
+        task = dict(inputs=[original, *([source] if not direct else []), *([skill] if skill else [])], optional_inputs=[original],
+            writable=[text_dir], protected=[*([original] if body.get("headless") else []), project/'text/script.json', project/'text/mini_summary.json', project/'images', project/'voice', studio.engine, studio.library_root, *([source] if not direct else [])],
             facts={'mode': options['mode'], 'skill': writing_skill or None})
     elif step == "5":
         import editing
@@ -153,6 +161,17 @@ def prepare(studio, project, body, *, state=None):
         else:
             task_name = "剪辑" if step == "5" else "封面设计"
             prompt = f"这是交互式{task_name}会话。只在用户明确要求时才开始工作、修改文件或渲染。\n\n" + prompt
+    deferred_render = bool(body.get("headless") and agent == "codex" and step in {"4", "5", "6"})
+    if deferred_render:
+        delivery = {
+            "4": "交付 index.html、本地资源和完整 window.clip 约定。",
+            "5": "交付 render.json、场景素材、对齐的混音和字幕。字幕 SRT 可放到 build/captions.srt。",
+            "6": "交付所有指定尺寸的 HTML 和本地资源，页面应设置 window.__ready。",
+        }[step]
+        prompt = ("# Grist 后台渲染交接（优先于下方技能中的渲染步骤）\n"
+                  + delivery + "保存后直接结束。由 Grist 在当前会话结束后执行渲染和验证。"
+                  "可以静态检查文件、时间轴或语法。不要启动任何浏览器、运行渲染或能力探测命令，"
+                  "也不要安装、探测或切换浏览器来预览。\n\n" + prompt)
     if agent == "claude" and not body.get("headless") and cwd != project:
         prompt += f"\n\n终端从项目根目录启动。本次任务的工作目录是 {cwd}。请在该目录执行命令，按该目录解析任务中的相对路径。"
     prompt = part("agent_rules.md", "rules", task_file=task_path) + "\n\n" + prompt
@@ -161,6 +180,12 @@ def prepare(studio, project, body, *, state=None):
     launch = {"id": session, "project": studio.project_id(project), "step": step,
               "agent": agent, "cwd": str(cwd), "context": str(prompt_path),
               "task": str(task_path), "context_chars": len(prompt), "scope": scope}
+    if agent == "codex" and (model := settings.get(f"step{step}", {}).get("agent_model")):
+        launch["agent_model"] = model
+    if deferred_render:
+        launch["deferred_render"] = True
+    if step == "1" and body.get("headless"):
+        launch["manuscript"] = str(manuscript)
     if step == "5":
         launch["assembly_edit"] = assembly_edit
     if step == "5" or (not body.get("headless") and cwd != project):

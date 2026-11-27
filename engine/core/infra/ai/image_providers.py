@@ -55,12 +55,22 @@ class GoogleImageProvider(ImageProvider):
         self.use_adc = use_adc
 
     def generate(self, *, prompt: str, size: str, model: str) -> Dict[str, Any]:
-        return text_to_image_google(
+        result = text_to_image_google(
             prompt=prompt,
             size=size,
             model=model,
             use_adc=self.use_adc,
         )
+        # Google returns the nearest supported raster. Deliver the project's exact dimensions.
+        from PIL import Image, ImageOps
+        width, height = map(int, size.lower().replace("×", "x").split("x"))
+        with Image.open(io.BytesIO(result["data"])) as source:
+            if source.size == (width, height):
+                return result
+            image = ImageOps.fit(source.convert("RGB"), (width, height), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            image.save(output, format="PNG")
+        return {"type": "bytes", "data": output.getvalue()}
 
 
 IMAGE_PROVIDERS: Dict[str, ImageProvider] = {

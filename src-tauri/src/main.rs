@@ -1,30 +1,31 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod cli;
 mod credentials;
 mod terminal;
 
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
-    fs::File,
-    io::{BufRead, BufReader, Read, Write},
+    io::Write,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::Mutex,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tauri::Manager;
 
 #[derive(Default)]
 struct Runtime {
     startup: Mutex<()>,
-    backend: Mutex<Option<Child>>,
     info: Mutex<Option<Bootstrap>>,
     installation: Mutex<Option<Installation>>,
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Bootstrap {
     port: u16,
     token: String,
+    #[serde(default)]
+    host_pid: u32,
 }
 
 /// Bundled programs, relative to the runtime folder; written by scripts/stage.mjs.
@@ -64,14 +65,22 @@ impl Installation {
             return Err("This installation is incomplete. Reinstall Grist.".into());
         };
         let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        adopt_legacy_data(&data);
         let workspace = app
             .path()
             .video_dir()
             .or_else(|_| app.path().home_dir())
             .map_err(|e| e.to_string())?
             .join("Grist");
-        Self::new(&resources, data, workspace)
+        Self::for_user(&resources, data, workspace)
+    }
+
+    fn for_user(resources: &Path, data: PathBuf, workspace: PathBuf) -> Result<Self, String> {
+        let data = cli::user_path("GRIST_DATA_DIR", data)?;
+        let workspace = cli::user_path("GRIST_WORKSPACE", workspace)?;
+        if std::env::var_os("GRIST_DATA_DIR").is_none() {
+            adopt_legacy_data(&data);
+        }
+        Self::new(resources, data, workspace)
     }
 
     /// The installation staged in `resources` (backend, engine, runtime), keeping user data in `data`.
@@ -210,97 +219,55 @@ pub(crate) fn project_root(info: &Bootstrap, project: &str) -> Result<PathBuf, S
         .map_err(|e| e.to_string())
 }
 
-fn stop_service(mut child: Child) {
-    if let Some(mut input) = child.stdin.take() {
-        let _ = input.write_all(b"shutdown\n");
-    }
-    let deadline = Instant::now() + Duration::from_secs(7);
-    while Instant::now() < deadline {
-        if child.try_wait().ok().flatten().is_some() {
-            return;
+impl Installation {
+    fn ensure_service(&self, keys: &std::collections::BTreeMap<String, String>) -> Result<Bootstrap, String> {
+        let mut command = self.command(&self.python);
+        for name in credentials::PROVIDERS {
+            command.env_remove(name);
         }
-        std::thread::sleep(Duration::from_millis(50));
+        let mut child = command
+            .arg(self.backend_script("service.py"))
+            .arg("--engine").arg(&self.engine)
+            .arg("--data").arg(&self.data)
+            .arg("--workspace").arg(&self.workspace)
+            .env_remove("STUDIO_TOKEN")
+            .env_remove("STUDIO_NATIVE_HOST")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Cannot start the project service: {e}"))?;
+        if let Some(mut input) = child.stdin.take() {
+            let _ = input.write_all(&serde_json::to_vec(keys).map_err(|e| e.to_string())?);
+        }
+        let output = child.wait_with_output().map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        serde_json::from_slice(&output.stdout).map_err(|e| format!("Invalid project service response: {e}"))
     }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-/// Copy a service stream into its log so a full pipe can never stall the service.
-fn drain(stream: impl Read + Send + 'static, mut log: File) {
-    std::thread::spawn(move || {
-        let _ = std::io::copy(&mut BufReader::new(stream), &mut log);
-    });
 }
 
 fn start_service(app: &tauri::AppHandle) -> Result<Bootstrap, String> {
-    // A credential store that cannot be read (locked, or access denied) must not keep the app
-    // from starting: Settings → API keys reports it, and the keys follow once they can be read.
-    let keys = credentials::load().unwrap_or_else(|_| {
-        credentials::defer_apply();
-        Default::default()
-    });
-    let runtime = app.state::<Runtime>();
-    *runtime.info.lock().unwrap() = None;
-    if let Some(process) = runtime.backend.lock().unwrap().take() {
-        stop_service(process);
-    }
+    // A locked store should not prevent the app from starting.
+    let keys = credentials::load();
     let installation = Installation::locate(app)?;
-    let logs = installation.data.join("logs");
-    std::fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
-    let log = File::create(logs.join("service.log")).map_err(|e| e.to_string())?;
-    let token = uuid::Uuid::new_v4().to_string() + &uuid::Uuid::new_v4().to_string();
-    let mut command = installation.command(&installation.python);
-    command
-        .arg("-u")
-        .arg(installation.backend_script("server.py"))
-        .arg("--engine")
-        .arg(&installation.engine)
-        .arg("--data")
-        .arg(&installation.data)
-        .arg("--workspace")
-        .arg(&installation.workspace)
-        .current_dir(&installation.data)
-        .env("STUDIO_TOKEN", &token)
-        .env("STUDIO_NATIVE_HOST", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("Cannot start the project service: {e}"))?;
-    let mut stdout = BufReader::new(child.stdout.take().ok_or("No service output")?);
-    let mut line = String::new();
-    stdout.read_line(&mut line).map_err(|e| e.to_string())?;
-    let handshake: serde_json::Value = match serde_json::from_str(&line) {
-        Ok(value) => value,
+    let mut info = match keys {
+        Ok(keys) => {
+            let info = installation.ensure_service(&keys)?;
+            // Also update a service started by the CLI while the vault was locked.
+            credentials::apply(&info, &keys)?;
+            info
+        }
         Err(_) => {
-            // Stop it first: a service that is still running would never close its error stream.
-            let _ = child.kill();
-            let _ = child.wait();
-            let mut error = String::new();
-            if let Some(stderr) = child.stderr.take() {
-                let _ = BufReader::new(stderr).read_to_string(&mut error);
-            }
-            let _ = std::fs::write(logs.join("service.log"), &error);
-            return Err(format!(
-                "The project service could not start: {}",
-                error.trim()
-            ));
+            credentials::defer_apply();
+            installation.ensure_service(&Default::default())?
         }
     };
-    drain(stdout, log.try_clone().map_err(|e| e.to_string())?);
-    drain(child.stderr.take().ok_or("No service errors stream")?, log);
-    let info = Bootstrap {
-        port: handshake["port"].as_u64().ok_or("No backend port")? as u16,
-        token,
-    };
-    if let Err(error) = credentials::apply(&info, &keys) {
-        stop_service(child);
-        return Err(error);
-    }
+    info.host_pid = std::process::id();
+    let runtime = app.state::<Runtime>();
     *runtime.installation.lock().unwrap() = Some(installation);
     *runtime.info.lock().unwrap() = Some(info.clone());
-    *runtime.backend.lock().unwrap() = Some(child);
     Ok(info)
 }
 
@@ -426,6 +393,8 @@ fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
         for entry in submenu.items()? {
             let MenuItemKind::Predefined(predefined) = entry else { continue };
             if predefined.text()?.starts_with("Quit") {
+                #[cfg(target_os = "macos")]
+                submenu.append(&MenuItem::with_id(app, INSTALL_CLI_MENU_ID, "Install Command-Line Tool…", true, None::<&str>)?)?;
                 submenu.remove(&predefined)?;
                 submenu.append(&MenuItem::with_id(app, QUIT_MENU_ID, "Quit Grist", true, Some("CmdOrCtrl+Q"))?)?;
             }
@@ -435,12 +404,22 @@ fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
 }
 
 const QUIT_MENU_ID: &str = "studio-quit";
+#[cfg(target_os = "macos")]
+const INSTALL_CLI_MENU_ID: &str = "studio-install-cli";
 
 fn main() {
+    if let Some(status) = cli::dispatch() {
+        std::process::exit(status);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .menu(app_menu)
         .on_menu_event(|app, event| {
+            #[cfg(target_os = "macos")]
+            if event.id() == INSTALL_CLI_MENU_ID {
+                cli::install_from_menu(app.clone());
+                return;
+            }
             if event.id() == QUIT_MENU_ID {
                 // The window asks about unsaved edits and running work, then closes; the app ends with it.
                 match app.get_webview_window("main") {
@@ -468,9 +447,6 @@ fn main() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 app.state::<terminal::Terminals>().stop_all();
-                if let Some(child) = app.state::<Runtime>().backend.lock().unwrap().take() {
-                    stop_service(child);
-                }
             }
         });
 }

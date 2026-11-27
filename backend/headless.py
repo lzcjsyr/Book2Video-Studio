@@ -11,7 +11,7 @@ import time
 from local_agents import NAMES, arguments, codebuddy_result, codex_result, discover
 
 # How many turns each session may take and how long it may run (seconds).
-SESSIONS = {"5": (200, 3 * 3600), "6": (100, 3600)}
+SESSIONS = {"1": (80, 1800), "5": (200, 3 * 3600), "6": (100, 3600)}
 _running = {}
 # Held while a CLI starts, so a cancelled job neither misses a session nor starts another one.
 _starting = threading.RLock()
@@ -91,6 +91,8 @@ def first_message():
 def run_agent(program, env, launch, prompt, max_turns, timeout, logs: Path):
     """One print-mode session with the launch's context; returns its result, or raises when it did not finish."""
     agent = launch["agent"]
+    if launch.get("deferred_render"):
+        env = {**env, "GRIST_DEFER_RENDER": "1"}
     name = NAMES[agent]
     report = logs / f"{agent}-session.json"
     with report.open("w", encoding="utf-8") as log, (logs / f"{agent}-stderr.log").open("w", encoding="utf-8") as errors:
@@ -132,17 +134,28 @@ def run_agent(program, env, launch, prompt, max_turns, timeout, logs: Path):
 
 
 def run_session(request):
-    """Assembly or Covers by a local Agent without a terminal; the job succeeds when it delivered."""
+    """Run a local Agent without a terminal and verify the expected deliverable."""
     step, launch = request["step"], request["launch"]
     project = Path(request["project"])
     turns, timeout = session_limits(request)
     name = NAMES[launch["agent"]]
     program, env = discover(launch["agent"])
-    print(f"{name} is editing the video…" if step == "5" else f"{name} is designing the covers…", flush=True)
+    action = {"1": "writing the manuscript", "5": "editing the video", "6": "designing the covers"}[step]
+    print(f"{name} is {action}…", flush=True)
     run_agent(program, env, launch, "请根据要求开始工作。", turns, timeout, Path(launch["context"]).parent)
+    if step == "1":
+        # The service validates the staged manuscript before publishing it.
+        return {"success": True, "message": f"{name} finished writing."}
     if step == "5":
         import editing
-        if not editing.detail(project, launch["assembly_edit"])["delivered"]:
+        edit = launch["assembly_edit"]
+        if launch.get("deferred_render") and not editing.detail(project, edit)["delivered"]:
+            from core.infra.motion.assembly import run_manifest
+            work = editing.folder(project, edit)
+            if (work / "render.json").is_file():
+                print("Rendering Codex CLI's assembly manifest with the bundled renderer…", flush=True)
+                run_manifest(work, delivery=project / editing.DELIVERY)
+        if not editing.detail(project, edit)["delivered"]:
             raise ValueError(f"{name} ended without delivering the final video.")
         return {"success": True, "message": f"{name} delivered the final video."}
     import covers

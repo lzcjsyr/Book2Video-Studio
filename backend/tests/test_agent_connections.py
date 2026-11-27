@@ -88,7 +88,12 @@ class AgentConnectionTests(unittest.TestCase):
         self.assertEqual(automatic[:2], ["exec", "--json"])
         self.assertIn("--skip-git-repo-check", automatic)
         self.assertIn("--sandbox", automatic)
+        self.assertNotIn("--approve-for-me", automatic)
         self.assertTrue(automatic[-1].endswith(kickoff))
+        handoff = arguments({**manual, "deferred_render": True}, prompt=kickoff, max_turns=10)
+        self.assertIn("Do not launch browsers", handoff[-1])
+        explicit = arguments({**manual, "agent_model": "gpt-6.2-astra"}, prompt=kickoff, max_turns=10)
+        self.assertEqual(explicit[explicit.index("--model") + 1], "gpt-6.2-astra")
         project = Path(tempfile.gettempdir()).resolve() / "a project with spaces"
         production = {"agent": "codex", "context": context, "step": "5", "cwd": str(project), "project_dir": str(project)}
         self.assertEqual(arguments(production)[-2:], ["--add-dir", str(project)])
