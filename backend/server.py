@@ -1009,7 +1009,7 @@ class Studio:
                         self.invalidate(state, stage, indices, project=p)
             state["assets"] = assets
             opening_audio = self.asset(p, "voice", "opening", [".wav"])
-            covers = [str(f.relative_to(p)) for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA]
+            covers = [str(f.relative_to(p)) for f in sorted(p.glob("cover_*")) if f.suffix.lower() in MEDIA and f.is_file()]
             ready = {"1": bool(raw.get("content")), "2": bool(segments), "3": bool(segments) and all(s["audio"] for s in segments), "4": bool(segments) and all(s["visual"] for s in segments), "5": (p / "final_video.mp4").is_file(), "6": bool(covers)}
             if self.opening_on(state):
                 ready["3"] = ready["3"] and bool(opening_audio)
@@ -1030,7 +1030,7 @@ class Studio:
             voice_reference = state["voice_reference"]["name"] if local_voice.reference(p, state) else None
             revision = hashlib.sha256(json.dumps([hashes, assets, parts, state["stale"], state["reviewed"], state.get("settings"), state.get("source"), state.get("summary_stale"), state.get("three_by_four_stale"), cover_design, assembly_edit, voice_reference], sort_keys=True).encode()).hexdigest()
             return {"id": project_id, "revision": revision, "path": str(p), "raw": raw, "script": script, "summary": summary, "hashes": hashes, "segments": segments, "state": state, "ready": ready, "covers": covers, "cover_design": cover_design, "assembly_edit": assembly_edit, "voice_reference": voice_reference, "opening": {"visual": parts[0]["visual"], "takes": parts[0]["takes"], "take": parts[0]["take"], "poster": parts[0]["poster"], "audio": str(opening_audio.relative_to(p)) if opening_audio else None, "duration": duration(opening_audio),
-                                                  "clip": str(opening_clip.relative_to(p)) if opening_clip else None}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).exists()]}
+                                                  "clip": str(opening_clip.relative_to(p)) if opening_clip else None}, "exports": [f for f in ["final_video.mp4", "final_video_3x4.mp4"] if (p / f).is_file()]}
 
     @staticmethod
     def beside(a, b):
@@ -2114,7 +2114,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "library"] and method == "GET":
                 return self.json(studio.library.catalog())
             if parts == ["api", "library", "item"] and method == "GET":
-                return self.json(studio.library.item(query["group"][0], query["id"][0], query.get("file", [None])[0]))
+                return self.json(studio.library.item(query["group"][0], query["id"][0], query.get("file", [None])[0],
+                                                     preview=query.get("preview") == ["1"]))
             if parts == ["api", "library", "history"] and method == "GET":
                 return self.json(studio.library.history())
             if len(parts) == 3 and parts[:2] == ["api", "library"] and method == "POST":
@@ -2164,6 +2165,14 @@ class Handler(BaseHTTPRequestHandler):
                     detail = studio.detail(project_id)
                     if query.get("cli") == ["1"]:
                         detail["configuration"] = cli.public_config(studio, detail["state"])
+                    elif query.get("cli") == ["assets"]:
+                        p = Path(detail["path"])
+                        detail["text_paths"] = {
+                            kind: str(Path("text") / filename) if detail["hashes"][kind] else None
+                            for kind, filename in TEXT_FILES.items()
+                        }
+                        reference = local_voice.reference(p, detail["state"])
+                        detail["voice_reference_path"] = str(reference.relative_to(p)) if reference else None
                     return self.json(detail)
                 if len(parts) == 4 and parts[3] == "config" and method == "GET":
                     with studio.lock:
@@ -2261,7 +2270,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json(studio.detail(project_id))
                     if action == "select-cover":
                         with studio.lock:
-                            path = body["path"]
+                            candidate = Path(body["path"])
+                            path = str(candidate.relative_to(p)) if candidate.is_absolute() and candidate.is_relative_to(p) else body["path"]
                             if path not in studio.detail(project_id)["covers"]:
                                 raise ValueError("Choose an existing cover candidate.")
                             state = studio.state(p)

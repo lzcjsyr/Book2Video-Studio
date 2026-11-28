@@ -297,6 +297,58 @@ class AutoRunTests(unittest.TestCase):
         self.assertNotIn('three_by_four_stale', detail['state'])
         self.assertIsNone(detail['state'].get('agent_active'))
 
+    def test_directed_revisions_copy_the_previous_work_and_only_render_target_covers(self):
+        from production_cli import start_action
+
+        self.produce()
+        self.settings({
+            'step5': {'assembly_method': 'agent', 'video_size': '320x180'},
+            'step6': {**SMALL_HTML_COVERS, 'cover_image_size_presets': {'16:9': '640x360', '3:4': '360x480'},
+                      'cover_image_size_keys': ['16:9', '3:4']},
+        })
+        writing_brief = 'This brief is reserved for Writing.'
+        baseline = self.run_to_end(scope='all', steps=['5', '6'], instructions=writing_brief)
+        self.assertEqual(baseline['status'], 'succeeded', baseline)
+        previous = self.studio.detail(self.id)
+        video = (self.p / 'final_video.mp4').read_bytes()
+        old_edit = self.p / previous['assembly_edit']['folder']
+        (old_edit / 'keep.txt').write_text('original edit')
+        old_design = self.p / previous['cover_design']['folder']
+        old_portrait = (old_design / 'cover_360x480_1.html').read_bytes()
+        old_candidate = next(c for c in previous['covers'] if c.startswith('cover_360x480_'))
+        (self.p / 'requests.jsonl').unlink()
+
+        for step, key, note, settings in (
+            ('5', 'assembly_edit', '只放大开场的字幕 {保持旁白}', {}),
+            ('6', 'cover_design', '移除中央图形，保留标题和配色', {'step6': {'cover_image_size_keys': ['3:4']}}),
+        ):
+            with self.subTest(step=step):
+                previous_prompt = self.p / '.studio/agent' / Path(previous[key]['folder']).name / 'context.md'
+                self.assertNotIn(writing_brief, previous_prompt.read_text(encoding='utf-8'))
+                start_action(self.studio, self.id, {
+                    'step': step, 'job': {'mode': 'agent', 'revise': True, 'instructions': note},
+                    'settings': settings,
+                })
+                revised = self.wait()
+                self.assertEqual(revised['status'], 'succeeded', revised)
+                latest = self.studio.detail(self.id)
+                copied = self.p / latest[key]['folder']
+                self.assertNotEqual(str(copied), str(self.p / previous[key]['folder']))
+                prompt = (self.p / '.studio/agent' / copied.name / 'context.md').read_text(encoding='utf-8')
+                self.assertIn(note, prompt)
+                self.assertNotIn('只补缺失或失败部分', prompt)
+                if step == '5':
+                    self.assertEqual((copied / 'keep.txt').read_text(), 'original edit')
+                    self.assertTrue(any(f.read_bytes() == video for f in (self.p / '.studio/history').glob('*/final_video.mp4')))
+                else:
+                    self.assertEqual(latest['cover_design']['entries'][0]['html'], 'cover_360x480_1.html')
+                    self.assertEqual((old_design / 'cover_360x480_1.html').read_bytes(), old_portrait)
+                    self.assertIn(old_candidate, latest['covers'])
+                    [new_cover] = set(latest['covers']) - set(previous['covers'])
+                    self.assertTrue(new_cover.startswith('cover_360x480_'))
+        self.assertEqual([(r['step'], r['mode']) for r in self.requests()],
+                         [('5', 'agent'), ('6', 'agent'), ('6', 'cover_render')])
+
     def test_a_saved_cover_design_is_rendered_not_designed_again(self):
         """A design whose render failed (or was never rendered) still matches the cover copy and setup: the next run renders it."""
         self.produce()

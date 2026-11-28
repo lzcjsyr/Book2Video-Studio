@@ -209,6 +209,33 @@ class Library:
             raise ValueError("The style or template source must contain a list of named items.")
         return data or {}
 
+    def skill_description(self, path):
+        try:
+            header = re.match(r"\A---[ \t]*\n(.*?)\n---[ \t]*(?:\n|\Z)", self.read_text(path), re.S)
+            metadata = yaml.safe_load(header[1]) if header else None
+        except (OSError, ValueError, yaml.YAMLError):
+            return ""
+        description = metadata.get("description") if isinstance(metadata, dict) else None
+        return description.strip() if isinstance(description, str) else ""
+
+    def motion_references(self, value):
+        if not isinstance(value, dict) or any(not isinstance(value.get(k), str) or not value[k].strip() for k in ["label", "official_style", "palette"]):
+            raise ValueError("Enter a name, motion style, and palette.")
+        references = value.get("references", [])
+        if not isinstance(value.get("best_for", ""), str) or not isinstance(references, list):
+            raise ValueError("Enter valid motion guidance and reference paths.")
+        base = self.group("motion_skills")[2]
+        files = []
+        for reference in references:
+            if not isinstance(reference, str) or not reference.strip():
+                raise ValueError("Enter valid motion guidance and reference paths.")
+            file, _, section = reference.partition("#")
+            path = (base / file).resolve()
+            if not path.is_relative_to(base) or not path.is_file():
+                raise ValueError("Motion references must name existing files inside the motion skills folder.")
+            files.append({"path": str(path), "section": section or None})
+        return files
+
     def catalog(self):
         groups = []
         for group, (label, kind, _) in GROUPS.items():
@@ -220,7 +247,10 @@ class Library:
                     package = self.confined(skill.parent)
                     if package.parent != path:
                         continue
-                    items.append({"id": package.name, "label": package.name})
+                    entry = self.confined(package / "SKILL.md")
+                    if entry.is_relative_to(package):
+                        items.append({"id": package.name, "label": package.name, "path": str(entry),
+                                      "description": self.skill_description(entry)})
             elif group == "summary":
                 if path.is_file():
                     items.append({"id": "summary", "label": "Content summary instructions"})
@@ -242,8 +272,10 @@ class Library:
                            "hash": digest(path) if kind not in {"skill", "prompt"} else "", "path": str(path), "error": error})
         return {"groups": groups}
 
-    def item(self, group, item_id, file=None):
+    def item(self, group, item_id, file=None, *, preview=False):
         label, kind, root = self.group(group)
+        if file is not None and (kind != "skill" or not file):
+            raise ValueError("--file requires a file inside a skill package.")
         files = []
         variables = []
         if kind == "skill":
@@ -289,10 +321,13 @@ class Library:
             label = value.get("label", item_id) if isinstance(value, dict) else item_id
             if kind == "image_template":
                 variables = ["summary", "segment", "style_block"]
-        return {"group": group, "id": item_id, "kind": kind, "label": label, "value": value,
+        item = {"group": group, "id": item_id, "kind": kind, "label": label, "value": value,
                 "hash": digest(path), "path": str(path), "folder": str(path.parent),
                 "package_hash": digest(package) if kind == "skill" else None,
                 "files": files, "file": file, "variables": variables, "removable": kind not in {"prompt", "source"}}
+        if preview and kind == "motion_style":
+            item["references"] = self.motion_references(value)
+        return item
 
     def prompt(self, name, section=None, **values):
         """Read current user instructions; sections select mode-specific text."""
@@ -355,17 +390,7 @@ class Library:
                 raise ValueError("Enter a name, description, and template.")
             self.format_fields(value["template"], {"summary", "segment", "style_block"})
         elif kind == "motion_style":
-            if not isinstance(value, dict) or any(not isinstance(value.get(k), str) or not value[k].strip() for k in ["label", "official_style", "palette"]):
-                raise ValueError("Enter a name, motion style, and palette.")
-            if not isinstance(value.get("best_for", ""), str) or not isinstance(value.get("references", []), list):
-                raise ValueError("Enter valid motion guidance and reference paths.")
-            for reference in value.get("references", []):
-                if not isinstance(reference, str) or not reference.strip():
-                    raise ValueError("Enter valid motion guidance and reference paths.")
-                base = self.root / "skills/step4"
-                target = (base / reference.split("#", 1)[0]).resolve()
-                if not target.is_relative_to(base.resolve()) or not target.is_file():
-                    raise ValueError("Motion references must name existing files inside the motion skills folder.")
+            self.motion_references(value)
 
     def snapshot(self, group, item_id, path, kind="file"):
         event_id = uuid.uuid4().hex

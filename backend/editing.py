@@ -159,7 +159,7 @@ def sound_effects(folder):
     return {'about': found.get('about', ''), 'usage': found.get('usage', ''), 'sounds': sounds}
 
 
-def template_values(found, skill, work, delivery, revise, automatic=False):
+def template_values(found, skill, work, delivery, revise, automatic=False, directed=False):
     """What the step 5 template's variables say for this session."""
     music = found['music']
     if music['suggested'] and music['mix']:
@@ -179,9 +179,9 @@ def template_values(found, skill, work, delivery, revise, automatic=False):
             "只改 BGM 或配乐音量且已有分片时，保留原时间轴、口播、音效、画面和字幕，"
             "按原时长重混 build/audio.wav，再直接调用 core.infra.motion.assembly.compose 交付，跳过样片和画面渲染"
         )
-    if automatic and revise:
+    if automatic and revise and not directed:
         session = "继续上一次未完成的自动合成。先检查已保存的片段、字幕、音频和日志，复用已验证的产物，只补缺失或失败部分，独立完成到交付，不等待用户确认"
-    elif automatic:
+    elif automatic and not revise:
         session = "新的自动合成，独立完成到交付"
     return {'style': skill['id'], 'skill_path': skill['path'], 'materials': str(work / 'materials.json'),
             'video_size': f"{found['video']['width']}×{found['video']['height']}",
@@ -190,7 +190,7 @@ def template_values(found, skill, work, delivery, revise, automatic=False):
             'session': session, 'work_dir': str(work), 'delivery': str(delivery)}
 
 
-def prepare(studio, project, settings, session, revise=False, automatic=False):
+def prepare(studio, project, settings, session, revise=False, automatic=False, directed=False):
     found = materials(studio, project, settings)
     style = settings.get('step5', {}).get('agent_skill', 'content-led')
     skill = studio.library.item('assembly_skills', style)
@@ -209,7 +209,7 @@ def prepare(studio, project, settings, session, revise=False, automatic=False):
     edit = {'folder': str(work.relative_to(project)), 'source': signature(found), 'skill': style,
             'delivered_before': stamp(delivery)}
     prompt = studio.library.prompt('step5_editing_agent.md', engine_path=repr(str(studio.engine)),
-                                  **template_values(found, skill, work, delivery, revise, automatic))
+                                  **template_values(found, skill, work, delivery, revise, automatic, directed))
     return edit, work, prompt
 
 

@@ -25,6 +25,7 @@ def prepare(studio, project, body, *, state=None):
     from core.infra.ai.task_context import write_task_context
     library = studio.library
     part = lambda name, section, **values: library.prompt(name, section, **values).strip()
+    instructions = body.get("instructions", "").strip()
     direct = False
     if step == "1":
         options = studio.writing_options(state)
@@ -43,7 +44,7 @@ def prepare(studio, project, body, *, state=None):
         prompt = library.prompt(name, "main",
             source=part(name, "direct") if direct else part(name, "source", input_file=source),
             skill=part(name, "skill", skill_path=skill) if skill else part(name, "no_skill"),
-            extra_requirements=body.get("instructions", "").strip() or "无",
+            extra_requirements=instructions or "无",
             output_json=manuscript, project_dir=cwd, text_dir=text_dir,
             opening_quote_state="已启用" if settings.get("global", {}).get("opening_quote", True) else "已禁用")
         if body.get("headless"):
@@ -61,6 +62,7 @@ def prepare(studio, project, body, *, state=None):
         revise = body.get("revise", False)
         assembly_edit, work, prompt = editing.prepare(
             studio, project, settings, session, revise=revise, automatic=bool(body.get("headless")),
+            directed=bool(instructions),
         )
         scope = "Assembly · edit and render"
         task = dict(inputs=[work/'materials.json'], writable=[work, project/'final_video.mp4', project/'final_video.srt'],
@@ -154,6 +156,13 @@ def prepare(studio, project, body, *, state=None):
 
     task_path = write_task_context(context_dir / 'task.json', stage=step, cwd=cwd, **task)
     if step in {"5", "6"}:
+        if instructions:
+            prompt += "\n\n## 本次任务要求\n"
+            if body.get("revise"):
+                prompt += "以工作目录中的上一版副本为起点，按下列意见修改，保留与修改无关的内容。\n"
+                if step == "6":
+                    prompt += "修改范围以封面清单中的候选为准。\n"
+            prompt += "\n" + instructions
         if body.get("headless"):
             prompt += "\n\n" + part("agent_rules.md", "automatic")
             if step == "6":

@@ -112,6 +112,7 @@ def next_job(studio, project_id, step, options, done, d=None):
             body = {"step": "5"}
             if settings.get("step5", {}).get("assembly_method") == "agent":
                 body["mode"] = "agent"
+                body["instructions"] = options.get("agent_instructions", "")
                 edit = d.get("assembly_edit")
                 resumable = (not everything and edit and edit["current"] and not edit["delivered"]
                              and edit.get("skill") == settings.get("step5", {}).get("agent_skill", "content-led"))
@@ -130,7 +131,8 @@ def next_job(studio, project_id, step, options, done, d=None):
         # never rendered) is rendered, not designed again. Everything again designs anew.
         saved = bool(design and design["complete"] and design["current"] and not everything)
         if "design" not in done and not saved and needed:
-            return "design", {"step": "6", "mode": "agent", "revise": options.get("revise", False)}
+            return "design", {"step": "6", "mode": "agent", "revise": options.get("revise", False),
+                              "instructions": options.get("agent_instructions", "")}
         if "covers" not in done and ("design" in done or (saved and needed)):
             return "covers", {"step": "6", "mode": "cover_render"}
         return None
@@ -195,9 +197,11 @@ def plan_with_settings(studio, project_id, options):
     return {"steps": steps, "blocked": problem, "segments": len(d["segments"])}
 
 
-def start(studio, project_id, body):
+def start(studio, project_id, body, *, agent_instructions=""):
     from server import Conflict
     options = options_from(body)
+    if agent_instructions:
+        options["agent_instructions"] = agent_instructions
     with studio.lock:
         project = studio.project(project_id)
         if studio.stopping or studio.busy(project_id):

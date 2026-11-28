@@ -58,8 +58,8 @@ JOB_INPUTS = {
     "3": {"indices": "array", "opening": "boolean"},
     "4": {"mode": "string", "indices": "array", "opening": "boolean", "batch": "string",
           "take": "string", "visualizer": "string"},
-    "5": {"mode": "string", "revise": "boolean"},
-    "6": {"mode": "string", "revise": "boolean"},
+    "5": {"mode": "string", "revise": "boolean", "instructions": "string"},
+    "6": {"mode": "string", "revise": "boolean", "instructions": "string"},
 }
 
 
@@ -79,7 +79,7 @@ MODE_DETAILS = {
 }
 
 INPUT_DETAILS = {
-    "instructions": "Writing brief. Required for a new direct-writing run.",
+    "instructions": "Task brief. Required for direct writing. In Agent Assembly or Covers, use with revise to request specific changes.",
     "indices": "1-based segment indices. For opening-only voice or segments work, pass [] and opening=true.",
     "opening": "For voice, true refreshes an enabled opening; false skips it for a direct CLI job. For visuals, use with batch=selected.",
     "batch": "Visuals only. all and missing select targets automatically; selected requires indices. Use all or missing with static.",
@@ -383,7 +383,8 @@ def start_action(studio, project_id, body):
         if args.get("mode") == "segments" and "batch" not in args:
             args = {**args, "batch": "selected" if "indices" in args else "all"}
     with studio.lock:
-        state = studio.state(studio.project(project_id))
+        project = studio.project(project_id)
+        state = studio.state(project)
         saved = studio.effective(state)
         patch = validate_settings(studio, body.get("settings", {}), saved)
         requested = args.get("mode")
@@ -395,13 +396,27 @@ def start_action(studio, project_id, body):
         planned = body.get("pipeline")
         agent_mode = method and requested in {None, "agent"} and (
             merge(saved, patch).get(f"step{step}", {}).get(method) == "agent")
+        if method and ("instructions" in args or args.get("revise")) and (not agent_mode or planned):
+            raise ValueError("Use Agent mode without --missing for revision or task instructions.")
+        if args.get("revise"):
+            if step == "5":
+                from editing import folder
+                edit = state.get("assembly_edit")
+                if not edit or not folder(project, edit).is_dir():
+                    raise ValueError("Create an Agent assembly before revising it.")
+            elif step == "6":
+                from covers import detail
+                design = detail(project, state.get("cover_design"))
+                if not design or not design["files"]:
+                    raise ValueError("Save an Agent HTML cover design before revising it.")
         if planned or agent_mode:
             # Agent editing and covers may each require a second render job.
             import autorun
             return autorun.start(studio, project_id, {
                 "steps": [step], "scope": "missing" if planned else "all", "settings": patch,
-                "instructions": args.get("instructions", ""), "revise": args.get("revise", False),
-            })
+                "instructions": args.get("instructions", "") if step == "1" else "",
+                "revise": args.get("revise", False),
+            }, agent_instructions=args.get("instructions", "") if agent_mode else "")
         mode = requested
         if step == "1":
             mode = "agent"

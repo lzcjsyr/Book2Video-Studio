@@ -162,10 +162,12 @@ def parser():
     edit.add_argument("--file", help="Save JSON from a file or -. Omit to read.")
     edit.add_argument("--expected-hash", help="Use the hash from the read you based the edit on.")
     edit.add_argument("--selections", help="File mapping manuscript metadata fields to zero-based candidate indices.")
-    library = commands.add_parser("library", help="Read styles, prompts, skills, and templates from the local catalog.")
-    library.add_argument("group", nargs="?")
-    library.add_argument("item", nargs="?")
-    library.add_argument("--file", help="Read a specific file in a skill.")
+    library = commands.add_parser("library", help="List and preview local skills, styles, prompts, and templates.",
+        epilog="Examples: grist library writing_skills; grist library motion_styles data_driven. "
+               "Use schema STEP to find the settings that accept each item ID.")
+    library.add_argument("group", nargs="?", help="Group ID from the catalog. Omit to list all groups.")
+    library.add_argument("item", nargs="?", help="Item ID to preview its text or definition.")
+    library.add_argument("--file", help="Read a package-relative text file from a skill; defaults to SKILL.md.")
     voice = commands.add_parser("voice", help="List saved voices or manage the local voice runtime.")
     voice.add_argument("action", choices=["list", "status", "install"])
     music = commands.add_parser("music", help="List available background tracks or import one.")
@@ -174,11 +176,17 @@ def parser():
     agent.add_argument("name", nargs="?")
     assets = commands.add_parser("assets", help="List or select image, motion, and cover candidates, or import a voice reference.")
     actions = assets.add_subparsers(dest="action", required=True)
-    for action in ["list", "cover", "take", "voice-reference"]:
-        sub = actions.add_parser(action)
+    for action, help_text in {
+        "list": "List saved media and candidate IDs.", "cover": "Select a cover candidate.",
+        "take": "Select a visual take.", "voice-reference": "Import a local voice reference.",
+    }.items():
+        sub = actions.add_parser(action, help=help_text)
         sub.add_argument("project")
+        if action == "list":
+            sub.add_argument("--absolute", action="store_true",
+                             help="Return absolute paths, including saved text, Agent designs and previews.")
         if action == "cover":
-            sub.add_argument("path", help="Project-relative path from assets list.")
+            sub.add_argument("path", help="Project-relative or absolute cover path from assets list.")
         if action == "take":
             sub.add_argument("index", type=int, help="Segment index, or 0 for the opening.")
             sub.add_argument("take", help="Take ID from assets list.")
@@ -205,7 +213,7 @@ def parser():
     run.add_argument("--agent-model", help="Select Codex CLI and override its model for this run.")
     run.add_argument("--revise", action="store_true", default=None, help="Continue a saved Agent assembly or HTML cover design.")
     run.add_argument("--missing", action="store_true", help="Plan missing/outdated work. Combine with settings or a writing brief, without explicit job scope or mode.")
-    instructions(run)
+    instructions(run, "Task instructions for Writing, Agent Assembly, or Agent Covers.")
     waiting(run)
     production = commands.add_parser("production", help="Plan, run, or inspect multiple steps.")
     actions = production.add_subparsers(dest="action", required=True)
@@ -217,7 +225,7 @@ def parser():
         sub.add_argument("--no-covers", action="store_true", help="Exclude step 6 from this run.")
         sub.add_argument("--refresh-summary", action="store_true", help="Refresh a stale saved summary when step 4 runs.")
         sub.add_argument("--params", help="Section-keyed settings override for the entire run.")
-        instructions(sub)
+        instructions(sub, "Step 1 writing brief; required for direct writing.")
         if action == "run":
             waiting(sub)
     for action in ["status", "wait", "stop"]:
@@ -237,10 +245,10 @@ def parser():
     return root
 
 
-def instructions(command):
+def instructions(command, help_text):
     group = command.add_mutually_exclusive_group()
-    group.add_argument("--instructions", help="Step 1 writing brief; required for direct writing.")
-    group.add_argument("--instructions-file", help="Read the writing assignment from a file or -.")
+    group.add_argument("--instructions", help=help_text)
+    group.add_argument("--instructions-file", help="Read the same instructions from a UTF-8 file or -.")
 
 
 def waiting(command, *, flag=True):
@@ -280,6 +288,50 @@ def edit_content(client, path, kind, value, expected=None, selections=None):
         body["selections"] = selections
     result = client.call(path + "/save", body)
     return {"id": result["id"], "kind": kind, "hash": result["hashes"][kind], "path": result["path"]}
+
+
+def asset_listing(detail, absolute):
+    keys = ("path", "opening", "segments", "covers", "cover_design", "exports", "voice_reference")
+    assets = {key: detail[key] for key in keys}
+    selected = detail["state"].get("selected_cover")
+    assets["selected_cover"] = selected if selected in assets["covers"] else next(iter(assets["covers"]), None)
+    if not absolute:
+        return assets
+
+    root = Path(assets["path"])
+
+    def full(path):
+        return str(root / path) if path else None
+
+    def expand(entry, *fields):
+        for key in fields:
+            if key in entry:
+                entry[key] = full(entry[key])
+
+    def expand_motion(motion):
+        if motion:
+            expand(motion, "video", "composition", "folder")
+            motion["keyframes"] = [full(path) for path in motion["keyframes"]]
+
+    for part in [assets["opening"], *assets["segments"]]:
+        expand(part, "audio", "visual", "poster", "clip", "composition")
+        expand_motion(part.get("motion"))
+        for take in part["takes"]:
+            expand(take, "path", "poster")
+            expand_motion(take.get("motion"))
+    if design := assets["cover_design"]:
+        expand(design, "folder")
+        for key in ("files", "previews"):
+            design[key] = [full(path) for path in design[key]]
+        design["revisions"] = {full(path): revision for path, revision in design["revisions"].items()}
+    for key in ("covers", "exports"):
+        assets[key] = [full(path) for path in assets[key]]
+    expand(assets, "selected_cover")
+    assets.update(text={kind: full(path) for kind, path in detail["text_paths"].items()},
+                  voice_reference_path=full(detail["voice_reference_path"]), assembly_edit=detail["assembly_edit"])
+    if edit := assets["assembly_edit"]:
+        expand(edit, "folder")
+    return assets
 
 
 def run_cli(args):
@@ -328,9 +380,13 @@ def run_cli(args):
         result = client.call(path)
         return {"value": result[args.kind], "hash": result["hashes"][args.kind]}, 0
     if cmd == "library":
+        if args.file is not None and not (args.group and args.item):
+            raise CommandError("--file requires a skill group and item ID.")
         if args.group and args.item:
-            values = {"group": args.group, "id": args.item}
-            if args.file:
+            values = {"group": args.group, "id": args.item, "preview": "1"}
+            if args.file is not None:
+                if not args.file:
+                    raise CommandError("--file requires a package-relative text file.")
                 values["file"] = args.file
             return client.call("library/item?" + urlencode(values)), 0
         catalog = client.call("library")
@@ -363,11 +419,7 @@ def run_cli(args):
             if source.stat().st_size > 64 * 1024 * 1024:
                 raise CommandError("Choose a voice reference audio file up to 64 MB.")
             return client.send(path + "/voice-reference?" + urlencode({"name": source.name}), source.read_bytes(), timeout=90), 0
-        result = client.call(path)
-        assets = {key: result[key] for key in ("path", "opening", "segments", "covers", "cover_design", "exports", "voice_reference")}
-        selected = result["state"].get("selected_cover")
-        assets["selected_cover"] = selected if selected in assets["covers"] else next(iter(assets["covers"]), None)
-        return assets, 0
+        return asset_listing(client.call(path + ("?cli=assets" if args.absolute else "")), args.absolute), 0
     if cmd == "review":
         return client.call(path + "/review", {"step": args.step}), 0
     if cmd == "step":
@@ -376,7 +428,7 @@ def run_cli(args):
             raise CommandError("--job must contain a JSON object.")
         for key, value in {"mode": args.mode, "indices": args.segments, "opening": args.opening,
                            "batch": args.batch, "revise": args.revise,
-                           "instructions": writing_instructions(args)}.items():
+                           "instructions": read_instructions(args)}.items():
             if value is not None:
                 job[key] = value
         if args.missing and job.keys() - {"instructions"}:
@@ -398,7 +450,7 @@ def run_cli(args):
         return finish_if_requested(client, "autoruns" if "steps" in result else "jobs", args, result)
     if cmd == "production" and action in {"plan", "run"}:
         body = {"steps": args.steps or list(STEPS)[1:], "scope": args.scope, "covers": not args.no_covers,
-                "refresh_summary": args.refresh_summary, "instructions": writing_instructions(args) or "",
+                "refresh_summary": args.refresh_summary, "instructions": read_instructions(args) or "",
                 "settings": load(args.params) if args.params else {}}
         if action == "plan":
             result = client.call(path + "/autorun-plan", body)
@@ -414,7 +466,7 @@ def run_cli(args):
     return when_finished(client, group, result, args.timeout) if action == "wait" else (result, 0)
 
 
-def writing_instructions(args):
+def read_instructions(args):
     return text_file(args.instructions_file) if args.instructions_file else args.instructions
 
 

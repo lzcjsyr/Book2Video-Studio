@@ -134,6 +134,80 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(self.cli("content", id, "script")["value"]["segments"]), 2)
         self.assertEqual(self.cli("config", id, "--unset", "step4.agent_cli")["agents"]["4"], "codex")
 
+    def test_library_previews_describe_skills_and_resolve_motion_references(self):
+        group = self.cli("library", "writing_skills")
+        skill = next(item for item in group["items"] if item["id"] == "book-explainer")
+        self.assertIn("口播稿", skill["description"])
+        self.assertTrue(Path(skill["path"]).is_absolute())
+        preview = self.cli("library", group["id"], skill["id"])
+        self.assertEqual(preview["path"], skill["path"])
+        self.assertEqual(preview["value"], Path(skill["path"]).read_text(encoding="utf-8"))
+        file = self.cli("library", group["id"], skill["id"], "--file", "references/output-format.md")
+        self.assertEqual(file["value"], Path(file["path"]).read_text(encoding="utf-8"))
+        self.assertIn("skill group", self.cli("library", group["id"], "--file", "SKILL.md", code=1)["error"])
+        self.cli("library", "image_styles", "style02", "--file", "SKILL.md", code=1)
+        self.cli("library", group["id"], skill["id"], "--file", "../SKILL.md", code=1)
+
+        custom = Path(group["path"]) / "自定义 skill"
+        custom.mkdir()
+        (custom / "SKILL.md").write_text("---\ndescription: [invalid\n---\n# Custom\n", encoding="utf-8")
+        custom_item = next(item for item in self.cli("library", group["id"])["items"] if item["id"] == custom.name)
+        self.assertEqual(custom_item["description"], "")
+        self.assertEqual(self.cli("library", group["id"], custom.name)["path"], str(custom / "SKILL.md"))
+
+        style = self.cli("library", "motion_styles", "data_driven")
+        self.assertEqual(style["value"]["palette"], "dark-premium")
+        self.assertEqual(style["references"][0]["section"], "Swiss Pulse")
+        self.assertTrue(all(Path(ref["path"]).is_absolute() and Path(ref["path"]).is_file()
+                            for ref in style["references"]))
+        for name in ("image_styles", "cover_styles"):
+            item = self.cli("library", name)["items"][0]
+            self.assertEqual(self.cli("library", name, item["id"])["value"], item["description"])
+
+    def test_absolute_asset_paths_keep_ids_and_allow_cover_selection(self):
+        location = self.workspace.parent / "外部 项目"
+        location.mkdir()
+        created = self.cli("project", "create", "Absolute assets", "--location", str(location))
+        id, project = created["id"], Path(created["path"])
+        empty = self.cli("assets", "list", id, "--absolute")
+        self.assertEqual(empty["text"], dict.fromkeys(("raw", "script", "summary")))
+        self.assertIsNone(empty["voice_reference_path"])
+        self.assertIsNone(empty["selected_cover"])
+
+        self.cli("writing", "import", id, "--file", "-", body={
+            "source_name": "Paths", "content": "One.",
+            "video_titles": ["Video"], "cover_titles": ["Cover"], "cover_subtitles": [], "golden_quotes": [],
+        })
+        self.cli("step", "run", id, "segments", "--wait")
+        take_id = "motion-20261001-000000-000-abcd"
+        motion = project / "images/takes/segment_1" / take_id
+        frame = motion / "snapshots/frame-001.png"
+        frame.parent.mkdir(parents=True)
+        for artifact in (frame, motion / "index.html", motion / "video.mp4", project / "final_video.mp4",
+                         project / "cover_a.png", project / "cover_b.png"):
+            artifact.touch()
+        (project / "cover_folder.jpg").mkdir()
+        (project / "final_video_3x4.mp4").mkdir()
+        self.cli("assets", "take", id, "1", take_id)
+        selected = project / "cover_b.png"
+        self.cli("assets", "cover", id, str(selected))
+        self.cli("assets", "cover", id, str(location / selected.name), code=1)
+
+        assets = self.cli("assets", "list", id, "--absolute")
+        self.assertEqual(assets["path"], str(project))
+        self.assertEqual(assets["exports"], [str(project / "final_video.mp4")])
+        self.assertEqual(assets["selected_cover"], str(selected))
+        self.assertEqual(assets["text"], {"raw": str(project / "text/raw.json"),
+                         "script": str(project / "text/script.json"), "summary": None})
+        [segment] = assets["segments"]
+        self.assertEqual(segment["take"], take_id)
+        self.assertEqual(segment["composition"], str(motion / "index.html"))
+        self.assertEqual(segment["motion"]["keyframes"], [str(frame)])
+        self.assertEqual(segment["takes"][0]["path"], str(motion / "video.mp4"))
+        relative = self.cli("assets", "list", id)
+        self.assertEqual(relative["selected_cover"], selected.name)
+        self.assertEqual(relative["segments"][0]["poster"], frame.relative_to(project).as_posix())
+
     def test_visual_modes_default_scope_and_reject_conflicting_inputs(self):
         id = self.cli("project", "create", "Visual jobs")["id"]
         no_script = self.cli("step", "run", id, "visuals", "--mode", "segments", code=1)
@@ -144,6 +218,25 @@ class CliTests(unittest.TestCase):
             "mode": "render", "take": "motion-example", "indices": [1, 2],
         }, code=1)
         self.assertIn("exactly one", take["error"])
+
+    def test_agent_revision_inputs_reject_incompatible_modes_and_missing_source(self):
+        id = self.cli("project", "create", "Revision inputs")["id"]
+        for step, other_modes, missing in (
+            ("assembly", ("standard", "three_by_four"), "Agent assembly"),
+            ("covers", ("api", "cover_render"), "Agent HTML cover design"),
+        ):
+            with self.subTest(step=step):
+                schema = self.cli("schema", step)["steps"]
+                self.assertEqual(next(iter(schema.values()))["job_inputs"]["instructions"], "string")
+                for mode in other_modes:
+                    error = self.cli("step", "run", id, step, "--mode", mode,
+                                     "--instructions", "Keep the title", code=1)
+                    self.assertIn("Use Agent mode", error["error"])
+                error = self.cli("step", "run", id, step, "--missing", "--instructions", "Keep the title", code=1)
+                self.assertIn("without --missing", error["error"])
+                error = self.cli("step", "run", id, step, "--mode", "agent", "--revise",
+                                 "--instructions", "Keep the title", code=1)
+                self.assertIn(missing, error["error"])
 
     def test_plan_can_include_writing_and_reject_a_missing_brief(self):
         id = self.cli("project", "create", "CLI writing plan", "--params", "-",

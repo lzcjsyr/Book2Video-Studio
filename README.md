@@ -41,6 +41,12 @@ The tab lists exactly which keys the open project needs for the whole production
 
 Install and configure Claude Code (`claude`), AGY (`agy`), or CodeBuddy Code (`codebuddy`) on this computer. In **Settings → Local Agents**, check each CLI's installation and sign-in and choose a project default. Override it under the corresponding step in **Settings → Production**. Grist starts the selected CLI in the task's working directory with the instructions from **Skills & templates**. The CLI uses its local configuration. The app's API keys are for the separate production services, such as the content summary, voice, and image generation.
 
+### Grist CLI
+
+Grist includes the CLI. Select **Install Command-Line Tool…** in the macOS app menu to add the launcher. Use `grist schema STEP` to find the relevant library group, `grist library GROUP [ITEM]` to compare skills or preview a style, and `grist assets list PROJECT --absolute` to locate saved deliverables. Run `grist guide` for the full workflow. [CLI guide](backend/cli-guide.md)
+
+For Agent Assembly and HTML Covers, use `grist step run PROJECT STEP --mode agent --revise --instructions-file brief.md --wait` to apply a specific brief to a copy of the latest edit or design. Use `--params` to scope a cover revision to selected aspect ratios. [Revision workflow](backend/cli-guide.md#按意见修订剪辑和封面)
+
 
 ## Where your files live
 
@@ -276,14 +282,20 @@ grist guide
 grist schema
 ```
 
-入口默认写入 `~/.local/bin/grist`。如果终端或 Agent 的 `PATH` 未包含该目录，可以直接使用绝对路径。无需打开桌面窗口，命令会连接或按需启动同一个本地制作服务。升级前请退出旧版桌面 App，并在服务空闲时用 `grist service stop` 停止新版服务。后台任务在关闭窗口后继续，交互式终端会话随窗口结束。
+入口默认写入 `~/.local/bin/grist`。如果终端或 Agent 的 `PATH` 未包含该目录，可以直接使用绝对路径。无需打开桌面窗口，命令会连接或按需启动同一个本地制作服务。升级前请退出旧版桌面 App，并在服务空闲时用 `grist service stop` 停止旧版后台。后台任务在关闭窗口后继续，交互式终端会话随窗口结束。
 
 ```bash
 grist project create "一杯茶的时间"
 grist writing import "一杯茶的时间" --file raw.json
 grist production plan "一杯茶的时间"
 grist production run "一杯茶的时间" --wait
-grist assets list "一杯茶的时间"
+grist assets list "一杯茶的时间" --absolute
 ```
 
-项目创建后使用返回的 ID。用 `grist config PROJECT --set settings.json` 保存项目设置，用 `grist step run PROJECT visuals --segments 1,3 --params visual.json --wait` 做单次覆盖。风格、模型和 Agent 选项可通过 `grist schema STEP` 和 `grist library` 查询。完整工作流、文稿格式、任务取消和退出码见 [CLI 使用手册](backend/cli-guide.md)，也可运行 `grist guide`。如需隔离自动化环境，设置绝对路径 `GRIST_DATA_DIR` 和 `GRIST_WORKSPACE`，桌面与 CLI 只有在使用同一个数据目录时才会共享服务。
+项目创建后使用返回的 ID。用 `grist schema STEP` 查字段和适用的资源组，用 `grist library writing_skills`、`grist library image_styles` 等比较候选。追加条目 ID（例如 `grist library cover_styles cover01`）可预览完整定义。技能可加 `--file` 查看包内文本，动画风格会列出调色板和参考文件路径。
+
+用 `grist config PROJECT --set settings.json` 保存选择，或用 `grist step run PROJECT visuals --segments 1 --params visual.json --wait` 做单段试样。`grist assets list PROJECT --absolute` 给出已保存的文稿、配音、画面、成片、封面和 HTML 预览等绝对路径。完整流程和资源组与设置字段的对应关系可用 `grist guide` 查询。[CLI 使用手册](backend/cli-guide.md)
+
+第 5 步 Agent 剪辑和第 6 步 HTML 封面支持定向修订。用 `grist step run PROJECT STEP --mode agent --revise --instructions-file brief.md --wait` 在上一版副本上修改。简短意见也可用 `--instructions`，封面可通过 `--params` 限定比例和数量。[定向修订示例](backend/cli-guide.md#按意见修订剪辑和封面)
+
+如需隔离自动化环境，设置绝对路径 `GRIST_DATA_DIR` 和 `GRIST_WORKSPACE`，桌面与 CLI 只有在使用同一个数据目录时才会共享服务。
